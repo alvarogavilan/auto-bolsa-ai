@@ -6,6 +6,13 @@ import type { Candle, Indicators } from "./types";
 export type LabStrategyStatus = "active" | "halted" | "error";
 export type LabAction = "buy" | "sell" | "hold";
 
+export interface FastEntryGate {
+  checkedAt: number;
+  allowed: boolean;
+  costPct: number | null;
+  blocker: string | null;
+}
+
 export interface LabLaneConfig {
   id: ResearchLaneId;
   intervalMinutes: number;
@@ -141,7 +148,7 @@ export interface LabStrategyState {
 
 export interface ResearchLabState {
   schemaVersion: "multi-horizon-paper-lab-v1";
-  version: "0.15.0-paper";
+  version: "0.17.0-paper";
   mode: "paper";
   initializedAt: number;
   cohortLockedUntil: number;
@@ -231,7 +238,7 @@ export function initializeResearchLab(universe: MarketUniverse, now = Date.now()
 
   return {
     schemaVersion: "multi-horizon-paper-lab-v1",
-    version: "0.15.0-paper",
+    version: "0.17.0-paper",
     mode: "paper",
     initializedAt: now,
     cohortLockedUntil: now + 14 * 24 * 60 * 60_000,
@@ -356,10 +363,18 @@ function sell(strategy: LabStrategyState, rawPrice: number, now: number, reason:
   });
 }
 
+function fastGateBlocker(gate: FastEntryGate | null, now: number): string | null {
+  if (!gate) return "evidencia de ejecución no disponible";
+  if (now - gate.checkedAt > 10 * 60_000) return "evidencia de ejecución caducada";
+  if (!gate.allowed) return gate.blocker ?? "coste o profundidad insuficientes";
+  return null;
+}
+
 export function applyResearchCandles(
   strategy: LabStrategyState,
   candles: Candle[],
   now = Date.now(),
+  fastEntryGate: FastEntryGate | null = null,
 ): LabStrategyState {
   strategy.lastAttemptAt = now;
   strategy.cycles += 1;
@@ -403,7 +418,12 @@ export function applyResearchCandles(
   ) {
     strategy.lastDecision = "Cooldown PAPER del carril";
   } else if (signal.action === "buy") {
-    buy(strategy, price, now, signal.reason);
+    const blocker = strategy.lane === "fast" ? fastGateBlocker(fastEntryGate, now) : null;
+    if (blocker) {
+      strategy.lastDecision = `Compra rápida vetada por ejecución: ${blocker}`;
+    } else {
+      buy(strategy, price, now, signal.reason);
+    }
   } else if (signal.action === "sell") {
     sell(strategy, price, now, signal.reason);
   } else {
@@ -428,7 +448,11 @@ export function recordResearchError(strategy: LabStrategyState, error: unknown, 
   if (strategy.consecutiveErrors >= 3) strategy.status = "error";
 }
 
-export function summarizeStrategy(strategy: LabStrategyState, now = Date.now()): LabStrategySummary {
+export function summarizeStrategy(
+  strategy: LabStrategyState,
+  now = Date.now(),
+  observationStartedAt = now,
+): LabStrategySummary {
   const performance = strategy.performance;
   const winRatePct = performance.closedTrades > 0
     ? (performance.winningTrades / performance.closedTrades) * 100
@@ -439,7 +463,7 @@ export function summarizeStrategy(strategy: LabStrategyState, now = Date.now()):
   const totalAttempts = strategy.cycles + strategy.errors;
   const errorRatePct = totalAttempts > 0 ? (strategy.errors / totalAttempts) * 100 : 0;
   const netReturnPct = ((strategy.equityEur - strategy.initialCashEur) / strategy.initialCashEur) * 100;
-  const observationDays = (now - (strategy.trades.at(-1)?.timestamp ?? now)) / 86_400_000;
+  const observationDays = Math.max(0, (now - observationStartedAt) / 86_400_000);
   const eligibleForHumanReview = observationDays >= 14
     && performance.closedTrades >= 30
     && performance.netPnlEur > 0
@@ -465,7 +489,7 @@ export function summarizeStrategy(strategy: LabStrategyState, now = Date.now()):
 }
 
 export function summarizeResearchLab(state: ResearchLabState, now = Date.now()): Record<string, unknown> {
-  const strategies = state.strategies.map((strategy) => summarizeStrategy(strategy, now));
+  const strategies = state.strategies.map((strategy) => summarizeStrategy(strategy, now, state.initializedAt));
   const ranked = [...strategies].sort((left, right) => {
     const evidenceDifference = right.closedTrades - left.closedTrades;
     if (Math.abs(evidenceDifference) >= 5) return evidenceDifference;
@@ -490,6 +514,6 @@ export function summarizeResearchLab(state: ResearchLabState, now = Date.now()):
     provisionalLeaderboard: ranked,
     eligibleForLiveReview: false,
     liveTrading: false,
-    message: "Laboratorio comparativo en PAPER. Ningún resultado activa dinero real automáticamente.",
+    message: "Laboratorio comparativo en PAPER. Las compras rápidas requieren además un libro público reciente y elegible.",
   };
 }
