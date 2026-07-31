@@ -1,5 +1,9 @@
 import { BotState } from "./bot-state";
-import { fingerprintKrakenCredentials } from "./kraken";
+import {
+  assessKrakenPermissions,
+  fetchApiKeyInfo,
+  fingerprintKrakenCredentials,
+} from "./kraken";
 import type { Env } from "./types";
 
 export { BotState };
@@ -23,17 +27,17 @@ function dashboard(): Response {
 <body><main><h1>Auto Bolsa AI</h1><p class="ok">Modo PAPER obligatorio · Trading real bloqueado</p>
 <div class="card"><h2>Simulador automático</h2><pre id="status">Cargando…</pre></div>
 <div class="card"><h2>Control privado</h2><p class="muted">El token solo se usa en esta pestaña y no se guarda.</p><input id="token" type="password" autocomplete="off" placeholder="ADMIN_TOKEN de Cloudflare">
-<div class="grid"><button onclick="admin('/api/tick','POST')">Ejecutar ciclo ahora</button><button onclick="admin('/api/kraken/diagnostics','GET')">Diagnóstico local</button><button id="krakenButton" onclick="admin('/api/kraken/connection','GET')">Probar conexión Kraken</button><button onclick="admin('/api/pause','POST')">Pausar motor</button><button onclick="admin('/api/resume','POST')">Reanudar motor</button></div><pre id="adminResult">Sin comprobaciones todavía.</pre>
+<div class="grid"><button onclick="admin('/api/tick','POST')">Ejecutar ciclo ahora</button><button onclick="admin('/api/kraken/diagnostics','GET')">Diagnóstico local</button><button id="krakenButton" onclick="admin('/api/kraken/connection','GET')">Probar conexión Kraken</button><button id="permissionButton" onclick="admin('/api/kraken/permissions','GET')">Auditar permisos Kraken</button><button onclick="admin('/api/pause','POST')">Pausar motor</button><button onclick="admin('/api/resume','POST')">Reanudar motor</button></div><pre id="adminResult">Sin comprobaciones todavía.</pre>
 <div class="divider"></div><h3>Comparar la pareja V2 sin enviarla</h3><p class="muted">Pega aquí la clave pública y el secreto V2. El navegador los compara mediante SHA-256; nunca se mandan al servidor y los campos se borran al terminar.</p>
 <input id="compareKey" type="password" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="Clave pública V2">
 <input id="compareSecret" type="password" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="Secreto privado V2">
 <button onclick="compareCredentials()">Comparar con Cloudflare localmente</button><pre id="compareResult">Sin comparación todavía.</pre></div>
-<p class="warn">El diagnóstico y la comparación local no contactan con Kraken. Las órdenes reales siguen bloqueadas por código.</p>
+<p class="warn">El diagnóstico y la comparación local no contactan con Kraken. La auditoría de permisos solo consulta la configuración de la clave. Las órdenes reales siguen bloqueadas por código.</p>
 <script>
 let lockoutTimer;
 async function load(){try{const r=await fetch('/api/status');const d=await r.json();document.getElementById('status').textContent=JSON.stringify(d,null,2)}catch(e){document.getElementById('status').textContent='Error cargando estado'}}
 function startLockout(seconds){clearInterval(lockoutTimer);const button=document.getElementById('krakenButton');let remaining=Math.max(1,Number(seconds)||900);button.disabled=true;const draw=()=>{button.textContent='Kraken bloqueado · '+remaining+' s';remaining-=1;if(remaining<0){clearInterval(lockoutTimer);button.disabled=false;button.textContent='Probar conexión Kraken'}};draw();lockoutTimer=setInterval(draw,1000)}
-async function admin(path,method){const token=document.getElementById('token').value;const out=document.getElementById('adminResult');if(!token){out.textContent='Introduce primero el ADMIN_TOKEN.';return}out.textContent='Comprobando…';try{const r=await fetch(path,{method,headers:{Authorization:'Bearer '+token}});const text=await r.text();let data;try{data=JSON.parse(text)}catch{data={status:r.status,response:text}}out.textContent=JSON.stringify(data,null,2);if(data&&data.temporaryLockout)startLockout(data.retryAfterSeconds);if(!path.startsWith('/api/kraken'))load()}catch(e){out.textContent='Error de conexión'}}
+async function admin(path,method){const token=document.getElementById('token').value;const out=document.getElementById('adminResult');if(!token){out.textContent='Introduce primero el ADMIN_TOKEN.';return}out.textContent='Comprobando…';try{const r=await fetch(path,{method,headers:{Authorization:'Bearer '+token}});const text=await r.text();let data;try{data=JSON.parse(text)}catch{data={status:r.status,response:text}}out.textContent=JSON.stringify(data,null,2);if(data&&data.temporaryLockout)startLockout(data.retryAfterSeconds);if(path==='/api/kraken/permissions'&&data&&data.auditComplete){document.getElementById('permissionButton').disabled=true;document.getElementById('permissionButton').textContent='Permisos auditados'}if(!path.startsWith('/api/kraken'))load()}catch(e){out.textContent='Error de conexión'}}
 function normalizeLocal(value){let normalized=value.trim();if(normalized.length>=2&&((normalized.startsWith('"')&&normalized.endsWith('"'))||(normalized.startsWith("'")&&normalized.endsWith("'"))))normalized=normalized.slice(1,-1);return normalized.replace(/[\s\u200B-\u200D\u2060\uFEFF]/g,'')}
 async function sha256Prefix(value){const bytes=new TextEncoder().encode(normalizeLocal(value));const digest=new Uint8Array(await crypto.subtle.digest('SHA-256',bytes));return Array.from(digest.slice(0,8),b=>b.toString(16).padStart(2,'0')).join('')}
 async function compareCredentials(){const token=document.getElementById('token').value;const keyInput=document.getElementById('compareKey');const secretInput=document.getElementById('compareSecret');const out=document.getElementById('compareResult');if(!token){out.textContent='Introduce primero el ADMIN_TOKEN.';return}if(!keyInput.value||!secretInput.value){out.textContent='Pega la clave pública y el secreto V2 en los dos campos.';return}out.textContent='Comparando localmente…';try{const r=await fetch('/api/kraken/fingerprints',{headers:{Authorization:'Bearer '+token}});const server=await r.json();const keyFingerprint=await sha256Prefix(keyInput.value);const secretFingerprint=await sha256Prefix(secretInput.value);const result={networkCallToKraken:false,apiKeyMatches:keyFingerprint===server.apiKeyFingerprint,apiSecretMatches:secretFingerprint===server.apiSecretFingerprint,bothMatch:keyFingerprint===server.apiKeyFingerprint&&secretFingerprint===server.apiSecretFingerprint,message:keyFingerprint===server.apiKeyFingerprint&&secretFingerprint===server.apiSecretFingerprint?'Cloudflare contiene exactamente la pareja introducida.':'Al menos uno de los dos valores de Cloudflare no coincide con la pareja introducida.'};out.textContent=JSON.stringify(result,null,2)}catch(e){out.textContent='No se pudo completar la comparación local.'}finally{keyInput.value='';secretInput.value=''}}
@@ -49,7 +53,7 @@ export default {
     if (request.method === "GET" && url.pathname === "/") return dashboard();
     if (request.method === "GET" && url.pathname === "/health") {
       return new Response(
-        JSON.stringify({ ok: true, service: "auto-bolsa-ai", version: "0.7.0", mode: "paper", liveTrading: false }),
+        JSON.stringify({ ok: true, service: "auto-bolsa-ai", version: "0.8.0", mode: "paper", liveTrading: false }),
         { headers: jsonHeaders },
       );
     }
@@ -68,6 +72,41 @@ export default {
         liveTrading: false,
       });
     }
+    if (request.method === "GET" && url.pathname === "/api/kraken/permissions") {
+      if (!isAuthorized(request, env)) return new Response("Unauthorized", { status: 401 });
+      if (!env.KRAKEN_API_KEY || !env.KRAKEN_API_SECRET) {
+        return Response.json({ configured: false, auditComplete: false, liveTrading: false }, { status: 412 });
+      }
+      try {
+        const nonce = (BigInt(Date.now()) * 1000n).toString();
+        const info = await fetchApiKeyInfo(env.KRAKEN_API_KEY, env.KRAKEN_API_SECRET, nonce);
+        const assessment = assessKrakenPermissions(info.permissions);
+        return Response.json({
+          configured: true,
+          auditComplete: true,
+          safePermissions: assessment.safe,
+          apiKeyName: info.apiKeyName,
+          permissions: info.permissions,
+          missingPermissions: assessment.missing,
+          forbiddenPermissions: assessment.forbidden,
+          withdrawalPermission: info.permissions.includes("withdraw-funds"),
+          depositPermission: info.permissions.includes("add-funds"),
+          earnPermission: info.permissions.includes("earn-funds"),
+          ipRestrictionEnabled: info.ipAllowlist.length > 0,
+          expiresAt: info.validUntil && info.validUntil !== "0" ? info.validUntil : null,
+          liveTrading: false,
+          message: assessment.safe
+            ? "Auditoría superada: la clave tiene los permisos operativos previstos y no permite retirar fondos."
+            : "Auditoría bloqueada: los permisos no coinciden con la política segura.",
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Kraken permission audit failed";
+        return Response.json(
+          { configured: true, auditComplete: false, error: message, liveTrading: false },
+          { status: 502 },
+        );
+      }
+    }
     if (request.method === "GET" && ["/api/kraken/connection", "/api/kraken/diagnostics"].includes(url.pathname)) {
       if (!isAuthorized(request, env)) return new Response("Unauthorized", { status: 401 });
       return singleton(env).fetch(`https://bot${url.pathname.replace("/api", "")}`);
@@ -78,7 +117,7 @@ export default {
     }
     if (url.pathname.startsWith("/api/live")) {
       return Response.json(
-        { error: "LIVE_TRADING_HARD_DISABLED", message: "La versión 0.7 solo permite simulación y diagnósticos seguros." },
+        { error: "LIVE_TRADING_HARD_DISABLED", message: "La versión 0.8 solo permite simulación, autenticación y auditorías seguras." },
         { status: 403 },
       );
     }
