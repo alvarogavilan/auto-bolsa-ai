@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { KrakenApiError } from "../src/kraken";
 import type { KrakenAssetPair, KrakenTicker } from "../src/kraken-markets";
 import type { ValidateOnlyOrderGateway } from "../src/live-order-preflight";
 import { runAdminKrakenValidateOnlyPreflight } from "../src/admin-kraken-preflight";
@@ -71,15 +72,7 @@ describe("isolated admin Kraken preflight service", () => {
     expect(report.liveTrading).toBe(false);
   });
 
-  it("reports a Kraken EOrder-style rejection as completed without order creation", async () => {
-    const gateway: ValidateOnlyOrderGateway = {
-      validate: async () => {
-        const error = new Error("EOrder:Insufficient funds") as Error & { codes?: string[] };
-        error.codes = ["EOrder:Insufficient funds"];
-        throw error;
-      },
-    };
-
+  it("reports an explicit Kraken EOrder rejection as completed without order creation", async () => {
     const report = await runAdminKrakenValidateOnlyPreflight(
       {
         apiKey: "key",
@@ -90,11 +83,35 @@ describe("isolated admin Kraken preflight service", () => {
       {
         fetchPairs: async () => [pair],
         fetchTickers: async () => ({ XXBTZEUR: ticker }),
-        gatewayFactory: () => gateway,
+        gatewayFactory: () => ({
+          validate: async () => { throw new KrakenApiError(["EOrder:Insufficient funds"]); },
+        }),
       },
     );
 
-    // Un Error genérico no se debe disfrazar de EOrder verificable.
+    expect(report.result.status).toBe("rejected");
+    expect(report.result.blockers).toEqual(["EOrder:Insufficient funds"]);
+    expect(report.preflightComplete).toBe(true);
+    expect(report.orderCreated).toBe(false);
+  });
+
+  it("keeps a generic transport or authentication failure ambiguous", async () => {
+    const report = await runAdminKrakenValidateOnlyPreflight(
+      {
+        apiKey: "key",
+        apiSecret: "secret",
+        pair: "XBTEUR",
+        nextNonce: async () => "1",
+      },
+      {
+        fetchPairs: async () => [pair],
+        fetchTickers: async () => ({ XXBTZEUR: ticker }),
+        gatewayFactory: () => ({
+          validate: async () => { throw new Error("network unavailable"); },
+        }),
+      },
+    );
+
     expect(report.result.status).toBe("unknown");
     expect(report.preflightComplete).toBe(false);
     expect(report.orderCreated).toBeNull();
