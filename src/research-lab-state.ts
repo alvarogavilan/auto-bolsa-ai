@@ -10,10 +10,17 @@ import {
   type FastEntryGate,
   type ResearchLabState as StoredResearchLabState,
 } from "./research-lab";
+import {
+  buildBenchmarkComparison,
+  sanitizeBenchmarkMap,
+  updateBuyHoldBenchmark,
+  type PaperBenchmarkMap,
+} from "./strategy-benchmark";
 import type { Env } from "./types";
 
 const STORAGE_KEY = "multi-horizon-paper-lab";
 const EXECUTION_GATES_KEY = "fast-execution-gates";
+const BENCHMARKS_KEY = "paper-buy-hold-benchmarks";
 
 type FastExecutionGates = Record<string, FastEntryGate>;
 
@@ -90,6 +97,10 @@ export class ResearchLabState extends DurableObject<Env> {
     return sanitizeGates(await this.ctx.storage.get<unknown>(EXECUTION_GATES_KEY));
   }
 
+  private async readBenchmarks(): Promise<PaperBenchmarkMap> {
+    return sanitizeBenchmarkMap(await this.ctx.storage.get<unknown>(BENCHMARKS_KEY));
+  }
+
   private executionGateSummary(
     state: StoredResearchLabState,
     gates: FastExecutionGates,
@@ -130,11 +141,21 @@ export class ResearchLabState extends DurableObject<Env> {
     let state = await this.read();
     if (!state) state = initializeResearchLab(payload.universe, now);
 
-    await this.ctx.storage.put(EXECUTION_GATES_KEY, payload.executionGates);
+    const benchmarks = await this.readBenchmarks();
     const due = state.strategies.filter((strategy) => isStrategyDue(strategy, now));
     for (const strategy of due) {
       try {
         const candles = await fetchOhlc(strategy.pairKey, strategy.config.intervalMinutes);
+        const currentPrice = candles.at(-1)?.close;
+        if (typeof currentPrice !== "number" || !Number.isFinite(currentPrice) || currentPrice <= 0) {
+          throw new Error("Kraken OHLC current price unavailable for benchmark");
+        }
+        benchmarks[strategy.id] = updateBuyHoldBenchmark(
+          benchmarks[strategy.id] ?? null,
+          strategy,
+          currentPrice,
+          now,
+        );
         applyResearchCandles(
           strategy,
           candles,
@@ -148,13 +169,18 @@ export class ResearchLabState extends DurableObject<Env> {
 
     state.cycles += 1;
     state.lastCycleAt = now;
-    await this.write(state);
+    await Promise.all([
+      this.write(state),
+      this.ctx.storage.put(EXECUTION_GATES_KEY, payload.executionGates),
+      this.ctx.storage.put(BENCHMARKS_KEY, benchmarks),
+    ]);
     return Response.json({
       initialized: true,
       dueStrategiesProcessed: due.length,
       state,
       summary: summarizeResearchLab(state, now),
       fastExecutionGates: this.executionGateSummary(state, payload.executionGates, now),
+      benchmarkComparison: buildBenchmarkComparison(state.strategies, benchmarks),
       liveTrading: false,
     });
   }
@@ -163,9 +189,10 @@ export class ResearchLabState extends DurableObject<Env> {
     const url = new URL(request.url);
 
     if (request.method === "GET" && url.pathname === "/status") {
-      const [state, executionGates] = await Promise.all([
+      const [state, executionGates, benchmarks] = await Promise.all([
         this.read(),
         this.readExecutionGates(),
+        this.readBenchmarks(),
       ]);
       if (!state) {
         return Response.json({
@@ -181,6 +208,7 @@ export class ResearchLabState extends DurableObject<Env> {
         state,
         summary: summarizeResearchLab(state),
         fastExecutionGates: this.executionGateSummary(state, executionGates),
+        benchmarkComparison: buildBenchmarkComparison(state.strategies, benchmarks),
         liveTrading: false,
       });
     }
@@ -209,6 +237,7 @@ export class ResearchLabState extends DurableObject<Env> {
       await Promise.all([
         this.ctx.storage.delete(STORAGE_KEY),
         this.ctx.storage.delete(EXECUTION_GATES_KEY),
+        this.ctx.storage.delete(BENCHMARKS_KEY),
       ]);
       return Response.json({
         reset: true,
