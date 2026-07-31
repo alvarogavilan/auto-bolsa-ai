@@ -35,6 +35,18 @@ function asNumber(value: unknown, label: string): number {
   return parsed;
 }
 
+function normalizeCredential(value: string): string {
+  const trimmed = value.trim();
+  if (
+    trimmed.length >= 2 &&
+    ((trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+      (trimmed.startsWith("'") && trimmed.endsWith("'")))
+  ) {
+    return trimmed.slice(1, -1).trim();
+  }
+  return trimmed;
+}
+
 function bytesToBase64(bytes: Uint8Array): string {
   let binary = "";
   for (const byte of bytes) binary += String.fromCharCode(byte);
@@ -42,7 +54,7 @@ function bytesToBase64(bytes: Uint8Array): string {
 }
 
 function base64ToBytes(value: string): Uint8Array {
-  const binary = atob(value);
+  const binary = atob(normalizeCredential(value));
   const bytes = new Uint8Array(binary.length);
   for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
   return bytes;
@@ -95,18 +107,22 @@ async function privatePost<T>(
   nonce: string,
   fields: Record<string, string> = {},
 ): Promise<T> {
+  const normalizedApiKey = normalizeCredential(apiKey);
+  const normalizedApiSecret = normalizeCredential(apiSecret);
+  if (!normalizedApiKey || !normalizedApiSecret) throw new Error("Kraken credentials are empty after normalization");
+
   const form = new URLSearchParams({ nonce, ...fields });
   const postData = form.toString();
-  const signature = await signKrakenRequest(apiPath, nonce, postData, apiSecret);
+  const signature = await signKrakenRequest(apiPath, nonce, postData, normalizedApiSecret);
 
   const response = await fetch(`${API_BASE}${apiPath.replace(/^\/0/, "")}`, {
     method: "POST",
     headers: {
       Accept: "application/json",
       "Content-Type": "application/x-www-form-urlencoded; charset=utf-8",
-      "API-Key": apiKey,
+      "API-Key": normalizedApiKey,
       "API-Sign": signature,
-      "User-Agent": "auto-bolsa-ai/0.3",
+      "User-Agent": "auto-bolsa-ai/0.4",
     },
     body: postData,
   });
@@ -144,7 +160,7 @@ export async function fetchOhlc(pair: string, interval = 15): Promise<Candle[]> 
   url.searchParams.set("interval", String(interval));
 
   const response = await fetch(url, {
-    headers: { Accept: "application/json", "User-Agent": "auto-bolsa-ai/0.3" },
+    headers: { Accept: "application/json", "User-Agent": "auto-bolsa-ai/0.4" },
   });
   if (!response.ok) throw new Error(`Kraken OHLC HTTP ${response.status}`);
 
