@@ -9,6 +9,11 @@ import {
   type LiveOrderRequest,
 } from "./live-executor";
 import { defaultLiveGuardrailConfig, liveTradingEnabledFromEnv, type LiveGuardrailConfig } from "./live-guardrails";
+import {
+  KrakenValidateOnlyOrderGateway,
+  runLiveOrderPreflight,
+  type LiveOrderPreflightIntent,
+} from "./live-order-preflight";
 import { fetchLivePairResolution, type LivePairResolution } from "./live-pair-metadata";
 import { reconcileWithVerifiedFillsTransactional } from "./live-transactional-reconciliation";
 import { FakeLiveOrderTransport, KrakenLiveOrderTransport, type LiveOrderTransport } from "./live-transport";
@@ -162,6 +167,81 @@ export class LiveExecutorState extends DurableObject<Env> {
       observeMarket(state, body.equityEur, now);
       await this.write(state);
       return Response.json(state);
+    }
+
+    if (request.method === "POST" && url.pathname === "/preflight") {
+      if (!this.env.KRAKEN_API_KEY || !this.env.KRAKEN_API_SECRET) {
+        return Response.json(
+          {
+            status: "rejected",
+            configured: false,
+            validateOnly: true,
+            contactedKraken: false,
+            realOrderCreated: false,
+            message: "Faltan credenciales Kraken.",
+            liveTrading: false,
+          },
+          { status: 412 },
+        );
+      }
+
+      let body: LiveOrderPreflightIntent;
+      try {
+        body = (await request.json()) as LiveOrderPreflightIntent;
+      } catch {
+        return Response.json(
+          {
+            status: "rejected",
+            validateOnly: true,
+            contactedKraken: false,
+            realOrderCreated: false,
+            message: "El cuerpo JSON del preflight no es válido.",
+            liveTrading: false,
+          },
+          { status: 400 },
+        );
+      }
+
+      const pair = this.env.PAIR || "XBTEUR";
+      if (body.side !== "buy" || body.pair !== pair) {
+        return Response.json(
+          {
+            status: "rejected",
+            validateOnly: true,
+            contactedKraken: false,
+            realOrderCreated: false,
+            message: `El preflight interno solo admite compras límite para ${pair}.`,
+            liveTrading: false,
+          },
+          { status: 409 },
+        );
+      }
+
+      const resolution = await this.pairResolution(pair, now, false);
+      const gateway = new KrakenValidateOnlyOrderGateway(
+        this.env.KRAKEN_API_KEY,
+        this.env.KRAKEN_API_SECRET,
+        () => this.nextNonce(),
+      );
+      const result = await runLiveOrderPreflight(
+        body,
+        {
+          pairMetadata: { [pair]: resolution.metadata },
+          maxNotionalEur: 5,
+          maxNotionalDeviationPct: 0.01,
+        },
+        gateway,
+        { now },
+      );
+      const status = result.status === "validated" ? 200 : result.status === "rejected" ? 409 : 502;
+      return Response.json(
+        {
+          ...result,
+          validateOnly: true,
+          liveTrading: false,
+        },
+        { status },
+      );
     }
 
     if (request.method === "POST" && url.pathname === "/prepare") {
