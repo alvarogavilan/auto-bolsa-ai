@@ -110,6 +110,8 @@ export interface LiveExecutorSnapshot {
   emergencyStopReason: string | null;
   /** Verdadero si, tras una parada de emergencia, queda inventario sin liquidar. */
   emergencyStopRequiresManualLiquidation: boolean;
+  /** Resultado de la última reconciliación de balance, o null si nunca se ha ejecutado. */
+  lastBalanceCheckStatus: BalanceReconciliationStatus | null;
   nextAuditSequence: number;
   auditLog: LiveAuditEntry[];
 }
@@ -146,6 +148,7 @@ export function initializeLiveExecutor(initialEquityEur: number, now = Date.now(
     emergencyStopActive: false,
     emergencyStopReason: null,
     emergencyStopRequiresManualLiquidation: false,
+    lastBalanceCheckStatus: null,
     nextAuditSequence: 1,
     auditLog: [],
   };
@@ -567,12 +570,17 @@ export async function reconcile(
 
   const balances = await transport.fetchBalances().catch(() => null);
   const balanceCheck = reconcileInventoryAgainstBalances(state.inventory, balances);
+  state.lastBalanceCheckStatus = balanceCheck.status;
   if (balanceCheck.status !== "consistent") {
     // Una discrepancia (o un "no sé") bloquea de inmediato, exista o no una
     // orden activa: dejar la parada supeditada a que haya una orden en curso
     // permitiría seguir acumulando errores sin ninguna orden que reconciliar.
+    // También engancha `emergencyStopRequiresManualLiquidation`: sin esto,
+    // `clearEmergencyStop` podría despejar la alarma sin que nada exija una
+    // reconciliación posterior realmente consistente antes de operar de nuevo.
     state.consecutiveTransportErrors += 1;
     state.emergencyStopActive = true;
+    state.emergencyStopRequiresManualLiquidation = true;
     state.emergencyStopReason = balanceCheck.status === "unknown"
       ? `No se pudo confirmar el balance real de ${state.inventory.pair ?? "el activo en inventario"}`
       : `Discrepancia de balance: inventario local=${state.inventory.quantityBase}, balance observado=${balanceCheck.observedBalance}`;
@@ -690,6 +698,11 @@ export async function emergencyCancelAll(
 
   state.emergencyStopRequiresManualLiquidation = state.inventory.quantityBase > EPSILON;
   if (state.emergencyStopRequiresManualLiquidation) {
+    // Cualquier verificación de balance previa queda invalidada: la emergencia
+    // es motivo suficiente para no confiar en el último "consistent" conocido.
+    // Solo una reconciliación posterior a esta parada puede volver a
+    // acreditarlo (ver `clearEmergencyStop`).
+    state.lastBalanceCheckStatus = null;
     appendAudit(
       state,
       "emergency_stop_leaves_open_inventory",
@@ -715,13 +728,23 @@ export function clearEmergencyStop(state: LiveExecutorSnapshot, reason: string, 
 
   const hasResidualInventory = state.inventory.quantityBase > EPSILON;
   const hasPendingReconciliation = Object.values(state.orders).some((order) => order.status === "reconciliation_required");
-  if (!hasResidualInventory && !hasPendingReconciliation) {
+  // Si alguna vez se comprobó el balance y no salió "consistent" (o quedó
+  // invalidado por una emergencia posterior), solo una reconciliación que sí
+  // lo confirme puede levantar el bloqueo: la sola voluntad de "despejar"
+  // nunca basta cuando la discrepancia sigue sin resolverse con evidencia
+  // real. Un balance ya confirmado consistente SÍ excusa el inventario
+  // residual (sostener una posición no es en sí mismo una emergencia), pero
+  // nunca excusa una reconciliación de orden todavía pendiente.
+  const balanceConfirmed = state.lastBalanceCheckStatus === "consistent";
+  const balanceUnresolved = state.lastBalanceCheckStatus !== null && !balanceConfirmed;
+  const inventoryUnresolved = hasResidualInventory && !balanceConfirmed;
+  if (!inventoryUnresolved && !hasPendingReconciliation && !balanceUnresolved) {
     state.emergencyStopRequiresManualLiquidation = false;
   } else if (state.emergencyStopRequiresManualLiquidation) {
     appendAudit(
       state,
       "manual_liquidation_still_pending",
-      "La parada se despeja, pero persiste inventario o reconciliación pendiente: sigue exigiendo revisión manual",
+      "La parada se despeja, pero persiste inventario, reconciliación pendiente o balance sin confirmar: sigue exigiendo revisión manual",
       null,
       now,
     );

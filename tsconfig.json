@@ -4,17 +4,12 @@
     "module": "ESNext",
     "moduleResolution": "Bundler",
     "lib": ["ES2022", "WebWorker"],
-    // "node" solo se necesita para test/kraken-single-authority.test.ts (lee
-    // src/*.ts con fs/path para una prueba arquitectónica). tsc comprueba un
-    // único programa, así que también queda ambientalmente visible en src/;
-    // el código de src/ debe seguir sin usar ninguna API de Node en tiempo de
-    // ejecución (Cloudflare Workers no la tiene), typecheck no lo garantiza.
-    "types": ["@cloudflare/workers-types", "node"],
+    "types": ["@cloudflare/workers-types"],
     "strict": true,
     "noUncheckedIndexedAccess": true,
     "exactOptionalPropertyTypes": true,
     "skipLibCheck": true,
     "noEmit": true
   },
-  "include": ["src/**/*.ts", "test/**/*.ts"]
+  "include": ["src/**/*.ts"]
 }

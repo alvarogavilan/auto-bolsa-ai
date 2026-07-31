@@ -453,6 +453,46 @@ describe("live executor: partial fills, residual inventory and reconciliation", 
     expect(blocked.ok).toBe(false);
   });
 
+  it("keeps every order blocked after clearing the alarm until a later reconcile confirms the balance is consistent again", async () => {
+    const state = readyState();
+    const config = enabledConfig();
+    const transport = new FakeLiveOrderTransport();
+    const buy = prepareOrder(state, config, buyRequest("balance-clear-then-block", { volumeBase: 1, limitPrice: 1, notionalEur: 1 }), NOW);
+    if (!buy.ok) throw new Error("expected buy prepare to succeed");
+    await submitOrder(state, transport, config, buy.order.clOrdId, NOW);
+    await reconcile(state, transport, config, NOW + 1_000);
+    expect(state.activeClOrdId).toBeNull();
+
+    // Discrepancia sin ninguna orden activa.
+    transport.setBalance("XBT", "0");
+    await reconcile(state, transport, config, NOW + 2_000);
+    expect(state.emergencyStopActive).toBe(true);
+    expect(state.emergencyStopRequiresManualLiquidation).toBe(true);
+
+    // Despejar la alarma NO basta: sigue bloqueando cualquier orden nueva.
+    clearEmergencyStop(state, "Revisado, pero el balance sigue sin confirmarse", NOW + 3_000);
+    expect(state.emergencyStopActive).toBe(false);
+    expect(state.emergencyStopRequiresManualLiquidation).toBe(true);
+    const stillBlockedOpen = prepareOrder(state, config, buyRequest("attempt-during-unresolved-open"), NOW + 4_000);
+    expect(stillBlockedOpen.ok).toBe(false);
+    if (!stillBlockedOpen.ok) expect(stillBlockedOpen.blockers).toContain("Liquidación manual pendiente tras una parada de emergencia");
+    const stillBlockedClose = prepareOrder(state, config, sellRequest("attempt-during-unresolved-close"), NOW + 4_000);
+    expect(stillBlockedClose.ok).toBe(false);
+
+    // Solo una reconciliación posterior que confirme el balance real como
+    // consistente permite, tras despejar de nuevo, volver a operar.
+    transport.setBalance("XBT", "1");
+    await reconcile(state, transport, config, NOW + 5_000);
+    expect(state.lastBalanceCheckStatus).toBe("consistent");
+    // El flag sigue en pie hasta que un humano lo despeje explícitamente de nuevo.
+    expect(state.emergencyStopRequiresManualLiquidation).toBe(true);
+
+    clearEmergencyStop(state, "Balance confirmado consistente", NOW + 6_000);
+    expect(state.emergencyStopRequiresManualLiquidation).toBe(false);
+    const nowAllowed = prepareOrder(state, config, sellRequest("resolved-recovery"), NOW + 7_000);
+    expect(nowAllowed.ok).toBe(true);
+  });
+
   it("treats a failed balance fetch as unknown, not as a free pass, whenever there is inventory to verify", async () => {
     const state = readyState();
     const config = enabledConfig();

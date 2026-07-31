@@ -100,9 +100,26 @@ paralelo a la estrategia PAPER y sin ningún camino que la active hoy.
 | Redondear una cantidad de BTC como si fuera dinero (6 decimales) y perder precisión real | El inventario se cuantiza según `lot_decimals` del par (`quantizeToDecimals`), no con el redondeo a 6 decimales usado para importes en EUR. |
 | Creer que "cancelación de emergencia" también liquida una posición ya ejecutada | `emergencyCancelAll` solo cancela órdenes; si queda inventario, activa `emergencyStopRequiresManualLiquidation` en vez de vender nada automáticamente. |
 | Emergencia con órdenes en curso | `emergencyCancelAll` cancela toda orden no terminal (o la cierra localmente si nunca llegó a enviarse) y activa `emergencyStopActive`, que bloquea cualquier nueva orden hasta que se despeje explícitamente. |
-| Despejar la parada de emergencia sin haber resuelto realmente el inventario pendiente | `clearEmergencyStop` apaga la alarma (`emergencyStopActive`), pero NO borra `emergencyStopRequiresManualLiquidation` mientras siga existiendo inventario real o alguna orden en `reconciliation_required`; ese flag bloquea cualquier orden nueva (`manualLiquidationPending`) hasta que la evidencia (inventario en cero) lo resuelva de verdad. |
+| Despejar la parada de emergencia sin haber resuelto realmente el inventario o el balance pendiente | `clearEmergencyStop` apaga la alarma (`emergencyStopActive`), pero NO borra `emergencyStopRequiresManualLiquidation` mientras siga existiendo (a) una orden en `reconciliation_required`, o (b) inventario real sin que el último `lastBalanceCheckStatus` sea `"consistent"`. Ese flag bloquea cualquier orden nueva (`manualLiquidationPending`), abrir o cerrar. Una discrepancia de balance invalida cualquier `"consistent"` previo (`lastBalanceCheckStatus = null`); solo una `reconcile()` posterior que vuelva a confirmarlo permite, tras un segundo `clearEmergencyStop`, volver a operar. |
 | Pérdida de estado por reinicio del proceso | El snapshot es un objeto plano serializable, del tipo que `LiveExecutorState` persistiría en `ctx.storage`; `test/live-executor.test.ts` verifica que un ciclo `JSON.stringify`/`JSON.parse` conserva órdenes, inventario, idempotencia y auditoría. |
 | Crear un recurso real en Cloudflare para una infraestructura que debe seguir desactivada | `LiveExecutorState` no tiene binding ni migración en `wrangler.jsonc` y no se exporta desde `index.ts`: Cloudflare no lo despliega. |
+
+## Typecheck de producción aislado del de pruebas
+
+`test/kraken-single-authority.test.ts` necesita `fs`/`path` de Node para leer
+`src/*.ts` como texto. En vez de añadir los tipos de Node al `tsconfig.json`
+de producción (lo que ocultaría, en el propio typecheck, el uso accidental de
+una API de Node inexistente en Cloudflare Workers), hay dos programas
+separados:
+
+- `tsconfig.json` (`npm run typecheck:worker`): solo `src/**/*.ts`, solo
+  `@cloudflare/workers-types`. Es la comprobación que certifica que el código
+  del Worker no depende de nada que no exista en el runtime real.
+- `tsconfig.test.json` (`npm run typecheck:test`): extiende el anterior,
+  añade `"node"` a `types` e incluye también `test/**/*.ts`.
+
+`npm run typecheck` ejecuta ambos; `.github/workflows/ci.yml` los llama como
+pasos separados (`typecheck:worker` y `typecheck:test`) antes de `npm test`.
 
 ## Limitación reconocida
 
