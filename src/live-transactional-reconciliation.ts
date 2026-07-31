@@ -65,10 +65,11 @@ export async function reconcileWithVerifiedFillsTransactional(
   resolution: LivePairResolution,
   now = Date.now(),
 ): Promise<LiveVerifiedReconciliationReport> {
-  const candidate = structuredClone(state) as LiveExecutorSnapshot;
+  let candidate: LiveExecutorSnapshot;
   let report: LiveVerifiedReconciliationReport;
 
   try {
+    candidate = structuredClone(state) as LiveExecutorSnapshot;
     report = await reconcileWithVerifiedFills(
       candidate,
       transport,
