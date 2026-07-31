@@ -2,7 +2,6 @@ import type { Candle } from "./types";
 
 const API_BASE = "https://api.kraken.com/0";
 const encoder = new TextEncoder();
-let lastNonce = 0;
 
 type KrakenResponse<T> = { error: string[]; result: T };
 
@@ -53,12 +52,6 @@ function exactArrayBuffer(bytes: Uint8Array): ArrayBuffer {
   return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
 }
 
-function nextNonce(): string {
-  const candidate = Date.now() * 1000;
-  lastNonce = Math.max(candidate, lastNonce + 1);
-  return String(lastNonce);
-}
-
 export function assessKrakenPermissions(permissions: string[]): {
   safe: boolean;
   missing: string[];
@@ -99,9 +92,9 @@ async function privatePost<T>(
   apiPath: string,
   apiKey: string,
   apiSecret: string,
+  nonce: string,
   fields: Record<string, string> = {},
 ): Promise<T> {
-  const nonce = nextNonce();
   const form = new URLSearchParams({ nonce, ...fields });
   const postData = form.toString();
   const signature = await signKrakenRequest(apiPath, nonce, postData, apiSecret);
@@ -113,7 +106,7 @@ async function privatePost<T>(
       "Content-Type": "application/x-www-form-urlencoded; charset=utf-8",
       "API-Key": apiKey,
       "API-Sign": signature,
-      "User-Agent": "auto-bolsa-ai/0.2",
+      "User-Agent": "auto-bolsa-ai/0.3",
     },
     body: postData,
   });
@@ -124,11 +117,12 @@ async function privatePost<T>(
   return payload.result;
 }
 
-export async function fetchApiKeyInfo(apiKey: string, apiSecret: string): Promise<KrakenApiKeyInfo> {
+export async function fetchApiKeyInfo(apiKey: string, apiSecret: string, nonce: string): Promise<KrakenApiKeyInfo> {
   const result = await privatePost<Record<string, unknown>>(
     "/0/private/GetApiKeyInfo",
     apiKey,
     apiSecret,
+    nonce,
   );
   const permissions = Array.isArray(result.permissions)
     ? result.permissions.filter((value): value is string => typeof value === "string")
@@ -150,7 +144,7 @@ export async function fetchOhlc(pair: string, interval = 15): Promise<Candle[]> 
   url.searchParams.set("interval", String(interval));
 
   const response = await fetch(url, {
-    headers: { Accept: "application/json", "User-Agent": "auto-bolsa-ai/0.2" },
+    headers: { Accept: "application/json", "User-Agent": "auto-bolsa-ai/0.3" },
   });
   if (!response.ok) throw new Error(`Kraken OHLC HTTP ${response.status}`);
 
