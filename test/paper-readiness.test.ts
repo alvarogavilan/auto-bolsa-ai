@@ -95,7 +95,7 @@ describe("paper readiness gate", () => {
       snapshot({
         paperStartedAt: 0,
         ticksObserved: 600,
-        errorsObserved: 1,
+        errorsObserved: 10,
         trades: Array.from({ length: 30 }, (_, index) => trade(index, 0.1)),
         equityEur: 53,
         peakEquityEur: 54,
@@ -104,6 +104,7 @@ describe("paper readiness gate", () => {
       20 * DAY,
     );
 
+    expect(result.errorRatePct).toBeGreaterThan(1);
     expect(result.checks.runtimeErrorsAccepted).toBe(false);
     expect(result.checks.drawdownAccepted).toBe(false);
     expect(result.eligibleForLiveReview).toBe(false);
