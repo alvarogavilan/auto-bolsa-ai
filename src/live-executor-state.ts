@@ -9,6 +9,10 @@ import {
   type LiveOrderRequest,
 } from "./live-executor";
 import { defaultLiveGuardrailConfig, liveTradingEnabledFromEnv, type LiveGuardrailConfig } from "./live-guardrails";
+import {
+  runValidateOnlyOrderPreflight,
+  type LiveOrderPreflightIntent,
+} from "./live-order-preflight";
 import { fetchLivePairResolution, type LivePairResolution } from "./live-pair-metadata";
 import { reconcileWithVerifiedFillsTransactional } from "./live-transactional-reconciliation";
 import { FakeLiveOrderTransport, KrakenLiveOrderTransport, type LiveOrderTransport } from "./live-transport";
@@ -42,10 +46,7 @@ interface LiveReconciliationContext {
  *
  * IMPORTANTE: esta clase NO está enlazada en `wrangler.jsonc` (no hay binding
  * ni migración) ni exportada desde `index.ts`, así que Cloudflare no la
- * instancia ni la despliega: no existe como recurso real en la cuenta. Solo
- * vive como código fuente, comprobado por `tsc --noEmit` y ejercitado
- * indirectamente a través de las funciones puras del ejecutor. Enlazarla de
- * verdad es un paso futuro y deliberadamente separado.
+ * instancia ni la despliega: no existe como recurso real en la cuenta.
  */
 export class LiveExecutorState extends DurableObject<Env> {
   constructor(ctx: DurableObjectState, env: Env) {
@@ -87,10 +88,7 @@ export class LiveExecutorState extends DurableObject<Env> {
     return new FakeLiveOrderTransport();
   }
 
-  /**
-   * La fuente real de fills solo puede construirse bajo activación explícita.
-   * Cualquier otra composición falla cerrada.
-   */
+  /** La fuente real de fills solo existe bajo activación explícita futura. */
   private fillEvidenceSource(): LiveFillEvidenceSource {
     const enabled = liveTradingEnabledFromEnv(this.env.LIVE_TRADING_ENABLED);
     if (enabled && this.env.KRAKEN_API_KEY && this.env.KRAKEN_API_SECRET) {
@@ -103,11 +101,6 @@ export class LiveExecutorState extends DurableObject<Env> {
     return new UnavailableLiveFillEvidenceSource();
   }
 
-  /**
-   * Obtiene mínimos, precisiones y aliases desde AssetPairs y los conserva en
-   * storage. Preparar/enviar exige información fresca. Reconciliar o cancelar
-   * en emergencia puede usar la última copia conocida si la API pública cae.
-   */
   private async pairResolution(
     pair: string,
     now: number,
@@ -162,6 +155,33 @@ export class LiveExecutorState extends DurableObject<Env> {
       observeMarket(state, body.equityEur, now);
       await this.write(state);
       return Response.json(state);
+    }
+
+    if (request.method === "POST" && url.pathname === "/preflight") {
+      if (!this.env.KRAKEN_API_KEY || !this.env.KRAKEN_API_SECRET) {
+        return Response.json(
+          { validateOnly: true, orderCreated: false, error: "Faltan credenciales Kraken", liveTrading: false },
+          { status: 412 },
+        );
+      }
+      const body = (await request.json()) as LiveOrderPreflightIntent;
+      const pair = this.env.PAIR || "XBTEUR";
+      if (body.pair !== pair) {
+        return Response.json(
+          { validateOnly: true, orderCreated: false, error: `El único par permitido es ${pair}`, liveTrading: false },
+          { status: 409 },
+        );
+      }
+      const resolution = await this.pairResolution(pair, now, false);
+      const result = await runValidateOnlyOrderPreflight({
+        intent: body,
+        metadata: resolution.metadata,
+        apiKey: this.env.KRAKEN_API_KEY,
+        apiSecret: this.env.KRAKEN_API_SECRET,
+        nonce: await this.nextNonce(),
+        now,
+      });
+      return Response.json(result, { status: result.accepted ? 200 : 409 });
     }
 
     if (request.method === "POST" && url.pathname === "/prepare") {
