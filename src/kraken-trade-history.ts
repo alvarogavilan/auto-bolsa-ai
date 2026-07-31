@@ -158,14 +158,15 @@ export async function fetchTradeExecutionsForOrders(
 
   for (let pageIndex = 0; pageIndex < maxPages; pageIndex += 1) {
     const nonce = await request.nextNonce();
-    const page = await fetchPage({
+    const pageRequest: KrakenTradeHistoryPageRequest = {
       apiKey: request.apiKey,
       apiSecret: request.apiSecret,
       nonce,
-      startSeconds: request.startSeconds,
-      endSeconds: request.endSeconds,
       offset: pageIndex * PAGE_SIZE,
-    });
+    };
+    if (request.startSeconds !== undefined) pageRequest.startSeconds = request.startSeconds;
+    if (request.endSeconds !== undefined) pageRequest.endSeconds = request.endSeconds;
+    const page = await fetchPage(pageRequest);
     pagesFetched += 1;
     accountRowsScanned += page.returnedCount;
     if (page.totalCount !== null) totalCount = page.totalCount;
