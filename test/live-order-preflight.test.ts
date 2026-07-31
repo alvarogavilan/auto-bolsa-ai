@@ -69,7 +69,7 @@ describe("validate-only Kraken order preflight", () => {
     })).rejects.toThrow(/no admite más de 5 EUR/);
 
     await expect(runValidateOnlyOrderPreflight({
-      intent: { ...intent, volumeBase: 0.000100001 },
+      intent: { ...intent, volumeBase: 0.000100015 },
       metadata,
       apiKey: "key",
       apiSecret: "secret",
