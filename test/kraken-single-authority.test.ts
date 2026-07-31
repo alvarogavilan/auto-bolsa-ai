@@ -64,4 +64,13 @@ describe("Kraken single nonce authority (architectural)", () => {
     }
     expect(offenders).toEqual([]);
   });
+
+  it("keeps validate-only AddOrder inside the authorized transport and forces the flag", () => {
+    const preflight = read("live-order-preflight.ts");
+    const transport = read("live-transport.ts");
+
+    expect(preflight).not.toMatch(/import\s*\{[^}]*\baddOrder\b[^}]*\}\s*from\s*["']\.\/kraken["']/s);
+    expect(transport).toMatch(/export\s+async\s+function\s+submitKrakenValidateOnlyOrder/);
+    expect(transport).toMatch(/addOrder\s*\(\s*\{\s*\.\.\.call\.request,\s*validate:\s*true\s*\}/s);
+  });
 });
