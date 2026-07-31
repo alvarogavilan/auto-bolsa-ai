@@ -1,7 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
 import {
   clearEmergencyStop,
-  emergencyCancelAll,
   initializeLiveExecutor,
   observeMarket,
   prepareOrder,
@@ -18,6 +17,7 @@ import {
   reconcileWithVerifiedFills,
   type LiveFillEvidenceSource,
 } from "./live-verified-reconciliation";
+import { emergencyCancelAllWithVerifiedFills } from "./live-verified-emergency";
 import { BOT_STATE_SINGLETON_NAME, type Env } from "./types";
 
 const STORAGE_KEY = "live-executor-snapshot";
@@ -62,10 +62,7 @@ export class LiveExecutorState extends DurableObject<Env> {
     await this.ctx.storage.put(STORAGE_KEY, state);
   }
 
-  /**
-   * El ejecutor LIVE NUNCA mantiene su propio contador de nonce: pide el
-   * siguiente a la única autoridad persistente (`BotState`).
-   */
+  /** El nonce procede siempre de la única autoridad persistente BotState. */
   private async nextNonce(): Promise<string> {
     const botState = this.env.BOT_STATE.get(this.env.BOT_STATE.idFromName(BOT_STATE_SINGLETON_NAME));
     const response = await botState.fetch("https://bot/kraken/next-nonce", { method: "POST" });
@@ -91,9 +88,8 @@ export class LiveExecutorState extends DurableObject<Env> {
   }
 
   /**
-   * Igual que el transporte, la fuente real de fills solo puede construirse
-   * bajo la activación explícita futura. Cualquier otra composición falla
-   * cerrada: nunca inventa un historial vacío como si fuese prueba suficiente.
+   * La fuente real de fills solo puede construirse bajo activación explícita.
+   * Cualquier otra composición falla cerrada.
    */
   private fillEvidenceSource(): LiveFillEvidenceSource {
     const enabled = liveTradingEnabledFromEnv(this.env.LIVE_TRADING_ENABLED);
@@ -207,8 +203,6 @@ export class LiveExecutorState extends DurableObject<Env> {
       if (!state.orders[body.clOrdId]) {
         return Response.json({ error: "Orden desconocida" }, { status: 404 });
       }
-      // Un retry nunca reenvía. Ejecuta de nuevo la reconciliación completa
-      // contra órdenes, fills individuales y balance usando una sola puerta.
       const { config, resolution } = await this.reconciliationContext(now, true);
       const report = await reconcileWithVerifiedFills(
         state,
@@ -228,16 +222,18 @@ export class LiveExecutorState extends DurableObject<Env> {
     if (request.method === "POST" && url.pathname === "/emergency-cancel-all") {
       const body = (await request.json().catch(() => ({}))) as { reason?: string };
       const state = await this.read();
-      const { config } = await this.reconciliationContext(now, true);
-      await emergencyCancelAll(
+      const { config, resolution } = await this.reconciliationContext(now, true);
+      const report = await emergencyCancelAllWithVerifiedFills(
         state,
         this.transport(),
+        this.fillEvidenceSource(),
         config,
+        resolution,
         body.reason ?? "Cancelación de emergencia manual",
         now,
       );
       await this.write(state);
-      return Response.json(state);
+      return Response.json({ state, verifiedEmergencyCancellation: report }, { status: 200 });
     }
 
     if (request.method === "POST" && url.pathname === "/clear-emergency-stop") {
