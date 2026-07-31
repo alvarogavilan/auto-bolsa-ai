@@ -11,11 +11,11 @@ import {
 } from "./live-executor";
 import { defaultLiveGuardrailConfig, liveTradingEnabledFromEnv, type LiveGuardrailConfig } from "./live-guardrails";
 import { fetchLivePairResolution, type LivePairResolution } from "./live-pair-metadata";
+import { reconcileWithVerifiedFillsTransactional } from "./live-transactional-reconciliation";
 import { FakeLiveOrderTransport, KrakenLiveOrderTransport, type LiveOrderTransport } from "./live-transport";
 import {
   KrakenLiveFillEvidenceSource,
   UnavailableLiveFillEvidenceSource,
-  reconcileWithVerifiedFills,
   type LiveFillEvidenceSource,
 } from "./live-verified-reconciliation";
 import { BOT_STATE_SINGLETON_NAME, type Env } from "./types";
@@ -189,7 +189,7 @@ export class LiveExecutorState extends DurableObject<Env> {
     if (request.method === "POST" && url.pathname === "/reconcile") {
       const state = await this.read();
       const { config, resolution } = await this.reconciliationContext(now, true);
-      const report = await reconcileWithVerifiedFills(
+      const report = await reconcileWithVerifiedFillsTransactional(
         state,
         this.transport(),
         this.fillEvidenceSource(),
@@ -210,7 +210,7 @@ export class LiveExecutorState extends DurableObject<Env> {
       // Un retry nunca reenvía. Ejecuta de nuevo la reconciliación completa
       // contra órdenes, fills individuales y balance usando una sola puerta.
       const { config, resolution } = await this.reconciliationContext(now, true);
-      const report = await reconcileWithVerifiedFills(
+      const report = await reconcileWithVerifiedFillsTransactional(
         state,
         this.transport(),
         this.fillEvidenceSource(),
