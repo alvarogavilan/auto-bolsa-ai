@@ -6,6 +6,7 @@ export interface PaperReadiness {
   daysObserved: number;
   ticksObserved: number;
   errorsObserved: number;
+  errorRatePct: number;
   closedTrades: number;
   winningTrades: number;
   losingTrades: number;
@@ -23,7 +24,7 @@ export interface PaperReadiness {
     positiveNetPnl: boolean;
     minimumProfitFactor: number;
     maximumDrawdownPct: number;
-    zeroRuntimeErrors: boolean;
+    maximumErrorRatePct: number;
   };
   checks: {
     enoughDays: boolean;
@@ -44,6 +45,7 @@ const MINIMUM_TICKS = 500;
 const MINIMUM_CLOSED_TRADES = 30;
 const MINIMUM_PROFIT_FACTOR = 1.1;
 const MAXIMUM_DRAWDOWN_PCT = 0.05;
+const MAXIMUM_ERROR_RATE = 0.01;
 
 function rounded(value: number, decimals = 6): number {
   const factor = 10 ** decimals;
@@ -66,6 +68,8 @@ export function calculatePaperReadiness(snapshot: BotSnapshot, now = Date.now())
     ? (snapshot.equityEur - snapshot.initialCashEur) / snapshot.initialCashEur
     : 0;
   const profitFactor = grossLoss > 0 ? grossProfit / grossLoss : grossProfit > 0 ? Number.POSITIVE_INFINITY : null;
+  const totalAttempts = snapshot.ticksObserved + snapshot.errorsObserved;
+  const errorRate = totalAttempts > 0 ? snapshot.errorsObserved / totalAttempts : 0;
 
   const checks = {
     enoughDays: daysObserved >= MINIMUM_DAYS,
@@ -74,7 +78,7 @@ export function calculatePaperReadiness(snapshot: BotSnapshot, now = Date.now())
     positiveNetPnl: netPnl > 0,
     profitFactorAccepted: profitFactor !== null && profitFactor >= MINIMUM_PROFIT_FACTOR,
     drawdownAccepted: snapshot.maxObservedDrawdownPct <= MAXIMUM_DRAWDOWN_PCT,
-    runtimeErrorsAccepted: snapshot.errorsObserved === 0,
+    runtimeErrorsAccepted: errorRate <= MAXIMUM_ERROR_RATE,
   };
   const eligibleForLiveReview = Object.values(checks).every(Boolean);
 
@@ -84,6 +88,7 @@ export function calculatePaperReadiness(snapshot: BotSnapshot, now = Date.now())
     daysObserved,
     ticksObserved: snapshot.ticksObserved,
     errorsObserved: snapshot.errorsObserved,
+    errorRatePct: rounded(errorRate * 100, 3),
     closedTrades: closed.length,
     winningTrades: winning.length,
     losingTrades: losing.length,
@@ -101,7 +106,7 @@ export function calculatePaperReadiness(snapshot: BotSnapshot, now = Date.now())
       positiveNetPnl: true,
       minimumProfitFactor: MINIMUM_PROFIT_FACTOR,
       maximumDrawdownPct: MAXIMUM_DRAWDOWN_PCT * 100,
-      zeroRuntimeErrors: true,
+      maximumErrorRatePct: MAXIMUM_ERROR_RATE * 100,
     },
     checks,
     eligibleForLiveReview,
