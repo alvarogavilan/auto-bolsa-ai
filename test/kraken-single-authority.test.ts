@@ -74,6 +74,7 @@ describe("Kraken single nonce authority (architectural)", () => {
     expect(content).toMatch(/function\s+forceValidateOnlyOrderRequest/);
     expect(content).toMatch(/validate:\s*true/);
     expect(content).toMatch(/return\s+addOrder\s*\(\s*forceValidateOnlyOrderRequest\(request\)/s);
-    expect(content).not.toMatch(/LiveOrderTransport/);
+    expect(content).not.toMatch(/from\s*["']\.\/live-transport["']/);
+    expect(content).not.toMatch(/\.createOrder\s*\(/);
   });
 });
