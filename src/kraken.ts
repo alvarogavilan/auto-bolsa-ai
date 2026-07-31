@@ -25,6 +25,12 @@ export interface KrakenCredentialDiagnostics {
   apiSecretDecodedBytes: number | null;
 }
 
+export interface KrakenCredentialFingerprints {
+  fingerprintAlgorithm: "SHA-256/64-bit-prefix";
+  apiKeyFingerprint: string | null;
+  apiSecretFingerprint: string | null;
+}
+
 export const REQUIRED_KRAKEN_PERMISSIONS = [
   "query-funds",
   "query-open-trades",
@@ -95,6 +101,10 @@ function bytesToBase64(bytes: Uint8Array): string {
   return btoa(binary);
 }
 
+function bytesToHex(bytes: Uint8Array): string {
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
 function base64ToBytes(value: string): Uint8Array {
   const binary = atob(normalizeCredential(value));
   const bytes = new Uint8Array(binary.length);
@@ -104,6 +114,30 @@ function base64ToBytes(value: string): Uint8Array {
 
 function exactArrayBuffer(bytes: Uint8Array): ArrayBuffer {
   return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+}
+
+async function fingerprintCredential(value: string): Promise<string | null> {
+  const normalized = normalizeCredential(value);
+  if (!normalized) return null;
+  const digest = new Uint8Array(
+    await crypto.subtle.digest("SHA-256", exactArrayBuffer(encoder.encode(normalized))),
+  );
+  return bytesToHex(digest.slice(0, 8));
+}
+
+export async function fingerprintKrakenCredentials(
+  apiKey: string,
+  apiSecret: string,
+): Promise<KrakenCredentialFingerprints> {
+  const [apiKeyFingerprint, apiSecretFingerprint] = await Promise.all([
+    fingerprintCredential(apiKey),
+    fingerprintCredential(apiSecret),
+  ]);
+  return {
+    fingerprintAlgorithm: "SHA-256/64-bit-prefix",
+    apiKeyFingerprint,
+    apiSecretFingerprint,
+  };
 }
 
 export function assessKrakenPermissions(permissions: string[]): {
@@ -169,7 +203,7 @@ async function privatePostForm<T>(
       "Content-Type": "application/x-www-form-urlencoded; charset=utf-8",
       "API-Key": normalizedApiKey,
       "API-Sign": signature,
-      "User-Agent": "auto-bolsa-ai/0.6",
+      "User-Agent": "auto-bolsa-ai/0.7",
     },
     body: postData,
   });
@@ -196,7 +230,7 @@ async function privatePostJson<T>(
       "Content-Type": "application/json",
       "API-Key": normalizedApiKey,
       "API-Sign": signature,
-      "User-Agent": "auto-bolsa-ai/0.6",
+      "User-Agent": "auto-bolsa-ai/0.7",
     },
     body: postData,
   });
@@ -234,7 +268,7 @@ export async function fetchOhlc(pair: string, interval = 15): Promise<Candle[]> 
   url.searchParams.set("interval", String(interval));
 
   const response = await fetch(url, {
-    headers: { Accept: "application/json", "User-Agent": "auto-bolsa-ai/0.6" },
+    headers: { Accept: "application/json", "User-Agent": "auto-bolsa-ai/0.7" },
   });
   if (!response.ok) throw new Error(`Kraken OHLC HTTP ${response.status}`);
 
