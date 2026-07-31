@@ -1,14 +1,15 @@
 import { DurableObject } from "cloudflare:workers";
 import { fetchBalance, fetchOhlc, inspectKrakenCredentials } from "./kraken";
+import { selectMarketObservation } from "./market-evidence";
 import { calculatePaperReadiness } from "./paper-readiness";
 import { calculateIndicators, decide } from "./strategy";
-import type { BotConfig, BotSnapshot, Env, PaperTrade } from "./types";
+import type { BotConfig, BotSnapshot, Env, PaperPerformance, PaperTrade } from "./types";
 
 const STORAGE_KEY = "snapshot";
 const KRAKEN_NONCE_KEY = "kraken-last-nonce";
 const KRAKEN_LOCKOUT_UNTIL_KEY = "kraken-lockout-until";
 const KRAKEN_LOCKOUT_MS = 15 * 60_000;
-const VERSION = "0.9.0-paper";
+const VERSION = "0.10.0-paper";
 
 function utcDay(timestamp: number): string {
   return new Date(timestamp).toISOString().slice(0, 10);
@@ -35,6 +36,44 @@ function defaultConfig(pair: string): BotConfig {
   };
 }
 
+function emptyPerformance(): PaperPerformance {
+  return {
+    buyTrades: 0,
+    sellTrades: 0,
+    closedTrades: 0,
+    winningTrades: 0,
+    losingTrades: 0,
+    grossProfitEur: 0,
+    grossLossEur: 0,
+    netPnlEur: 0,
+    totalFeesEur: 0,
+  };
+}
+
+function derivePerformance(trades: PaperTrade[]): PaperPerformance {
+  const performance = emptyPerformance();
+  for (const trade of trades) {
+    performance.totalFeesEur = money(performance.totalFeesEur + trade.feeEur);
+    if (trade.side === "buy") {
+      performance.buyTrades += 1;
+      continue;
+    }
+
+    performance.sellTrades += 1;
+    if (typeof trade.pnlEur !== "number") continue;
+    performance.closedTrades += 1;
+    performance.netPnlEur = money(performance.netPnlEur + trade.pnlEur);
+    if (trade.pnlEur > 0) {
+      performance.winningTrades += 1;
+      performance.grossProfitEur = money(performance.grossProfitEur + trade.pnlEur);
+    } else if (trade.pnlEur < 0) {
+      performance.losingTrades += 1;
+      performance.grossLossEur = money(performance.grossLossEur + Math.abs(trade.pnlEur));
+    }
+  }
+  return performance;
+}
+
 function initialSnapshot(env: Env): BotSnapshot {
   const initialCash = Number(env.INITIAL_CASH_EUR || "50");
   const now = Date.now();
@@ -50,14 +89,20 @@ function initialSnapshot(env: Env): BotSnapshot {
     dayStartEquityEur: initialCash,
     dayKey: utcDay(now),
     paperStartedAt: now,
+    evidenceStartedAt: now,
+    evidenceMethod: "closed-15m-candles-v1",
     ticksObserved: 0,
+    uniqueClosedCandlesObserved: 0,
+    duplicateCandleSkips: 0,
     errorsObserved: 0,
     maxObservedDrawdownPct: 0,
+    lastClosedCandleTime: null,
     lastPrice: null,
     lastTickAt: null,
     lastTradeAt: null,
-    lastDecision: "Esperando primer ciclo",
+    lastDecision: "Esperando primera vela cerrada",
     config: defaultConfig(env.PAIR || "XBTEUR"),
+    performance: emptyPerformance(),
     trades: [],
   };
 }
@@ -72,17 +117,24 @@ export class BotState extends DurableObject<Env> {
     const stored = await this.ctx.storage.get<Partial<BotSnapshot>>(STORAGE_KEY);
     if (!stored) return fallback;
 
+    const trades = Array.isArray(stored.trades) ? stored.trades : [];
     return {
       ...fallback,
       ...stored,
       version: VERSION,
       mode: "paper",
       paperStartedAt: stored.paperStartedAt ?? stored.lastTickAt ?? Date.now(),
+      evidenceStartedAt: stored.evidenceStartedAt ?? Date.now(),
+      evidenceMethod: "closed-15m-candles-v1",
       ticksObserved: stored.ticksObserved ?? 0,
+      uniqueClosedCandlesObserved: stored.uniqueClosedCandlesObserved ?? 0,
+      duplicateCandleSkips: stored.duplicateCandleSkips ?? 0,
       errorsObserved: stored.errorsObserved ?? 0,
       maxObservedDrawdownPct: stored.maxObservedDrawdownPct ?? 0,
+      lastClosedCandleTime: stored.lastClosedCandleTime ?? null,
       config: { ...fallback.config, ...(stored.config ?? {}) },
-      trades: Array.isArray(stored.trades) ? stored.trades : [],
+      performance: stored.performance ?? derivePerformance(trades),
+      trades,
     };
   }
 
@@ -243,6 +295,27 @@ export class BotState extends DurableObject<Env> {
   }
 
   private addTrade(snapshot: BotSnapshot, trade: PaperTrade): void {
+    snapshot.performance.totalFeesEur = money(snapshot.performance.totalFeesEur + trade.feeEur);
+    if (trade.side === "buy") {
+      snapshot.performance.buyTrades += 1;
+    } else {
+      snapshot.performance.sellTrades += 1;
+      if (typeof trade.pnlEur === "number") {
+        snapshot.performance.closedTrades += 1;
+        snapshot.performance.netPnlEur = money(snapshot.performance.netPnlEur + trade.pnlEur);
+        if (trade.pnlEur > 0) {
+          snapshot.performance.winningTrades += 1;
+          snapshot.performance.grossProfitEur = money(
+            snapshot.performance.grossProfitEur + trade.pnlEur,
+          );
+        } else if (trade.pnlEur < 0) {
+          snapshot.performance.losingTrades += 1;
+          snapshot.performance.grossLossEur = money(
+            snapshot.performance.grossLossEur + Math.abs(trade.pnlEur),
+          );
+        }
+      }
+    }
     snapshot.trades = [trade, ...snapshot.trades].slice(0, 100);
   }
 
@@ -326,23 +399,36 @@ export class BotState extends DurableObject<Env> {
     }
 
     const candles = await fetchOhlc(snapshot.config.pair, 15);
+    const observation = selectMarketObservation(candles, snapshot.lastClosedCandleTime);
+
+    snapshot.ticksObserved += 1;
+    snapshot.lastPrice = observation.currentPrice;
+    snapshot.lastTickAt = now;
+    snapshot.equityEur = this.equity(snapshot, observation.currentPrice);
+    snapshot.peakEquityEur = Math.max(snapshot.peakEquityEur, snapshot.equityEur);
+    this.updateObservedDrawdown(snapshot);
+
+    if (!observation.isNewClosedCandle) {
+      snapshot.duplicateCandleSkips += 1;
+      snapshot.lastDecision = "Sin nueva vela cerrada de 15 minutos; señal no reevaluada";
+      await this.write(snapshot);
+      return snapshot;
+    }
+
+    snapshot.lastClosedCandleTime = observation.latestClosedCandleTime;
+    snapshot.uniqueClosedCandlesObserved += 1;
     const indicators = calculateIndicators(
-      candles,
+      observation.closedCandles,
       snapshot.config.fastPeriod,
       snapshot.config.slowPeriod,
       snapshot.config.rsiPeriod,
     );
+    const decisionPrice = indicators.price;
 
-    snapshot.ticksObserved += 1;
-    snapshot.lastPrice = indicators.price;
-    snapshot.lastTickAt = now;
-    snapshot.equityEur = this.equity(snapshot, indicators.price);
-    snapshot.peakEquityEur = Math.max(snapshot.peakEquityEur, snapshot.equityEur);
-
-    if (snapshot.position && indicators.price <= snapshot.position.stopLoss) {
-      this.sell(snapshot, indicators.price, now, "Stop loss automático");
-    } else if (snapshot.position && indicators.price >= snapshot.position.takeProfit) {
-      this.sell(snapshot, indicators.price, now, "Take profit automático");
+    if (snapshot.position && decisionPrice <= snapshot.position.stopLoss) {
+      this.sell(snapshot, decisionPrice, now, "Stop loss en vela cerrada");
+    } else if (snapshot.position && decisionPrice >= snapshot.position.takeProfit) {
+      this.sell(snapshot, decisionPrice, now, "Take profit en vela cerrada");
     } else {
       const riskBlock = this.riskBlocked(snapshot);
       if (riskBlock) {
@@ -352,13 +438,13 @@ export class BotState extends DurableObject<Env> {
         snapshot.lastDecision = "Cooldown de seguridad activo";
       } else {
         const signal = decide(indicators, snapshot.position !== null);
-        if (signal.action === "buy") this.buy(snapshot, indicators.price, now, signal.reason);
-        else if (signal.action === "sell") this.sell(snapshot, indicators.price, now, signal.reason);
+        if (signal.action === "buy") this.buy(snapshot, decisionPrice, now, signal.reason);
+        else if (signal.action === "sell") this.sell(snapshot, decisionPrice, now, signal.reason);
         else snapshot.lastDecision = signal.reason;
       }
     }
 
-    snapshot.equityEur = this.equity(snapshot, indicators.price);
+    snapshot.equityEur = this.equity(snapshot, observation.currentPrice);
     snapshot.peakEquityEur = Math.max(snapshot.peakEquityEur, snapshot.equityEur);
     this.updateObservedDrawdown(snapshot);
     await this.write(snapshot);
