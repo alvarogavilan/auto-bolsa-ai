@@ -95,10 +95,13 @@ export interface BotSnapshot {
   uniqueClosedCandlesObserved: number;
   duplicateCandleSkips: number;
   errorsObserved: number;
+  consecutiveErrors: number;
+  lastError: string | null;
   maxObservedDrawdownPct: number;
   lastClosedCandleTime: number | null;
   lastPrice: number | null;
   lastTickAt: number | null;
+  lastSuccessfulTickAt: number | null;
   lastTradeAt: number | null;
   lastDecision: string;
   config: BotConfig;

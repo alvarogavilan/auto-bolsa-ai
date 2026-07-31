@@ -1,6 +1,7 @@
 import { DurableObject } from "cloudflare:workers";
 import { fetchBalance, fetchOhlc, inspectKrakenCredentials } from "./kraken";
 import { selectMarketObservation } from "./market-evidence";
+import { calculateOperationalHealth } from "./operational-health";
 import { calculatePaperReadiness } from "./paper-readiness";
 import { calculateIndicators, decide } from "./strategy";
 import type { BotConfig, BotSnapshot, Env, PaperPerformance, PaperTrade } from "./types";
@@ -9,7 +10,7 @@ const STORAGE_KEY = "snapshot";
 const KRAKEN_NONCE_KEY = "kraken-last-nonce";
 const KRAKEN_LOCKOUT_UNTIL_KEY = "kraken-lockout-until";
 const KRAKEN_LOCKOUT_MS = 15 * 60_000;
-const VERSION = "0.10.0-paper";
+const VERSION = "0.11.0-paper";
 
 function utcDay(timestamp: number): string {
   return new Date(timestamp).toISOString().slice(0, 10);
@@ -95,10 +96,13 @@ function initialSnapshot(env: Env): BotSnapshot {
     uniqueClosedCandlesObserved: 0,
     duplicateCandleSkips: 0,
     errorsObserved: 0,
+    consecutiveErrors: 0,
+    lastError: null,
     maxObservedDrawdownPct: 0,
     lastClosedCandleTime: null,
     lastPrice: null,
     lastTickAt: null,
+    lastSuccessfulTickAt: null,
     lastTradeAt: null,
     lastDecision: "Esperando primera vela cerrada",
     config: defaultConfig(env.PAIR || "XBTEUR"),
@@ -130,8 +134,11 @@ export class BotState extends DurableObject<Env> {
       uniqueClosedCandlesObserved: stored.uniqueClosedCandlesObserved ?? 0,
       duplicateCandleSkips: stored.duplicateCandleSkips ?? 0,
       errorsObserved: stored.errorsObserved ?? 0,
+      consecutiveErrors: stored.consecutiveErrors ?? 0,
+      lastError: stored.lastError ?? null,
       maxObservedDrawdownPct: stored.maxObservedDrawdownPct ?? 0,
       lastClosedCandleTime: stored.lastClosedCandleTime ?? null,
+      lastSuccessfulTickAt: stored.lastSuccessfulTickAt ?? stored.lastTickAt ?? null,
       config: { ...fallback.config, ...(stored.config ?? {}) },
       performance: stored.performance ?? derivePerformance(trades),
       trades,
@@ -140,6 +147,12 @@ export class BotState extends DurableObject<Env> {
 
   private async write(snapshot: BotSnapshot): Promise<void> {
     await this.ctx.storage.put(STORAGE_KEY, snapshot);
+  }
+
+  private markSuccessfulCycle(snapshot: BotSnapshot, now: number): void {
+    snapshot.lastSuccessfulTickAt = now;
+    snapshot.consecutiveErrors = 0;
+    snapshot.lastError = null;
   }
 
   private updateObservedDrawdown(snapshot: BotSnapshot): void {
@@ -393,6 +406,7 @@ export class BotState extends DurableObject<Env> {
 
     if (snapshot.paused) {
       snapshot.lastTickAt = now;
+      this.markSuccessfulCycle(snapshot, now);
       snapshot.lastDecision = "Pausado por el usuario";
       await this.write(snapshot);
       return snapshot;
@@ -404,6 +418,7 @@ export class BotState extends DurableObject<Env> {
     snapshot.ticksObserved += 1;
     snapshot.lastPrice = observation.currentPrice;
     snapshot.lastTickAt = now;
+    this.markSuccessfulCycle(snapshot, now);
     snapshot.equityEur = this.equity(snapshot, observation.currentPrice);
     snapshot.peakEquityEur = Math.max(snapshot.peakEquityEur, snapshot.equityEur);
     this.updateObservedDrawdown(snapshot);
@@ -486,7 +501,11 @@ export class BotState extends DurableObject<Env> {
         return Response.json(snapshot);
       }
       if (request.method === "GET" && url.pathname === "/status") {
-        return Response.json(await this.read());
+        const snapshot = await this.read();
+        return Response.json({
+          ...snapshot,
+          operationalHealth: calculateOperationalHealth(snapshot),
+        });
       }
       return new Response("Not found", { status: 404 });
     } catch (error) {
@@ -494,9 +513,17 @@ export class BotState extends DurableObject<Env> {
       const snapshot = await this.read();
       snapshot.lastTickAt = Date.now();
       snapshot.lastDecision = `ERROR: ${message}`;
-      if (url.pathname === "/tick") snapshot.errorsObserved += 1;
+      if (url.pathname === "/tick") {
+        snapshot.errorsObserved += 1;
+        snapshot.consecutiveErrors += 1;
+        snapshot.lastError = message;
+      }
       await this.write(snapshot);
-      return Response.json({ error: message, snapshot }, { status: 500 });
+      return Response.json({
+        error: message,
+        snapshot,
+        operationalHealth: calculateOperationalHealth(snapshot),
+      }, { status: 500 });
     }
   }
 }

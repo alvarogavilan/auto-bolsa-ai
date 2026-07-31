@@ -4,9 +4,9 @@ import type { BotSnapshot } from "../src/types";
 
 const DAY = 86_400_000;
 
-function snapshot(overrides: Partial<BotSnapshot> = {}): BotSnapshot {
+export function snapshot(overrides: Partial<BotSnapshot> = {}): BotSnapshot {
   return {
-    version: "0.10.0-paper",
+    version: "0.11.0-paper",
     mode: "paper",
     paused: false,
     initialCashEur: 50,
@@ -23,10 +23,13 @@ function snapshot(overrides: Partial<BotSnapshot> = {}): BotSnapshot {
     uniqueClosedCandlesObserved: 0,
     duplicateCandleSkips: 0,
     errorsObserved: 0,
+    consecutiveErrors: 0,
+    lastError: null,
     maxObservedDrawdownPct: 0,
     lastClosedCandleTime: null,
     lastPrice: null,
     lastTickAt: null,
+    lastSuccessfulTickAt: null,
     lastTradeAt: null,
     lastDecision: "test",
     config: {
