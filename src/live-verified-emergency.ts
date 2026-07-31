@@ -5,11 +5,11 @@ import type {
 } from "./live-executor";
 import type { LiveGuardrailConfig } from "./live-guardrails";
 import type { LivePairResolution } from "./live-pair-metadata";
+import { reconcileWithVerifiedFillsTransactional } from "./live-transactional-reconciliation";
 import type { LiveOrderTransport } from "./live-transport";
-import {
-  reconcileWithVerifiedFills,
-  type LiveFillEvidenceSource,
-  type LiveVerifiedReconciliationReport,
+import type {
+  LiveFillEvidenceSource,
+  LiveVerifiedReconciliationReport,
 } from "./live-verified-reconciliation";
 
 const EPSILON = 1e-9;
@@ -67,9 +67,10 @@ function cancelPreparedLocally(
 
 /**
  * Activa primero la parada, intenta cancelar todas las órdenes conocidas y
- * después ejecuta la reconciliación verificada. Nunca usa la respuesta de
+ * después ejecuta la reconciliación transaccional. Nunca usa la respuesta de
  * cancelación para inferir inventario: cualquier fill residual debe aparecer
- * en TradesHistory y cuadrar con la orden y el balance antes de aplicarse.
+ * en TradesHistory, cuadrar con la orden y coincidir con el balance antes de
+ * que el snapshot real acepte un solo delta.
  */
 export async function emergencyCancelAllWithVerifiedFills(
   state: LiveExecutorSnapshot,
@@ -144,7 +145,7 @@ export async function emergencyCancelAllWithVerifiedFills(
     }
   }
 
-  const reconciliation = await reconcileWithVerifiedFills(
+  const reconciliation = await reconcileWithVerifiedFillsTransactional(
     state,
     transport,
     fillSource,
