@@ -1,5 +1,6 @@
 export interface Env {
   BOT_STATE: DurableObjectNamespace;
+  RESEARCH_LAB: DurableObjectNamespace;
   TRADING_MODE: string;
   PAIR: string;
   INITIAL_CASH_EUR: string;
