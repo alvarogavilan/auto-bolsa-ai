@@ -1,4 +1,9 @@
 import { DurableObject } from "cloudflare:workers";
+import {
+  createDailyCheckpoint,
+  verifyCheckpointChain,
+  type PaperDailyCheckpoint,
+} from "./daily-checkpoints";
 import { fetchBalance, fetchOhlc, inspectKrakenCredentials } from "./kraken";
 import { selectMarketObservation } from "./market-evidence";
 import { calculateOperationalHealth } from "./operational-health";
@@ -7,10 +12,12 @@ import { calculateIndicators, decide } from "./strategy";
 import type { BotConfig, BotSnapshot, Env, PaperPerformance, PaperTrade } from "./types";
 
 const STORAGE_KEY = "snapshot";
+const DAILY_CHECKPOINTS_KEY = "paper-daily-checkpoints";
+const MAX_DAILY_CHECKPOINTS = 180;
 const KRAKEN_NONCE_KEY = "kraken-last-nonce";
 const KRAKEN_LOCKOUT_UNTIL_KEY = "kraken-lockout-until";
 const KRAKEN_LOCKOUT_MS = 15 * 60_000;
-const VERSION = "0.11.0-paper";
+const VERSION = "0.12.0-paper";
 
 function utcDay(timestamp: number): string {
   return new Date(timestamp).toISOString().slice(0, 10);
@@ -147,6 +154,39 @@ export class BotState extends DurableObject<Env> {
 
   private async write(snapshot: BotSnapshot): Promise<void> {
     await this.ctx.storage.put(STORAGE_KEY, snapshot);
+  }
+
+  private async readDailyCheckpoints(): Promise<PaperDailyCheckpoint[]> {
+    const stored = await this.ctx.storage.get<PaperDailyCheckpoint[]>(DAILY_CHECKPOINTS_KEY);
+    return Array.isArray(stored) ? stored : [];
+  }
+
+  private async recordDailyCheckpoint(snapshot: BotSnapshot, recordedAt: number): Promise<void> {
+    const checkpoints = await this.readDailyCheckpoints();
+    const previous = checkpoints.at(-1) ?? null;
+    if (previous?.dayKey === snapshot.dayKey) return;
+
+    const checkpoint = await createDailyCheckpoint(snapshot, previous, recordedAt);
+    await this.ctx.storage.put(
+      DAILY_CHECKPOINTS_KEY,
+      [...checkpoints, checkpoint].slice(-MAX_DAILY_CHECKPOINTS),
+    );
+  }
+
+  private dailyCheckpointSummary(checkpoints: PaperDailyCheckpoint[]): Record<string, unknown> {
+    const latest = checkpoints.at(-1) ?? null;
+    return {
+      schemaVersion: "paper-daily-checkpoint-v1",
+      checkpointCount: checkpoints.length,
+      latestDayKey: latest?.dayKey ?? null,
+      latestSequence: latest?.sequence ?? null,
+      latestHashPrefix: latest?.hash.slice(0, 16) ?? null,
+      retentionDays: MAX_DAILY_CHECKPOINTS,
+      liveTrading: false,
+      message: checkpoints.length > 0
+        ? "La evidencia diaria PAPER se conserva en una cadena criptográfica."
+        : "El primer cierre diario se registrará automáticamente al cambiar el día UTC.",
+    };
   }
 
   private markSuccessfulCycle(snapshot: BotSnapshot, now: number): void {
@@ -400,6 +440,7 @@ export class BotState extends DurableObject<Env> {
     const now = Date.now();
 
     if (utcDay(now) !== snapshot.dayKey) {
+      await this.recordDailyCheckpoint(snapshot, now);
       snapshot.dayKey = utcDay(now);
       snapshot.dayStartEquityEur = snapshot.equityEur;
     }
@@ -475,6 +516,15 @@ export class BotState extends DurableObject<Env> {
       if (request.method === "GET" && url.pathname === "/readiness") {
         return Response.json(calculatePaperReadiness(await this.read()));
       }
+      if (request.method === "GET" && url.pathname === "/checkpoints") {
+        const checkpoints = await this.readDailyCheckpoints();
+        return Response.json({
+          checkpoints,
+          verification: await verifyCheckpointChain(checkpoints),
+          retentionDays: MAX_DAILY_CHECKPOINTS,
+          liveTrading: false,
+        });
+      }
       if (request.method === "GET" && url.pathname === "/kraken/diagnostics") {
         return this.krakenDiagnostics();
       }
@@ -501,10 +551,14 @@ export class BotState extends DurableObject<Env> {
         return Response.json(snapshot);
       }
       if (request.method === "GET" && url.pathname === "/status") {
-        const snapshot = await this.read();
+        const [snapshot, checkpoints] = await Promise.all([
+          this.read(),
+          this.readDailyCheckpoints(),
+        ]);
         return Response.json({
           ...snapshot,
           operationalHealth: calculateOperationalHealth(snapshot),
+          dailyCheckpointSummary: this.dailyCheckpointSummary(checkpoints),
         });
       }
       return new Response("Not found", { status: 404 });
