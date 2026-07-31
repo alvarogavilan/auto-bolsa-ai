@@ -78,7 +78,7 @@ export class ResearchLabState extends DurableObject<Env> {
     if (!stored || stored.schemaVersion !== "multi-horizon-paper-lab-v1") return null;
     return {
       ...stored,
-      version: "0.19.0-paper",
+      version: "0.17.0-paper",
       mode: "paper",
       liveTrading: false,
       strategies: Array.isArray(stored.strategies) ? stored.strategies : [],
@@ -88,7 +88,7 @@ export class ResearchLabState extends DurableObject<Env> {
   private async write(state: StoredResearchLabState): Promise<void> {
     await this.ctx.storage.put(STORAGE_KEY, {
       ...state,
-      version: "0.19.0-paper",
+      version: "0.17.0-paper",
       mode: "paper",
       liveTrading: false,
     });
