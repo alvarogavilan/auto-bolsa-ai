@@ -1,10 +1,6 @@
 import { BotState } from "./bot-state";
 import { analyzeExecutionQuality } from "./execution-quality";
-import {
-  assessKrakenPermissions,
-  fetchApiKeyInfo,
-  fingerprintKrakenCredentials,
-} from "./kraken";
+import { fingerprintKrakenCredentials } from "./kraken";
 import { fetchAllTickers, fetchTradableAssetPairs } from "./kraken-markets";
 import { fetchPreTradeBook } from "./kraken-pretrade";
 import { buildMarketUniverse, type MarketCandidate, type MarketUniverse } from "./market-universe";
@@ -307,35 +303,10 @@ export default {
       if (!env.KRAKEN_API_KEY || !env.KRAKEN_API_SECRET) return Response.json({ configured: false, networkCallToKraken: false }, { status: 412 });
       return Response.json({ configured: true, networkCallToKraken: false, ...(await fingerprintKrakenCredentials(env.KRAKEN_API_KEY, env.KRAKEN_API_SECRET)), liveTrading: false });
     }
-    if (request.method === "GET" && url.pathname === "/api/kraken/permissions") {
-      if (!isAuthorized(request, env)) return new Response("Unauthorized", { status: 401 });
-      if (!env.KRAKEN_API_KEY || !env.KRAKEN_API_SECRET) return Response.json({ configured: false, auditComplete: false, liveTrading: false }, { status: 412 });
-      try {
-        const nonce = (BigInt(Date.now()) * 1000n).toString();
-        const info = await fetchApiKeyInfo(env.KRAKEN_API_KEY, env.KRAKEN_API_SECRET, nonce);
-        const assessment = assessKrakenPermissions(info.permissions);
-        return Response.json({
-          configured: true,
-          auditComplete: true,
-          safePermissions: assessment.safe,
-          apiKeyName: info.apiKeyName,
-          permissions: info.permissions,
-          missingPermissions: assessment.missing,
-          forbiddenPermissions: assessment.forbidden,
-          withdrawalPermission: info.permissions.includes("withdraw-funds"),
-          depositPermission: info.permissions.includes("add-funds"),
-          earnPermission: info.permissions.includes("earn-funds"),
-          ipRestrictionEnabled: info.ipAllowlist.length > 0,
-          expiresAt: info.validUntil && info.validUntil !== "0" ? info.validUntil : null,
-          liveTrading: false,
-          message: assessment.safe ? "Auditoría superada: la clave tiene los permisos operativos previstos y no permite retirar fondos." : "Auditoría bloqueada: los permisos no coinciden con la política segura.",
-        });
-      } catch (error) {
-        const message = error instanceof Error ? error.message : "Kraken permission audit failed";
-        return Response.json({ configured: true, auditComplete: false, error: message, liveTrading: false }, { status: 502 });
-      }
-    }
-    if (request.method === "GET" && ["/api/kraken/connection", "/api/kraken/diagnostics"].includes(url.pathname)) {
+    if (request.method === "GET" && ["/api/kraken/connection", "/api/kraken/diagnostics", "/api/kraken/permissions"].includes(url.pathname)) {
+      // Toda llamada privada a Kraken pasa por el único BotState, la autoridad
+      // persistente del nonce para esta clave de API (ver docs/kraken-api-safety.md).
+      // Nada en este fichero calcula ni usa un nonce directamente.
       if (!isAuthorized(request, env)) return new Response("Unauthorized", { status: 401 });
       return singleton(env).fetch(`https://bot${url.pathname.replace("/api", "")}`);
     }

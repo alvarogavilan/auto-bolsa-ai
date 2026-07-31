@@ -5,6 +5,19 @@
 
 const EPSILON = 1e-9;
 
+/**
+ * Metadatos reales de Kraken para un par (endpoint público `AssetPairs`):
+ * cantidad base mínima por orden y precisión (decimales) de volumen y precio.
+ * Los valores por defecto (`defaultLiveGuardrailConfig`) son de ejemplo y
+ * deben sincronizarse contra `AssetPairs` antes de cualquier piloto real; no
+ * se puede confiar en ellos como fuente de verdad de Kraken.
+ */
+export interface LivePairMetadata {
+  orderMinBase: number;
+  lotDecimals: number;
+  priceDecimals: number;
+}
+
 export interface LiveGuardrailConfig {
   liveTradingEnabled: boolean;
   maxOrderNotionalEur: number;
@@ -12,8 +25,8 @@ export interface LiveGuardrailConfig {
   maxDrawdownPct: number;
   maxConsecutiveTransportErrors: number;
   maxMarketDataAgeMs: number;
-  /** Pares permitidos para operar en LIVE. Cualquier otro par se bloquea. */
-  allowedPairs: readonly string[];
+  /** Pares permitidos, con sus metadatos reales de Kraken. Cualquier otro par se bloquea. */
+  pairMetadata: Readonly<Record<string, LivePairMetadata>>;
   /** Tolerancia relativa entre volumeBase × limitPrice y notionalEur declarado. */
   maxNotionalDeviationPct: number;
 }
@@ -39,6 +52,8 @@ export interface LiveGuardrailContext {
   consecutiveTransportErrors: number;
   lastMarketDataAt: number | null;
   emergencyStopActive: boolean;
+  /** Verdadero si queda inventario o reconciliación sin resolver desde una parada previa. */
+  manualLiquidationPending: boolean;
 }
 
 export interface LiveGuardrailResult {
@@ -47,6 +62,15 @@ export interface LiveGuardrailResult {
 }
 
 export const DEFAULT_MAX_ORDER_NOTIONAL_EUR = 5;
+
+/**
+ * Valores de ejemplo, no verificados contra el endpoint público `AssetPairs`
+ * en el momento de escribir esto. Cualquier despliegue real debe sustituirlos
+ * por los valores vigentes antes de un piloto manual.
+ */
+export const DEFAULT_PAIR_METADATA: Readonly<Record<string, LivePairMetadata>> = {
+  XBTEUR: { orderMinBase: 0.00005, lotDecimals: 8, priceDecimals: 1 },
+};
 
 export function defaultLiveGuardrailConfig(
   overrides: Partial<LiveGuardrailConfig> = {},
@@ -58,7 +82,7 @@ export function defaultLiveGuardrailConfig(
     maxDrawdownPct: 0.05,
     maxConsecutiveTransportErrors: 3,
     maxMarketDataAgeMs: 5 * 60_000,
-    allowedPairs: ["XBTEUR"],
+    pairMetadata: DEFAULT_PAIR_METADATA,
     maxNotionalDeviationPct: 0.01,
     ...overrides,
   };
@@ -68,14 +92,27 @@ export function liveTradingEnabledFromEnv(value: string | undefined): boolean {
   return value === "true";
 }
 
+/** Verdadero si `value` no cambia al redondearlo a `decimals` decimales (dentro de un margen de coma flotante). */
+export function isQuantized(value: number, decimals: number): boolean {
+  const factor = 10 ** decimals;
+  return Math.abs(Math.round(value * factor) / factor - value) < 1e-9;
+}
+
+/** Cuantiza `value` a `decimals` decimales (redondeo estándar, no truncamiento). */
+export function quantizeToDecimals(value: number, decimals: number): number {
+  const factor = 10 ** decimals;
+  return Math.round(value * factor) / factor;
+}
+
 /**
  * Validación de la intención en sí misma, independiente del estado del
- * ejecutor: números finitos y positivos, par permitido, y que
- * `volumeBase × limitPrice` sea coherente con el `notionalEur` declarado.
+ * ejecutor: números finitos y positivos, par permitido con sus metadatos
+ * reales de Kraken (mínimo y precisión), y que `volumeBase × limitPrice` sea
+ * coherente con el `notionalEur` declarado.
  */
 export function validateOrderIntent(
   context: Pick<LiveGuardrailContext, "pair" | "volumeBase" | "limitPrice" | "notionalEur">,
-  config: Pick<LiveGuardrailConfig, "allowedPairs" | "maxNotionalDeviationPct">,
+  config: Pick<LiveGuardrailConfig, "pairMetadata" | "maxNotionalDeviationPct">,
 ): string[] {
   const blockers: string[] = [];
 
@@ -88,8 +125,22 @@ export function validateOrderIntent(
   if (!Number.isFinite(context.notionalEur) || context.notionalEur <= 0) {
     blockers.push("notionalEur debe ser un número finito y positivo");
   }
-  if (!config.allowedPairs.includes(context.pair)) {
+
+  const metadata = config.pairMetadata[context.pair];
+  if (!metadata) {
     blockers.push(`Par no permitido: ${context.pair}`);
+  } else if (Number.isFinite(context.volumeBase) && context.volumeBase > 0) {
+    if (context.volumeBase < metadata.orderMinBase) {
+      blockers.push(
+        `volumeBase ${context.volumeBase} inferior al mínimo de Kraken para ${context.pair} (${metadata.orderMinBase})`,
+      );
+    }
+    if (!isQuantized(context.volumeBase, metadata.lotDecimals)) {
+      blockers.push(`volumeBase ${context.volumeBase} no está cuantizado a ${metadata.lotDecimals} decimales (lot_decimals)`);
+    }
+    if (Number.isFinite(context.limitPrice) && context.limitPrice > 0 && !isQuantized(context.limitPrice, metadata.priceDecimals)) {
+      blockers.push(`limitPrice ${context.limitPrice} no está cuantizado a ${metadata.priceDecimals} decimales (pair_decimals)`);
+    }
   }
 
   if (
@@ -123,6 +174,10 @@ export function evaluateLiveGuardrails(
 
   if (context.emergencyStopActive) {
     blockers.push("Parada de emergencia activa");
+  }
+
+  if (context.manualLiquidationPending) {
+    blockers.push("Liquidación manual pendiente tras una parada de emergencia");
   }
 
   if (context.hasActiveOrder) {

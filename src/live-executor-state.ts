@@ -11,7 +11,7 @@ import {
   type LiveExecutorSnapshot,
   type LiveOrderRequest,
 } from "./live-executor";
-import { defaultLiveGuardrailConfig, liveTradingEnabledFromEnv } from "./live-guardrails";
+import { DEFAULT_PAIR_METADATA, defaultLiveGuardrailConfig, liveTradingEnabledFromEnv } from "./live-guardrails";
 import { FakeLiveOrderTransport, KrakenLiveOrderTransport, type LiveOrderTransport } from "./live-transport";
 import { BOT_STATE_SINGLETON_NAME, type Env } from "./types";
 
@@ -79,9 +79,16 @@ export class LiveExecutorState extends DurableObject<Env> {
   }
 
   private guardrailConfig() {
+    const pair = this.env.PAIR || "XBTEUR";
+    // Sin metadatos reales conocidos para el par configurado, no se inventa
+    // un mínimo/precisión arbitrario: se cae al valor de ejemplo documentado
+    // en DEFAULT_PAIR_METADATA (a sincronizar contra AssetPairs antes de un
+    // piloto real) solo si coincide; en cualquier otro caso el par
+    // simplemente no está permitido.
+    const pairMetadata = DEFAULT_PAIR_METADATA[pair] ? { [pair]: DEFAULT_PAIR_METADATA[pair] } : {};
     return defaultLiveGuardrailConfig({
       liveTradingEnabled: liveTradingEnabledFromEnv(this.env.LIVE_TRADING_ENABLED),
-      allowedPairs: [this.env.PAIR || "XBTEUR"],
+      pairMetadata,
     });
   }
 
@@ -119,7 +126,7 @@ export class LiveExecutorState extends DurableObject<Env> {
 
     if (request.method === "POST" && url.pathname === "/reconcile") {
       const state = await this.read();
-      await reconcile(state, this.transport(), now);
+      await reconcile(state, this.transport(), this.guardrailConfig(), now);
       await this.write(state);
       return Response.json(state);
     }
@@ -135,7 +142,7 @@ export class LiveExecutorState extends DurableObject<Env> {
     if (request.method === "POST" && url.pathname === "/emergency-cancel-all") {
       const body = (await request.json().catch(() => ({}))) as { reason?: string };
       const state = await this.read();
-      await emergencyCancelAll(state, this.transport(), body.reason ?? "Cancelación de emergencia manual", now);
+      await emergencyCancelAll(state, this.transport(), this.guardrailConfig(), body.reason ?? "Cancelación de emergencia manual", now);
       await this.write(state);
       return Response.json(state);
     }

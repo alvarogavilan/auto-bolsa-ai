@@ -1,6 +1,7 @@
 import {
   defaultLiveGuardrailConfig,
   evaluateLiveGuardrails,
+  quantizeToDecimals,
   type LiveGuardrailConfig,
   type LiveGuardrailContext,
   type LiveGuardrailResult,
@@ -181,6 +182,15 @@ function orderIntentForSide(side: LiveOrderSide): LiveOrderIntent {
   return side === "buy" ? "open" : "close";
 }
 
+/** Solo un reintento con una solicitud exactamente idéntica puede reutilizar una idempotencyKey. */
+function requestsMatch(a: LiveOrderRequest, b: LiveOrderRequest): boolean {
+  return a.pair === b.pair
+    && a.side === b.side
+    && Math.abs(a.volumeBase - b.volumeBase) < EPSILON
+    && Math.abs(a.limitPrice - b.limitPrice) < EPSILON
+    && Math.abs(a.notionalEur - b.notionalEur) < EPSILON;
+}
+
 function guardrailContext(
   state: LiveExecutorSnapshot,
   request: LiveOrderRequest,
@@ -209,6 +219,7 @@ function guardrailContext(
     consecutiveTransportErrors: state.consecutiveTransportErrors,
     lastMarketDataAt: state.lastMarketDataAt,
     emergencyStopActive: state.emergencyStopActive,
+    manualLiquidationPending: state.emergencyStopRequiresManualLiquidation,
   };
 }
 
@@ -241,6 +252,20 @@ export function prepareOrder(
   if (existingClOrdId) {
     const existing = state.orders[existingClOrdId];
     if (existing) {
+      if (!requestsMatch(existing.request, request)) {
+        appendAudit(
+          state,
+          "idempotency_key_collision_blocked",
+          `idempotencyKey=${request.idempotencyKey} reutilizada con una solicitud distinta de la orden ${existing.clOrdId}`,
+          existing.clOrdId,
+          now,
+        );
+        return {
+          ok: false,
+          state,
+          blockers: [`La idempotencyKey ya se usó con una solicitud diferente (orden existente ${existing.clOrdId})`],
+        };
+      }
       appendAudit(state, "order_prepare_deduplicated", `idempotencyKey=${request.idempotencyKey}`, existing.clOrdId, now);
       return { ok: true, state, order: existing, deduplicated: true };
     }
@@ -328,22 +353,27 @@ function applyFillDelta(
   order: LiveOrder,
   newFilledVolumeBase: number,
   newAveragePrice: number | null,
+  config: LiveGuardrailConfig,
 ): void {
   const delta = newFilledVolumeBase - order.filledVolumeBase;
   order.filledVolumeBase = newFilledVolumeBase;
   if (newAveragePrice !== null) order.averageFillPrice = newAveragePrice;
   if (delta <= EPSILON) return;
 
+  // La cantidad base NO se redondea a 6 decimales como el dinero: se
+  // cuantiza según `lot_decimals` del par real (8 por defecto si no hay
+  // metadatos), igual que exige Kraken para el volumen.
+  const lotDecimals = config.pairMetadata[order.request.pair]?.lotDecimals ?? 8;
   const inventory = state.inventory;
   const fillPrice = newAveragePrice ?? order.request.limitPrice;
   if (order.request.side === "buy") {
     const priorCost = inventory.quantityBase * (inventory.averageCostEur ?? 0);
-    const newQuantity = money(inventory.quantityBase + delta);
-    inventory.averageCostEur = newQuantity > EPSILON ? (priorCost + delta * fillPrice) / newQuantity : null;
+    const newQuantity = quantizeToDecimals(inventory.quantityBase + delta, lotDecimals);
+    inventory.averageCostEur = newQuantity > EPSILON ? money((priorCost + delta * fillPrice) / newQuantity) : null;
     inventory.quantityBase = newQuantity;
     inventory.pair = order.request.pair;
   } else {
-    inventory.quantityBase = Math.max(0, money(inventory.quantityBase - delta));
+    inventory.quantityBase = Math.max(0, quantizeToDecimals(inventory.quantityBase - delta, lotDecimals));
     if (inventory.quantityBase <= EPSILON) {
       inventory.quantityBase = 0;
       inventory.averageCostEur = null;
@@ -446,12 +476,13 @@ function applyRemoteTruth(
   order: LiveOrder,
   remote: LiveTransportOrderState,
   now: number,
+  config: LiveGuardrailConfig,
 ): void {
   // Siempre se fija, no solo la primera vez: cubre tanto la reconciliación
   // habitual (ya lo tenía) como el caso de `retryReconciliation` en el que se
   // acaba de localizar la orden por `cl_ord_id` y `exchangeOrderId` era null.
   order.exchangeOrderId = remote.exchangeOrderId;
-  applyFillDelta(state, order, remote.volumeExecutedBase, remote.averagePrice);
+  applyFillDelta(state, order, remote.volumeExecutedBase, remote.averagePrice, config);
   const nextStatus = statusFromRemote(remote);
   if (!nextStatus) {
     appendAudit(state, "reconciliation_unresolved", "El transporte devolvió un estado remoto no reconocido", order.clOrdId, now);
@@ -466,30 +497,42 @@ function baseAssetFromPair(pair: string): string | null {
   return pair.endsWith("EUR") ? pair.slice(0, -3) : null;
 }
 
+export type BalanceReconciliationStatus = "consistent" | "inconsistent" | "unknown";
+
+export interface BalanceReconciliationResult {
+  status: BalanceReconciliationStatus;
+  observedBalance: number | null;
+}
+
 /**
  * Contrasta el inventario derivado de los fills contra el balance real de
  * Kraken para el activo base. Prueba las variantes de código de activo que
- * usa Kraken (con y sin prefijo `X`) porque no todos los pares las usan por
- * igual. Sin ninguna clave reconocible en `balances`, no hay evidencia para
- * contradecir el inventario local, así que se reporta consistente.
+ * usa Kraken (con y sin prefijo `X`). Un fallo al obtener el balance, o la
+ * ausencia de cualquier clave reconocible cuando SÍ hay inventario, es un
+ * estado `"unknown"`: nunca se trata como consistente por defecto. Solo se
+ * reporta consistente cuando no hay inventario que verificar en absoluto.
  */
 export function reconcileInventoryAgainstBalances(
   inventory: LiveInventory,
-  balances: Record<string, string>,
+  balances: Record<string, string> | null,
   toleranceBase = RECONCILE_BALANCE_TOLERANCE_BASE,
-): { consistent: boolean; observedBalance: number | null } {
-  if (!inventory.pair) return { consistent: true, observedBalance: null };
+): BalanceReconciliationResult {
+  if (!inventory.pair) return { status: "consistent", observedBalance: null };
+  if (!balances) return { status: "unknown", observedBalance: null };
   const asset = baseAssetFromPair(inventory.pair);
-  if (!asset) return { consistent: true, observedBalance: null };
+  if (!asset) return { status: "unknown", observedBalance: null };
 
   for (const key of [asset, `X${asset}`, `XX${asset}`]) {
     const raw = balances[key];
     if (raw === undefined) continue;
     const observed = Number(raw);
     if (!Number.isFinite(observed)) continue;
-    return { consistent: Math.abs(observed - inventory.quantityBase) <= toleranceBase, observedBalance: observed };
+    return {
+      status: Math.abs(observed - inventory.quantityBase) <= toleranceBase ? "consistent" : "inconsistent",
+      observedBalance: observed,
+    };
   }
-  return { consistent: true, observedBalance: null };
+  return { status: "unknown", observedBalance: null };
 }
 
 /**
@@ -501,6 +544,7 @@ export function reconcileInventoryAgainstBalances(
 export async function reconcile(
   state: LiveExecutorSnapshot,
   transport: LiveOrderTransport,
+  config: LiveGuardrailConfig,
   now = Date.now(),
 ): Promise<LiveExecutorSnapshot> {
   const [open, closed] = await Promise.all([transport.listOpenOrders(), transport.listClosedOrders()]);
@@ -518,25 +562,24 @@ export async function reconcile(
       continue;
     }
     state.consecutiveTransportErrors = 0;
-    applyRemoteTruth(state, order, remote, now);
+    applyRemoteTruth(state, order, remote, now, config);
   }
 
   const balances = await transport.fetchBalances().catch(() => null);
-  if (balances) {
-    const check = reconcileInventoryAgainstBalances(state.inventory, balances);
-    if (!check.consistent) {
-      state.consecutiveTransportErrors += 1;
-      appendAudit(
-        state,
-        "balance_mismatch_detected",
-        `Inventario local=${state.inventory.quantityBase}, balance observado=${check.observedBalance}`,
-        null,
-        now,
-      );
-      for (const order of Object.values(state.orders)) {
-        if (!TERMINAL_STATUSES.has(order.status)) {
-          transition(state, order, "reconciliation_required", "Discrepancia de balance detectada", now);
-        }
+  const balanceCheck = reconcileInventoryAgainstBalances(state.inventory, balances);
+  if (balanceCheck.status !== "consistent") {
+    // Una discrepancia (o un "no sé") bloquea de inmediato, exista o no una
+    // orden activa: dejar la parada supeditada a que haya una orden en curso
+    // permitiría seguir acumulando errores sin ninguna orden que reconciliar.
+    state.consecutiveTransportErrors += 1;
+    state.emergencyStopActive = true;
+    state.emergencyStopReason = balanceCheck.status === "unknown"
+      ? `No se pudo confirmar el balance real de ${state.inventory.pair ?? "el activo en inventario"}`
+      : `Discrepancia de balance: inventario local=${state.inventory.quantityBase}, balance observado=${balanceCheck.observedBalance}`;
+    appendAudit(state, "balance_mismatch_detected", state.emergencyStopReason, null, now);
+    for (const order of Object.values(state.orders)) {
+      if (!TERMINAL_STATUSES.has(order.status)) {
+        transition(state, order, "reconciliation_required", "Discrepancia o ausencia de balance detectada", now);
       }
     }
   }
@@ -557,18 +600,34 @@ export async function retryReconciliation(
   if (!order || order.status !== "reconciliation_required") return state;
 
   if (!order.exchangeOrderId) {
-    // Nunca reenviar a ciegas: si la orden original llegó a procesarse en el
-    // exchange (el timeout fue solo en la respuesta), reenviar con el mismo
-    // cl_ord_id debería ser idempotente, pero no hay garantía universal de
-    // ello. Antes de intentarlo, se busca explícitamente por cl_ord_id.
+    // Nunca reenviar automáticamente una orden ambigua. Si el exchange la
+    // procesó, `findByClOrdId` la localiza y se reconcilia con la verdad
+    // remota. Si devuelve null, eso NO demuestra que Kraken no la recibió
+    // (puede ser latencia, la ventana limitada de ClosedOrders, o un fallo
+    // parcial de listado): la orden permanece en `reconciliation_required` y,
+    // agotados los intentos de localización, se exige revisión humana. Jamás
+    // se llama de nuevo a `submitOrder` desde aquí.
     const remote = await transport.findByClOrdId(order.clOrdId);
     if (remote) {
       state.consecutiveTransportErrors = 0;
       appendAudit(state, "reconciliation_found_by_cl_ord_id", "Orden localizada por cl_ord_id antes de reenviar", clOrdId, now);
-      applyRemoteTruth(state, order, remote, now);
+      applyRemoteTruth(state, order, remote, now, config);
       return state;
     }
-    await submitOrder(state, transport, config, clOrdId, now);
+
+    order.attempts += 1;
+    appendAudit(
+      state,
+      "reconciliation_ambiguous_not_found",
+      `Intento ${order.attempts}/${MAX_SUBMISSION_ATTEMPTS}: no localizada por cl_ord_id; no se reenvía`,
+      clOrdId,
+      now,
+    );
+    if (order.attempts >= MAX_SUBMISSION_ATTEMPTS) {
+      state.emergencyStopActive = true;
+      state.emergencyStopReason = `Orden ${clOrdId} en estado ambiguo tras ${order.attempts} intentos de localización: requiere revisión humana`;
+      appendAudit(state, "reconciliation_requires_human_review", state.emergencyStopReason, clOrdId, now);
+    }
     return state;
   }
 
@@ -583,7 +642,7 @@ export async function retryReconciliation(
     appendAudit(state, "reconciliation_still_missing", "El transporte sigue sin conocer la orden", clOrdId, now);
     return state;
   }
-  applyRemoteTruth(state, order, remote, now);
+  applyRemoteTruth(state, order, remote, now, config);
   return state;
 }
 
@@ -599,6 +658,7 @@ export async function retryReconciliation(
 export async function emergencyCancelAll(
   state: LiveExecutorSnapshot,
   transport: LiveOrderTransport,
+  config: LiveGuardrailConfig,
   reason: string,
   now = Date.now(),
 ): Promise<LiveExecutorSnapshot> {
@@ -619,7 +679,7 @@ export async function emergencyCancelAll(
       } else {
         // Puede que ya se haya llenado en el exchange justo antes de cancelar: reconciliar en vez de asumir.
         const remote = await transport.queryOrder(order.exchangeOrderId);
-        if (remote) applyRemoteTruth(state, order, remote, now);
+        if (remote) applyRemoteTruth(state, order, remote, now, config);
         else transition(state, order, "reconciliation_required", "Cancelación de emergencia sin confirmación", now);
       }
     } catch (error) {
@@ -643,11 +703,30 @@ export async function emergencyCancelAll(
   return state;
 }
 
-/** Despeja la parada de emergencia. Requiere que un humano haya revisado el inventario pendiente. */
+/**
+ * Despeja la alarma activa de la parada de emergencia. NO borra
+ * `emergencyStopRequiresManualLiquidation` mientras siga existiendo
+ * inventario real o alguna orden en `reconciliation_required`: esa evidencia
+ * concreta, no la sola voluntad de "despejar", es lo único que la resuelve.
+ */
 export function clearEmergencyStop(state: LiveExecutorSnapshot, reason: string, now = Date.now()): void {
   state.emergencyStopActive = false;
   state.emergencyStopReason = null;
-  state.emergencyStopRequiresManualLiquidation = false;
+
+  const hasResidualInventory = state.inventory.quantityBase > EPSILON;
+  const hasPendingReconciliation = Object.values(state.orders).some((order) => order.status === "reconciliation_required");
+  if (!hasResidualInventory && !hasPendingReconciliation) {
+    state.emergencyStopRequiresManualLiquidation = false;
+  } else if (state.emergencyStopRequiresManualLiquidation) {
+    appendAudit(
+      state,
+      "manual_liquidation_still_pending",
+      "La parada se despeja, pero persiste inventario o reconciliación pendiente: sigue exigiendo revisión manual",
+      null,
+      now,
+    );
+  }
+
   appendAudit(state, "emergency_stop_cleared", reason, null, now);
   state.updatedAt = now;
 }

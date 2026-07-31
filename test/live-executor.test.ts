@@ -116,6 +116,34 @@ describe("live executor: idempotent preparation", () => {
     }
     expect(Object.keys(state.orders)).toHaveLength(1);
   });
+
+  it("blocks, rather than silently reuses, an idempotencyKey replayed with a different payload", () => {
+    const state = readyState();
+    const config = enabledConfig();
+    const first = prepareOrder(state, config, buyRequest("reused-key", { volumeBase: 0.0001, notionalEur: 5 }), NOW);
+    expect(first.ok).toBe(true);
+    if (!first.ok) throw new Error("expected first prepare to succeed");
+
+    const differentSide = prepareOrder(state, config, sellRequest("reused-key", { volumeBase: 0.0001, notionalEur: 5 }), NOW + 1_000);
+    expect(differentSide.ok).toBe(false);
+
+    const differentVolume = prepareOrder(
+      state,
+      config,
+      buyRequest("reused-key", { volumeBase: 0.00011, limitPrice: 50_000, notionalEur: 5.5 }),
+      NOW + 1_000,
+    );
+    expect(differentVolume.ok).toBe(false);
+
+    // El registro original sigue intacto: no se contaminó ni se sustituyó.
+    expect(Object.keys(state.orders)).toHaveLength(1);
+    expect(state.orders[first.order.clOrdId]?.request.volumeBase).toBe(0.0001);
+
+    // Y el reintento genuinamente idéntico sigue funcionando con normalidad.
+    const sameRequestAgain = prepareOrder(state, config, buyRequest("reused-key", { volumeBase: 0.0001, notionalEur: 5 }), NOW + 2_000);
+    expect(sameRequestAgain.ok).toBe(true);
+    if (sameRequestAgain.ok) expect(sameRequestAgain.deduplicated).toBe(true);
+  });
 });
 
 describe("live executor: submission outcomes", () => {
@@ -142,7 +170,7 @@ describe("live executor: submission outcomes", () => {
     });
   });
 
-  it("recovers from a timeout on retry, exactly like a flaky gateway that eventually answers", async () => {
+  it("stays reconciliation_required after a timeout retry when there is still no evidence, instead of resending blindly", async () => {
     const transport = new FakeLiveOrderTransport();
     const prepared = prepareOrder(state, config, buyRequest("retry-signal"), NOW);
     if (!prepared.ok) throw new Error("expected prepare to succeed");
@@ -151,11 +179,18 @@ describe("live executor: submission outcomes", () => {
     await submitOrder(state, transport, config, prepared.order.clOrdId, NOW);
     expect(state.orders[prepared.order.clOrdId]?.status).toBe("reconciliation_required");
 
+    // El exchange simulado nunca llegó a registrar la orden (el escenario
+    // "timeout" lanza antes de crearla): un único intento de localización sin
+    // resultado no basta para reenviar ni para exigir revisión humana todavía.
     await retryReconciliation(state, transport, config, prepared.order.clOrdId, NOW + 60_000);
     const order = state.orders[prepared.order.clOrdId];
-    expect(order?.status).toBe("submitted");
-    expect(order?.exchangeOrderId).not.toBeNull();
+    expect(order?.status).toBe("reconciliation_required");
+    expect(order?.exchangeOrderId).toBeNull();
     expect(state.activeClOrdId).toBe(prepared.order.clOrdId);
+    expect(state.emergencyStopActive).toBe(false);
+    const open = await transport.listOpenOrders();
+    const closed = await transport.listClosedOrders();
+    expect(open.length + closed.length).toBe(0);
   });
 
   it("never blindly resends an order that the exchange actually received before the timeout", async () => {
@@ -248,6 +283,61 @@ describe("live executor: submission outcomes", () => {
   });
 });
 
+describe("live executor: never resubmits an order the exchange might already know about", () => {
+  it("stays reconciliation_required and never calls createOrder again when the order is genuinely never found", async () => {
+    const state = readyState();
+    const config = enabledConfig();
+    const transport = new FakeLiveOrderTransport();
+    const prepared = prepareOrder(state, config, buyRequest("truly-lost-signal"), NOW);
+    if (!prepared.ok) throw new Error("expected prepare to succeed");
+    transport.scriptScenario(prepared.order.clOrdId, { kind: "timeout" });
+    await submitOrder(state, transport, config, prepared.order.clOrdId, NOW);
+    expect(state.orders[prepared.order.clOrdId]?.status).toBe("reconciliation_required");
+
+    // El exchange nunca la conoció: cada intento de localización sigue en null.
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      await retryReconciliation(state, transport, config, prepared.order.clOrdId, NOW + attempt * 60_000);
+    }
+
+    const order = state.orders[prepared.order.clOrdId];
+    expect(order?.status).toBe("reconciliation_required");
+    expect(order?.exchangeOrderId).toBeNull();
+    // Nunca se resolvió reenviando: el exchange simulado sigue sin ninguna orden.
+    const open = await transport.listOpenOrders();
+    const closed = await transport.listClosedOrders();
+    expect(open.length + closed.length).toBe(0);
+    // Agotados los intentos de localización, exige revisión humana.
+    expect(state.emergencyStopActive).toBe(true);
+    expect(state.emergencyStopReason).toMatch(/requiere revisión humana/);
+  });
+});
+
+describe("live executor: base-asset precision (lot_decimals, not 6-decimal money rounding)", () => {
+  it("preserves an 8-decimal BTC quantity exactly instead of rounding it like a EUR amount", async () => {
+    const state = readyState();
+    const config = enabledConfig();
+    const transport = new FakeLiveOrderTransport();
+    // Menos de 6 decimales visibles perdería precisión con un redondeo a la
+    // "money" (6dp); 8 decimales es justo el límite de lot_decimals de XBTEUR.
+    const preciseVolume = 0.00012345;
+    const prepared = prepareOrder(
+      state,
+      config,
+      buyRequest("precision-signal", { volumeBase: preciseVolume, limitPrice: 1, notionalEur: preciseVolume }),
+      NOW,
+    );
+    if (!prepared.ok) throw new Error(`expected prepare to succeed: ${JSON.stringify((prepared as { blockers?: string[] }).blockers)}`);
+    await submitOrder(state, transport, config, prepared.order.clOrdId, NOW);
+    await reconcile(state, transport, config, NOW + 1_000);
+
+    // Con un redondeo "money" de 6 decimales esto habría quedado en 0.000123,
+    // perdiendo los dos últimos dígitos ("45"). Con cuantización a
+    // lot_decimals (8) se conserva la cantidad completa.
+    expect(state.inventory.quantityBase).toBeCloseTo(preciseVolume, 10);
+    expect(state.inventory.quantityBase).not.toBeCloseTo(0.000123, 7);
+  });
+});
+
 describe("live executor: partial fills, residual inventory and reconciliation", () => {
   it("moves a partially filled order to filled once reconciliation confirms the remote close", async () => {
     const state = readyState();
@@ -260,14 +350,14 @@ describe("live executor: partial fills, residual inventory and reconciliation", 
     const submitted = await submitOrder(state, transport, config, prepared.order.clOrdId, NOW);
     expect(submitted.order.exchangeOrderId).not.toBeNull();
 
-    await reconcile(state, transport, NOW + 30_000);
+    await reconcile(state, transport, config, NOW + 30_000);
     expect(state.orders[prepared.order.clOrdId]?.status).toBe("partially_filled");
     // Inventario real ya refleja el 30% ejecutado, aunque la orden no esté "filled".
     expect(state.inventory.quantityBase).toBeCloseTo(0.3);
     expect(state.inventory.pair).toBe("XBTEUR");
 
     transport.completeFill(submitted.order.exchangeOrderId!);
-    await reconcile(state, transport, NOW + 60_000);
+    await reconcile(state, transport, config, NOW + 60_000);
     const finalOrder = state.orders[prepared.order.clOrdId];
     expect(finalOrder?.status).toBe("filled");
     expect(state.inventory.quantityBase).toBeCloseTo(1);
@@ -283,7 +373,7 @@ describe("live executor: partial fills, residual inventory and reconciliation", 
     const buy = prepareOrder(state, config, buyRequest("residual-buy", { volumeBase: 1, limitPrice: 1, notionalEur: 1 }), NOW);
     if (!buy.ok) throw new Error("expected buy prepare to succeed");
     await submitOrder(state, transport, config, buy.order.clOrdId, NOW);
-    await reconcile(state, transport, NOW + 1_000);
+    await reconcile(state, transport, config, NOW + 1_000);
     expect(state.inventory.quantityBase).toBeCloseTo(1);
 
     // Luego se intenta vender todo, pero solo se ejecuta una parte antes de cancelar.
@@ -292,11 +382,11 @@ describe("live executor: partial fills, residual inventory and reconciliation", 
     expect(state.inventory.reservedQuantityBase).toBeCloseTo(1);
     transport.scriptScenario(sell.order.clOrdId, { kind: "partial-then-fill", firstFillFraction: 0.4 });
     const sellSubmitted = await submitOrder(state, transport, config, sell.order.clOrdId, NOW + 2_000);
-    await reconcile(state, transport, NOW + 3_000);
+    await reconcile(state, transport, config, NOW + 3_000);
     expect(state.orders[sell.order.clOrdId]?.status).toBe("partially_filled");
     expect(state.inventory.quantityBase).toBeCloseTo(0.6);
 
-    await emergencyCancelAll(state, transport, "Cancelar venta parcial", NOW + 4_000);
+    await emergencyCancelAll(state, transport, config, "Cancelar venta parcial", NOW + 4_000);
     expect(state.orders[sell.order.clOrdId]?.status).toBe("cancelled");
     // El 40% vendido no reaparece: el inventario residual es 0.6, no 1 ni 0.
     expect(state.inventory.quantityBase).toBeCloseTo(0.6);
@@ -315,7 +405,7 @@ describe("live executor: partial fills, residual inventory and reconciliation", 
     // Simula que el exchange "olvida" la orden entre listados: sustituimos el transporte
     // por uno vacío para la reconciliación mientras conservamos el exchangeOrderId local.
     const emptyTransport = new FakeLiveOrderTransport();
-    await reconcile(state, emptyTransport, NOW + 30_000);
+    await reconcile(state, emptyTransport, config, NOW + 30_000);
     expect(state.orders[prepared.order.clOrdId]?.status).toBe("reconciliation_required");
     expect(state.consecutiveTransportErrors).toBeGreaterThan(0);
   });
@@ -327,7 +417,7 @@ describe("live executor: partial fills, residual inventory and reconciliation", 
     const buy = prepareOrder(state, config, buyRequest("balance-mismatch", { volumeBase: 1, limitPrice: 1, notionalEur: 1 }), NOW);
     if (!buy.ok) throw new Error("expected buy prepare to succeed");
     await submitOrder(state, transport, config, buy.order.clOrdId, NOW);
-    await reconcile(state, transport, NOW + 1_000);
+    await reconcile(state, transport, config, NOW + 1_000);
     expect(state.orders[buy.order.clOrdId]?.status).toBe("filled");
     expect(state.inventory.quantityBase).toBeCloseTo(1);
 
@@ -339,23 +429,89 @@ describe("live executor: partial fills, residual inventory and reconciliation", 
     transport.scriptScenario(sell.order.clOrdId, { kind: "accept-open" });
     await submitOrder(state, transport, config, sell.order.clOrdId, NOW + 2_000);
 
-    await reconcile(state, transport, NOW + 3_000);
+    await reconcile(state, transport, config, NOW + 3_000);
     expect(state.orders[sell.order.clOrdId]?.status).toBe("reconciliation_required");
+    expect(state.emergencyStopActive).toBe(true);
+  });
+
+  it("blocks immediately on a balance mismatch even with no active order at all", async () => {
+    const state = readyState();
+    const config = enabledConfig();
+    const transport = new FakeLiveOrderTransport();
+    const buy = prepareOrder(state, config, buyRequest("balance-mismatch-no-order", { volumeBase: 1, limitPrice: 1, notionalEur: 1 }), NOW);
+    if (!buy.ok) throw new Error("expected buy prepare to succeed");
+    await submitOrder(state, transport, config, buy.order.clOrdId, NOW);
+    await reconcile(state, transport, config, NOW + 1_000);
+    expect(state.activeClOrdId).toBeNull();
+
+    transport.setBalance("XBT", "0");
+    await reconcile(state, transport, config, NOW + 2_000);
+
+    // Sin ninguna orden activa, la discrepancia igualmente bloquea de inmediato.
+    expect(state.emergencyStopActive).toBe(true);
+    const blocked = prepareOrder(state, config, sellRequest("balance-mismatch-recovery"), NOW + 3_000);
+    expect(blocked.ok).toBe(false);
+  });
+
+  it("treats a failed balance fetch as unknown, not as a free pass, whenever there is inventory to verify", async () => {
+    const state = readyState();
+    const config = enabledConfig();
+    const transport = new FakeLiveOrderTransport();
+    const buy = prepareOrder(state, config, buyRequest("balance-fetch-fails", { volumeBase: 1, limitPrice: 1, notionalEur: 1 }), NOW);
+    if (!buy.ok) throw new Error("expected buy prepare to succeed");
+    await submitOrder(state, transport, config, buy.order.clOrdId, NOW);
+    await reconcile(state, transport, config, NOW + 1_000);
+    expect(state.inventory.quantityBase).toBeCloseTo(1);
+
+    const failingTransport: typeof transport = Object.assign(Object.create(Object.getPrototypeOf(transport)), transport, {
+      fetchBalances: () => Promise.reject(new Error("network down")),
+    });
+    await reconcile(state, failingTransport, config, NOW + 2_000);
+    expect(state.emergencyStopActive).toBe(true);
+    expect(state.emergencyStopReason).toMatch(/No se pudo confirmar el balance real/);
+  });
+
+  it("treats an absent expected asset key as unknown rather than consistent", async () => {
+    const state = readyState();
+    const config = enabledConfig();
+    const transport = new FakeLiveOrderTransport();
+    const buy = prepareOrder(state, config, buyRequest("balance-key-missing", { volumeBase: 1, limitPrice: 1, notionalEur: 1 }), NOW);
+    if (!buy.ok) throw new Error("expected buy prepare to succeed");
+    await submitOrder(state, transport, config, buy.order.clOrdId, NOW);
+
+    // El transporte real, por la razón que sea, responde sin ninguna clave de
+    // XBT (a diferencia del seguimiento automático del mock): ausencia total
+    // de evidencia con inventario ya asentado debe bloquear, no pasar.
+    const noAssetKeyTransport: typeof transport = Object.assign(
+      Object.create(Object.getPrototypeOf(transport)),
+      transport,
+      { fetchBalances: () => Promise.resolve({ ZEUR: "0" }) },
+    );
+    await reconcile(state, noAssetKeyTransport, config, NOW + 1_000);
+    expect(state.emergencyStopActive).toBe(true);
   });
 });
 
 describe("reconcileInventoryAgainstBalances", () => {
-  it("reports consistent when there is no evidence to contradict local inventory", () => {
+  it("reports consistent only when there is genuinely nothing to verify (no inventory at all)", () => {
     expect(reconcileInventoryAgainstBalances({ pair: null, quantityBase: 0, averageCostEur: null, reservedQuantityBase: 0 }, {}))
-      .toEqual({ consistent: true, observedBalance: null });
+      .toEqual({ status: "consistent", observedBalance: null });
+  });
+
+  it("reports unknown, never consistent, when there is inventory but no matching balance key", () => {
     expect(reconcileInventoryAgainstBalances({ pair: "XBTEUR", quantityBase: 1, averageCostEur: 50_000, reservedQuantityBase: 0 }, {}))
-      .toEqual({ consistent: true, observedBalance: null });
+      .toEqual({ status: "unknown", observedBalance: null });
+  });
+
+  it("reports unknown, never consistent, when the balance fetch itself failed (null)", () => {
+    expect(reconcileInventoryAgainstBalances({ pair: "XBTEUR", quantityBase: 1, averageCostEur: 50_000, reservedQuantityBase: 0 }, null))
+      .toEqual({ status: "unknown", observedBalance: null });
   });
 
   it("matches Kraken's X-prefixed asset codes", () => {
     const inventory = { pair: "XBTEUR", quantityBase: 1, averageCostEur: 50_000, reservedQuantityBase: 0 };
-    expect(reconcileInventoryAgainstBalances(inventory, { XXBT: "1.0000" }).consistent).toBe(true);
-    expect(reconcileInventoryAgainstBalances(inventory, { XXBT: "0.5000" }).consistent).toBe(false);
+    expect(reconcileInventoryAgainstBalances(inventory, { XXBT: "1.0000" }).status).toBe("consistent");
+    expect(reconcileInventoryAgainstBalances(inventory, { XXBT: "0.5000" }).status).toBe("inconsistent");
   });
 });
 
@@ -369,7 +525,7 @@ describe("live executor: emergency stop", () => {
     transport.scriptScenario(prepared.order.clOrdId, { kind: "accept-open" });
     await submitOrder(state, transport, config, prepared.order.clOrdId, NOW);
 
-    await emergencyCancelAll(state, transport, "Prueba de parada de emergencia", NOW + 5_000);
+    await emergencyCancelAll(state, transport, config, "Prueba de parada de emergencia", NOW + 5_000);
 
     expect(state.orders[prepared.order.clOrdId]?.status).toBe("cancelled");
     expect(state.emergencyStopActive).toBe(true);
@@ -389,7 +545,7 @@ describe("live executor: emergency stop", () => {
     const prepared = prepareOrder(state, config, buyRequest("never-submitted"), NOW);
     if (!prepared.ok) throw new Error("expected prepare to succeed");
 
-    await emergencyCancelAll(state, transport, "Cierre conservador sin envío previo", NOW + 1_000);
+    await emergencyCancelAll(state, transport, config, "Cierre conservador sin envío previo", NOW + 1_000);
     expect(state.orders[prepared.order.clOrdId]?.status).toBe("cancelled");
   });
 
@@ -400,16 +556,46 @@ describe("live executor: emergency stop", () => {
     const buy = prepareOrder(state, config, buyRequest("emergency-with-inventory", { volumeBase: 1, limitPrice: 1, notionalEur: 1 }), NOW);
     if (!buy.ok) throw new Error("expected buy prepare to succeed");
     await submitOrder(state, transport, config, buy.order.clOrdId, NOW);
-    await reconcile(state, transport, NOW + 1_000);
+    await reconcile(state, transport, config, NOW + 1_000);
     expect(state.inventory.quantityBase).toBeCloseTo(1);
 
-    await emergencyCancelAll(state, transport, "Emergencia con inventario abierto", NOW + 2_000);
+    await emergencyCancelAll(state, transport, config, "Emergencia con inventario abierto", NOW + 2_000);
 
     // La cancelación de emergencia nunca vende lo ya comprado.
     expect(state.inventory.quantityBase).toBeCloseTo(1);
     expect(state.emergencyStopRequiresManualLiquidation).toBe(true);
 
+    // Despejar la alarma NO borra la exigencia de liquidación manual mientras
+    // siga existiendo el inventario: solo la resuelve evidencia real (cantidad
+    // en 0), no la sola voluntad de despejar.
     clearEmergencyStop(state, "Revisado manualmente", NOW + 3_000);
+    expect(state.emergencyStopRequiresManualLiquidation).toBe(true);
+    expect(state.emergencyStopActive).toBe(false);
+
+    // Y mientras siga pendiente, ninguna orden nueva puede prepararse.
+    const blocked = prepareOrder(state, config, sellRequest("liquidation-attempt"), NOW + 4_000);
+    expect(blocked.ok).toBe(false);
+    if (!blocked.ok) expect(blocked.blockers).toContain("Liquidación manual pendiente tras una parada de emergencia");
+  });
+
+  it("clears manual liquidation once the inventory is genuinely resolved to zero", async () => {
+    const state = readyState();
+    const config = enabledConfig();
+    const transport = new FakeLiveOrderTransport();
+    const buy = prepareOrder(state, config, buyRequest("emergency-then-resolved", { volumeBase: 1, limitPrice: 1, notionalEur: 1 }), NOW);
+    if (!buy.ok) throw new Error("expected buy prepare to succeed");
+    await submitOrder(state, transport, config, buy.order.clOrdId, NOW);
+    await reconcile(state, transport, config, NOW + 1_000);
+
+    await emergencyCancelAll(state, transport, config, "Emergencia temporal", NOW + 2_000);
+    expect(state.emergencyStopRequiresManualLiquidation).toBe(true);
+
+    // Un operador resuelve el inventario fuera de banda (o mediante un fill
+    // real registrado por otra vía) hasta dejarlo en cero.
+    state.inventory.quantityBase = 0;
+    state.inventory.pair = null;
+
+    clearEmergencyStop(state, "Inventario ya liquidado y verificado", NOW + 3_000);
     expect(state.emergencyStopRequiresManualLiquidation).toBe(false);
   });
 });
@@ -422,7 +608,7 @@ describe("live executor: recovery after restart", () => {
     const prepared = prepareOrder(state, config, buyRequest("restart-signal"), NOW);
     if (!prepared.ok) throw new Error("expected prepare to succeed");
     await submitOrder(state, transport, config, prepared.order.clOrdId, NOW);
-    await reconcile(state, transport, NOW + 1_000);
+    await reconcile(state, transport, config, NOW + 1_000);
 
     // Simula la persistencia y recuperación del Durable Object: serializar a JSON y
     // reconstruir el snapshot exactamente como haría `ctx.storage.get` tras reiniciar.
@@ -453,7 +639,7 @@ describe("live executor: closing the single open position", () => {
     const buy = prepareOrder(state, config, buyRequest("close-buy"), NOW);
     if (!buy.ok) throw new Error("expected buy prepare to succeed");
     await submitOrder(state, transport, config, buy.order.clOrdId, NOW);
-    await reconcile(state, transport, NOW + 1_000);
+    await reconcile(state, transport, config, NOW + 1_000);
     expect(state.inventory.quantityBase).toBeCloseTo(0.0001);
     expect(state.activeClOrdId).toBeNull();
 
@@ -461,7 +647,7 @@ describe("live executor: closing the single open position", () => {
     expect(sell.ok).toBe(true);
     if (!sell.ok) throw new Error("expected sell prepare to succeed");
     await submitOrder(state, transport, config, sell.order.clOrdId, NOW + 2_000);
-    await reconcile(state, transport, NOW + 3_000);
+    await reconcile(state, transport, config, NOW + 3_000);
 
     expect(state.inventory.quantityBase).toBe(0);
     expect(state.orders[sell.order.clOrdId]?.status).toBe("filled");

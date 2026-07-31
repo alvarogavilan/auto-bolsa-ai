@@ -22,18 +22,26 @@ paralelo a la estrategia PAPER y sin ningún camino que la active hoy.
   `LIVE_TRADING_ENABLED`, una sola orden activa, una sola posición abierta
   (inventario real, no un booleano), tamaño máximo (5 EUR por defecto),
   validación estricta de la intención (números finitos/positivos, par
-  permitido, `volumeBase × limitPrice` coherente con `notionalEur`), pérdida
+  permitido, `volumeBase × limitPrice` coherente con `notionalEur`, mínimo y
+  precisión reales de Kraken vía `pairMetadata`: `orderMinBase`,
+  `lotDecimals`, `priceDecimals`), liquidación manual pendiente, pérdida
   diaria, drawdown, datos de mercado obsoletos y errores de transporte
   consecutivos.
 - `src/live-executor.ts`: máquina de estados (`prepared → submitted →
   partially_filled/filled/cancelled/rejected/reconciliation_required`),
-  `cl_ord_id` único (UUID estándar) con idempotencia persistente en el
-  snapshot, inventario real (`pair`, `quantityBase`, `averageCostEur`,
-  `reservedQuantityBase`) actualizado por cada fill incremental —no solo al
-  cerrar la orden—, reconciliación contra órdenes abiertas/cerradas remotas y
-  contra el balance real, reintento acotado que nunca reenvía a ciegas
-  (`findByClOrdId` primero), cancelación de emergencia con cierre
-  conservador, y un registro auditable de cada transición.
+  `cl_ord_id` único (UUID estándar) con idempotencia persistente y estricta
+  (una `idempotencyKey` reutilizada con una solicitud distinta se bloquea, no
+  se reutiliza en silencio), inventario real (`pair`, `quantityBase`,
+  `averageCostEur`, `reservedQuantityBase`) actualizado por cada fill
+  incremental —no solo al cerrar la orden— y cuantizado según `lot_decimals`
+  del par (no redondeado a 6 decimales como el dinero), reconciliación contra
+  órdenes abiertas/cerradas remotas y contra el balance real (un fallo o una
+  clave de activo ausente cuenta como estado desconocido y bloquea, nunca
+  como consistente), reintento que nunca reenvía a ciegas (`findByClOrdId`
+  primero; si no hay evidencia, se mantiene `reconciliation_required` y se
+  exige revisión humana, jamás un reenvío automático), cancelación de
+  emergencia con cierre conservador, y un registro auditable de cada
+  transición.
 - `src/live-executor-state.ts`: Durable Object que persistiría el snapshot en
   `ctx.storage` para sobrevivir a un reinicio del proceso. **No está enlazado
   en `wrangler.jsonc` ni exportado desde `index.ts`: Cloudflare no lo
@@ -63,8 +71,12 @@ paralelo a la estrategia PAPER y sin ningún camino que la active hoy.
   otro caso `LiveExecutorState` construye `FakeLiveOrderTransport`, que nunca
   hace una petición de red.
 - Ni la estrategia PAPER (`bot-state.ts`, `research-lab.ts`) ni sus rutas se
-  han modificado. El único cambio en `bot-state.ts` es exponer
-  `POST /kraken/next-nonce` para que exista una única autoridad de nonce.
+  han modificado. Los cambios en `bot-state.ts` son exponer
+  `POST /kraken/next-nonce` (única autoridad de nonce) y mover la auditoría
+  de permisos (`GET /kraken/permissions`) desde `index.ts`, que antes
+  calculaba su propio nonce ad-hoc; `test/kraken-single-authority.test.ts`
+  comprueba de forma arquitectónica (escaneando el código fuente) que ningún
+  otro fichero construye un nonce ni importa una función privada de Kraken.
 
 ## Modelo de amenazas e invariantes
 
@@ -72,20 +84,23 @@ paralelo a la estrategia PAPER y sin ningún camino que la active hoy.
 | --- | --- |
 | Activación accidental por variable de entorno mal puesta | `liveTradingEnabledFromEnv` exige el literal exacto `"true"`; ausente o cualquier otro valor es `false`. Se comprueba tanto en `prepare` como, de nuevo, justo antes de `submit`. |
 | Doble envío de la misma orden (reintento de red, doble clic) | `cl_ord_id` único (UUID estándar) derivado de un `idempotencyKey` persistido en `idempotencyIndex`; `prepareOrder` devuelve la orden existente en vez de crear una nueva. El transporte también deduplica por `cl_ord_id`. |
-| Reenviar a ciegas una orden ambigua tras un timeout | Si `exchangeOrderId` es `null`, `retryReconciliation` primero llama a `findByClOrdId` contra abiertas/cerradas; solo si el exchange no la conoce en absoluto se reenvía. |
+| Reenviar a ciegas una orden ambigua tras un timeout | Si `exchangeOrderId` es `null`, `retryReconciliation` primero llama a `findByClOrdId`. Si no la encuentra, eso NO se toma como prueba de que Kraken no la recibió: la orden permanece en `reconciliation_required` y, agotados los intentos de localización, se activa `emergencyStopActive` exigiendo revisión humana. Nunca se vuelve a llamar a `submitOrder` desde aquí. |
 | Dos contadores de nonce independientes desordenando la clave | Autoridad única (`BotState.nextKrakenNonce`, endpoint `POST /kraken/next-nonce`); `LiveExecutorState` nunca mantiene su propio contador. `computeNextNonce` está probado por separado. |
 | Confundir un fallo de transporte con un rechazo real | Solo un código `EOrder:*` explícito de Kraken es un rechazo terminal (`isKrakenOrderRejection`); timeout, red, HTTP 5xx, `EAPI:*`/`EGeneral:*` o respuesta ambigua siempre van a `reconciliation_required`. |
 | Abrir dos posiciones o dos órdenes a la vez | `activeClOrdId` bloquea cualquier orden nueva mientras haya una activa; el inventario real (`quantityBase > 0`) bloquea abrir una segunda posición. |
 | Vender un activo o una cantidad que no se tiene | El inventario exige que el par de la venta coincida con el de la posición y que el volumen no supere lo realmente disponible (`quantityBase - reservedQuantityBase`). |
-| Orden de tamaño excesivo o mal formada | `maxOrderNotionalEur` (5 EUR por defecto) y `validateOrderIntent` (números finitos/positivos, par permitido, `volumeBase × limitPrice` coherente con `notionalEur`) se validan antes de generar el `cl_ord_id`. |
+| Orden de tamaño excesivo, mal formada, o por debajo del mínimo/precisión real de Kraken | `maxOrderNotionalEur` (5 EUR por defecto) y `validateOrderIntent` (números finitos/positivos, par permitido, `volumeBase × limitPrice` coherente con `notionalEur`, `orderMinBase`/`lotDecimals`/`priceDecimals` reales del par) se validan antes de generar el `cl_ord_id`. |
+| Reutilizar una `idempotencyKey` con una solicitud distinta (par, lado, volumen o precio) | `prepareOrder` compara la solicitud nueva contra la original; solo un reintento exactamente idéntico se deduplica, cualquier diferencia se bloquea y se audita (`idempotency_key_collision_blocked`). |
 | Reventar el límite de pérdida diaria o drawdown, incluso entre `prepare` y `submit` | Guardrails de `dayStartEquityEur`/`peakEquityEur` idénticos en espíritu a los de `bot-state.ts`, re-evaluados justo antes de enviar. |
 | Actuar sobre datos de mercado obsoletos, incluso si caducan después de `prepare` | `lastMarketDataAt` con `maxMarketDataAgeMs` (5 minutos por defecto); se re-evalúa en `submit`, no solo en `prepare`. |
 | Fallos en cascada del transporte | `consecutiveTransportErrors` con disyuntor configurable; además cada intento de envío está acotado por `MAX_SUBMISSION_ATTEMPTS`. |
 | Estado ambiguo tras timeout o respuesta ininteligible | Nunca se asume éxito ni fracaso: se transiciona a `reconciliation_required` y solo `reconcile()`/`retryReconciliation()` resuelven la verdad contra el exchange. |
 | Perder inventario real en la contabilidad tras un fill parcial cancelado | El inventario se actualiza por cada delta de ejecución (`applyFillDelta`), no solo cuando la orden llega a `filled`; una orden `cancelled` tras un fill parcial deja la cantidad realmente ejecutada, ni más ni menos. |
-| Inventario local desincronizado del balance real | `reconcile()` también contrasta `inventory.quantityBase` contra `fetchBalances()` (tolerando los prefijos `X`/`XX` de Kraken); una discrepancia fuerza `reconciliation_required` en toda orden no terminal. |
+| Inventario local desincronizado del balance real, o tratarlo como consistente "por defecto" | `reconcile()` contrasta `inventory.quantityBase` contra `fetchBalances()` (tolerando los prefijos `X`/`XX` de Kraken). Tanto un fallo al obtener el balance como la ausencia de la clave de activo esperada cuentan como estado `"unknown"`, nunca `"consistent"`; cualquier estado que no sea consistente activa `emergencyStopActive` de inmediato, exista o no una orden activa, y fuerza `reconciliation_required` en toda orden no terminal. |
+| Redondear una cantidad de BTC como si fuera dinero (6 decimales) y perder precisión real | El inventario se cuantiza según `lot_decimals` del par (`quantizeToDecimals`), no con el redondeo a 6 decimales usado para importes en EUR. |
 | Creer que "cancelación de emergencia" también liquida una posición ya ejecutada | `emergencyCancelAll` solo cancela órdenes; si queda inventario, activa `emergencyStopRequiresManualLiquidation` en vez de vender nada automáticamente. |
 | Emergencia con órdenes en curso | `emergencyCancelAll` cancela toda orden no terminal (o la cierra localmente si nunca llegó a enviarse) y activa `emergencyStopActive`, que bloquea cualquier nueva orden hasta que se despeje explícitamente. |
+| Despejar la parada de emergencia sin haber resuelto realmente el inventario pendiente | `clearEmergencyStop` apaga la alarma (`emergencyStopActive`), pero NO borra `emergencyStopRequiresManualLiquidation` mientras siga existiendo inventario real o alguna orden en `reconciliation_required`; ese flag bloquea cualquier orden nueva (`manualLiquidationPending`) hasta que la evidencia (inventario en cero) lo resuelva de verdad. |
 | Pérdida de estado por reinicio del proceso | El snapshot es un objeto plano serializable, del tipo que `LiveExecutorState` persistiría en `ctx.storage`; `test/live-executor.test.ts` verifica que un ciclo `JSON.stringify`/`JSON.parse` conserva órdenes, inventario, idempotencia y auditoría. |
 | Crear un recurso real en Cloudflare para una infraestructura que debe seguir desactivada | `LiveExecutorState` no tiene binding ni migración en `wrangler.jsonc` y no se exporta desde `index.ts`: Cloudflare no lo despliega. |
 
@@ -123,3 +138,11 @@ Ninguno de estos pasos se ha dado en este PR:
    operar con dinero real").
 8. Revisión humana explícita y registrada del primer ciclo real antes de
    dejarlo desatendido.
+9. Sincronizar `DEFAULT_PAIR_METADATA` (`orderMinBase`, `lotDecimals`,
+   `priceDecimals`) contra el endpoint público `AssetPairs` de Kraken; los
+   valores actuales son de ejemplo, no verificados en vivo.
+10. Diseñar una ruta de liquidación manual real y reconciliada para cuando
+    `emergencyStopRequiresManualLiquidation` quede activo: hoy el sistema
+    bloquea correctamente cualquier orden nueva mientras eso ocurre, pero no
+    ofrece ningún camino (ni manual ni automático) para resolverlo dentro del
+    propio ejecutor.

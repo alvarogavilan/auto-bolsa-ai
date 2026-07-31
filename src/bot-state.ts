@@ -4,7 +4,13 @@ import {
   verifyCheckpointChain,
   type PaperDailyCheckpoint,
 } from "./daily-checkpoints";
-import { fetchBalance, fetchOhlc, inspectKrakenCredentials } from "./kraken";
+import {
+  assessKrakenPermissions,
+  fetchApiKeyInfo,
+  fetchBalance,
+  fetchOhlc,
+  inspectKrakenCredentials,
+} from "./kraken";
 import { computeNextNonce } from "./kraken-nonce";
 import { selectMarketObservation } from "./market-evidence";
 import { calculateOperationalHealth } from "./operational-health";
@@ -362,6 +368,66 @@ export class BotState extends DurableObject<Env> {
     }
   }
 
+  private async krakenPermissions(): Promise<Response> {
+    if (!this.env.KRAKEN_API_KEY || !this.env.KRAKEN_API_SECRET) {
+      return Response.json({ configured: false, auditComplete: false, liveTrading: false }, { status: 412 });
+    }
+
+    const now = Date.now();
+    const lockoutUntil = (await this.ctx.storage.get<number>(KRAKEN_LOCKOUT_UNTIL_KEY)) ?? 0;
+    if (lockoutUntil > now) {
+      return Response.json(
+        {
+          configured: true,
+          auditComplete: false,
+          temporaryLockout: true,
+          retryAt: new Date(lockoutUntil).toISOString(),
+          retryAfterSeconds: Math.ceil((lockoutUntil - now) / 1000),
+          message: "Auditoría bloqueada localmente para no prolongar el bloqueo temporal de Kraken.",
+          liveTrading: false,
+        },
+        { status: 429 },
+      );
+    }
+
+    try {
+      const nonce = await this.nextKrakenNonce();
+      const info = await fetchApiKeyInfo(this.env.KRAKEN_API_KEY, this.env.KRAKEN_API_SECRET, nonce);
+      const assessment = assessKrakenPermissions(info.permissions);
+      await this.ctx.storage.delete(KRAKEN_LOCKOUT_UNTIL_KEY);
+      return Response.json({
+        configured: true,
+        auditComplete: true,
+        safePermissions: assessment.safe,
+        apiKeyName: info.apiKeyName,
+        permissions: info.permissions,
+        missingPermissions: assessment.missing,
+        forbiddenPermissions: assessment.forbidden,
+        withdrawalPermission: info.permissions.includes("withdraw-funds"),
+        depositPermission: info.permissions.includes("add-funds"),
+        earnPermission: info.permissions.includes("earn-funds"),
+        ipRestrictionEnabled: info.ipAllowlist.length > 0,
+        expiresAt: info.validUntil && info.validUntil !== "0" ? info.validUntil : null,
+        liveTrading: false,
+        message: assessment.safe
+          ? "Auditoría superada: la clave tiene los permisos operativos previstos y no permite retirar fondos."
+          : "Auditoría bloqueada: los permisos no coinciden con la política segura.",
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Kraken permission audit failed";
+      if (message.includes("EGeneral:Temporary lockout")) return this.lockKraken(message);
+
+      const authenticationFailure = [
+        "EAPI:Invalid key",
+        "EAPI:Invalid signature",
+        "EAPI:Invalid nonce",
+      ].some((code) => message.includes(code));
+      if (authenticationFailure) return this.lockKraken(message);
+
+      return Response.json({ configured: true, auditComplete: false, error: message, liveTrading: false }, { status: 502 });
+    }
+  }
+
   private equity(snapshot: BotSnapshot, price: number): number {
     return money(snapshot.cashEur + (snapshot.position?.quantity ?? 0) * price);
   }
@@ -619,6 +685,9 @@ export class BotState extends DurableObject<Env> {
       }
       if (request.method === "GET" && url.pathname === "/kraken/connection") {
         return this.krakenConnection();
+      }
+      if (request.method === "GET" && url.pathname === "/kraken/permissions") {
+        return this.krakenPermissions();
       }
       if (request.method === "POST" && url.pathname === "/pause") {
         const snapshot = await this.read();

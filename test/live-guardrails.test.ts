@@ -25,6 +25,7 @@ function context(overrides: Partial<LiveGuardrailContext> = {}): LiveGuardrailCo
     consecutiveTransportErrors: 0,
     lastMarketDataAt: Date.now(),
     emergencyStopActive: false,
+    manualLiquidationPending: false,
     ...overrides,
   };
 }
@@ -150,6 +151,13 @@ describe("live guardrails", () => {
     expect(emergency.blockers).toContain("Parada de emergencia activa");
   });
 
+  it("blocks any new order while a manual liquidation remains pending, even after the alarm is cleared", () => {
+    const config = defaultLiveGuardrailConfig({ liveTradingEnabled: true });
+    const result = evaluateLiveGuardrails(config, context({ emergencyStopActive: false, manualLiquidationPending: true }));
+    expect(result.allowed).toBe(false);
+    expect(result.blockers).toContain("Liquidación manual pendiente tras una parada de emergencia");
+  });
+
   it("allows a well-formed order once every gate is satisfied", () => {
     const config = defaultLiveGuardrailConfig({ liveTradingEnabled: true });
     const result = evaluateLiveGuardrails(config, context());
@@ -183,6 +191,36 @@ describe("live guardrails", () => {
     it("accepts a coherent, well-formed request", () => {
       expect(validateOrderIntent({ pair: "XBTEUR", volumeBase: 0.0001, limitPrice: 50_000, notionalEur: 5 }, config))
         .toEqual([]);
+    });
+
+    it("rejects a volume below Kraken's real minimum order size for the pair", () => {
+      const metadata = config.pairMetadata.XBTEUR!;
+      const tooSmall = metadata.orderMinBase / 2;
+      const blockers = validateOrderIntent(
+        { pair: "XBTEUR", volumeBase: tooSmall, limitPrice: 50_000, notionalEur: tooSmall * 50_000 },
+        config,
+      );
+      expect(blockers.some((blocker) => blocker.includes("inferior al mínimo de Kraken"))).toBe(true);
+    });
+
+    it("rejects a volume with more decimals than Kraken's lot_decimals for the pair", () => {
+      const metadata = config.pairMetadata.XBTEUR!;
+      const overPrecise = 0.00012345678901; // más decimales que lotDecimals
+      const blockers = validateOrderIntent(
+        { pair: "XBTEUR", volumeBase: overPrecise, limitPrice: 50_000, notionalEur: overPrecise * 50_000 },
+        config,
+      );
+      expect(blockers.some((blocker) => blocker.includes(`cuantizado a ${metadata.lotDecimals} decimales`))).toBe(true);
+    });
+
+    it("rejects a price with more decimals than Kraken's pair_decimals for the pair", () => {
+      const metadata = config.pairMetadata.XBTEUR!;
+      const overPrecisePrice = 50_000.37; // pair_decimals es 1 en los metadatos de ejemplo
+      const blockers = validateOrderIntent(
+        { pair: "XBTEUR", volumeBase: 0.0001, limitPrice: overPrecisePrice, notionalEur: 0.0001 * overPrecisePrice },
+        config,
+      );
+      expect(blockers.some((blocker) => blocker.includes(`cuantizado a ${metadata.priceDecimals} decimales`))).toBe(true);
     });
   });
 });

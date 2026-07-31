@@ -171,12 +171,27 @@ export type FakeTransportScenario =
 export class FakeLiveOrderTransport implements LiveOrderTransport {
   private readonly scenarioQueues = new Map<string, FakeTransportScenario[]>();
   private readonly orders = new Map<string, LiveTransportOrderState>();
+  private readonly orderMeta = new Map<string, { pair: string; side: LiveOrderSide }>();
   private readonly balances = new Map<string, string>([["ZEUR", "0"]]);
   private sequence = 0;
 
-  /** Fija el balance simulado de un activo (uso exclusivo de pruebas). */
+  /** Fija el balance simulado de un activo (uso exclusivo de pruebas, sobrescribe el seguimiento automático). */
   setBalance(asset: string, amount: string): void {
     this.balances.set(asset, amount);
+  }
+
+  /**
+   * Mantiene el balance simulado del activo base coherente con los fills
+   * reales, igual que haría un exchange de verdad. Así, por defecto, el
+   * inventario derivado y el "balance" del exchange nunca discrepan sin que
+   * una prueba lo provoque explícitamente con `setBalance`.
+   */
+  private adjustBalance(pair: string, side: LiveOrderSide, deltaBase: number): void {
+    if (deltaBase <= 0) return;
+    if (!pair.endsWith("EUR")) return;
+    const key = `X${pair.slice(0, -3)}`;
+    const current = Number(this.balances.get(key) ?? "0");
+    this.balances.set(key, String(side === "buy" ? current + deltaBase : current - deltaBase));
   }
 
   /**
@@ -227,6 +242,8 @@ export class FakeLiveOrderTransport implements LiveOrderTransport {
       averagePrice: Number(request.limitPrice),
       reason: null,
     });
+    this.orderMeta.set(exchangeOrderId, { pair: request.pair, side: request.side });
+    this.adjustBalance(request.pair, request.side, volumeExecutedBase);
 
     if (scenario.kind === "accept-but-report-timeout") {
       // El "exchange" simulado sí procesó la orden, pero el cliente nunca ve
@@ -246,11 +263,14 @@ export class FakeLiveOrderTransport implements LiveOrderTransport {
   completeFill(exchangeOrderId: string): void {
     const order = this.orders.get(exchangeOrderId);
     if (!order) return;
+    const remaining = order.volumeBase - order.volumeExecutedBase;
     this.orders.set(exchangeOrderId, {
       ...order,
       status: "closed",
       volumeExecutedBase: order.volumeBase,
     });
+    const meta = this.orderMeta.get(exchangeOrderId);
+    if (meta) this.adjustBalance(meta.pair, meta.side, remaining);
   }
 
   async queryOrder(exchangeOrderId: string): Promise<LiveTransportOrderState | null> {
