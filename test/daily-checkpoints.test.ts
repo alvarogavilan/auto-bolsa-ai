@@ -82,7 +82,28 @@ describe("daily PAPER checkpoint chain", () => {
     const verification = await verifyCheckpointChain([first, second]);
     expect(verification.valid).toBe(true);
     expect(verification.checked).toBe(2);
+    expect(verification.anchoredAtSequence).toBe(1);
     expect(verification.latestHash).toBe(second.hash);
+  });
+
+  it("verifies a retained segment after older checkpoints expire", async () => {
+    const first = await createDailyCheckpoint(snapshot(), null, 1_785_542_400_000);
+    const second = await createDailyCheckpoint(
+      snapshot({ dayKey: "2026-08-01" }),
+      first,
+      1_785_628_800_000,
+    );
+    const third = await createDailyCheckpoint(
+      snapshot({ dayKey: "2026-08-02" }),
+      second,
+      1_785_715_200_000,
+    );
+
+    const verification = await verifyCheckpointChain([second, third]);
+    expect(verification.valid).toBe(true);
+    expect(verification.anchoredAtSequence).toBe(2);
+    expect(verification.anchorPreviousHash).toBe(first.hash);
+    expect(verification.checked).toBe(2);
   });
 
   it("detects any modification to historical evidence", async () => {
