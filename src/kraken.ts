@@ -7,11 +7,11 @@ let lastNonce = 0;
 type KrakenResponse<T> = { error: string[]; result: T };
 
 export interface KrakenApiKeyInfo {
-  apiKeyName?: string;
+  apiKeyName: string | null;
   permissions: string[];
-  validUntil?: string;
-  ipAllowlist?: string[];
-  lastUsed?: string | null;
+  validUntil: string | null;
+  ipAllowlist: string[];
+  lastUsed: string | null;
 }
 
 export const REQUIRED_KRAKEN_PERMISSIONS = [
@@ -49,6 +49,10 @@ function base64ToBytes(value: string): Uint8Array {
   return bytes;
 }
 
+function exactArrayBuffer(bytes: Uint8Array): ArrayBuffer {
+  return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+}
+
 function nextNonce(): string {
   const candidate = Date.now() * 1000;
   lastNonce = Math.max(candidate, lastNonce + 1);
@@ -73,20 +77,21 @@ export async function signKrakenRequest(
   apiSecret: string,
 ): Promise<string> {
   const nonceAndBody = encoder.encode(nonce + postData);
-  const hash = new Uint8Array(await crypto.subtle.digest("SHA-256", nonceAndBody));
+  const hash = new Uint8Array(await crypto.subtle.digest("SHA-256", exactArrayBuffer(nonceAndBody)));
   const pathBytes = encoder.encode(apiPath);
   const message = new Uint8Array(pathBytes.length + hash.length);
   message.set(pathBytes, 0);
   message.set(hash, pathBytes.length);
 
+  const secretBytes = base64ToBytes(apiSecret);
   const key = await crypto.subtle.importKey(
     "raw",
-    base64ToBytes(apiSecret),
+    exactArrayBuffer(secretBytes),
     { name: "HMAC", hash: "SHA-512" },
     false,
     ["sign"],
   );
-  const signature = new Uint8Array(await crypto.subtle.sign("HMAC", key, message));
+  const signature = new Uint8Array(await crypto.subtle.sign("HMAC", key, exactArrayBuffer(message)));
   return bytesToBase64(signature);
 }
 
@@ -129,13 +134,13 @@ export async function fetchApiKeyInfo(apiKey: string, apiSecret: string): Promis
     ? result.permissions.filter((value): value is string => typeof value === "string")
     : [];
   return {
-    apiKeyName: typeof result.apiKeyName === "string" ? result.apiKeyName : undefined,
+    apiKeyName: typeof result.apiKeyName === "string" ? result.apiKeyName : null,
     permissions,
-    validUntil: typeof result.validUntil === "string" ? result.validUntil : undefined,
+    validUntil: typeof result.validUntil === "string" ? result.validUntil : null,
     ipAllowlist: Array.isArray(result.ipAllowlist)
       ? result.ipAllowlist.filter((value): value is string => typeof value === "string")
-      : undefined,
-    lastUsed: typeof result.lastUsed === "string" || result.lastUsed === null ? result.lastUsed : undefined,
+      : [],
+    lastUsed: typeof result.lastUsed === "string" || result.lastUsed === null ? result.lastUsed : null,
   };
 }
 
