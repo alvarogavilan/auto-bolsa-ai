@@ -75,9 +75,13 @@ function sameExecution(a: LiveTradeExecution, b: LiveTradeExecution): boolean {
     && a.maker === b.maker;
 }
 
-function round(value: number, decimals = 12): number {
-  const factor = 10 ** decimals;
-  return Math.round(value * factor) / factor;
+/**
+ * Elimina ruido binario como 49999.99999999999 sin multiplicar por potencias
+ * que podrían superar Number.MAX_SAFE_INTEGER para precios altos.
+ */
+function normalizeFloating(value: number): number {
+  if (!Number.isFinite(value) || value === 0) return value;
+  return Number(value.toPrecision(15));
 }
 
 function volumeTolerance(lotDecimals: number): number {
@@ -171,13 +175,16 @@ export function reconcileFillEvidence(
     else unknownLiquidityCount += 1;
   }
 
+  const normalizedVolume = normalizeFloating(volumeBase);
+  const normalizedCost = normalizeFloating(costQuote);
+  const normalizedFee = normalizeFloating(feeQuote);
   const summary: FillEvidenceSummary = {
     tradeIds: matching.map((execution) => execution.tradeId),
     tradeCount: matching.length,
-    volumeBase: round(volumeBase),
-    costQuote: round(costQuote),
-    feeQuote: round(feeQuote),
-    averagePrice: volumeBase > 0 ? round(costQuote / volumeBase) : null,
+    volumeBase: normalizedVolume,
+    costQuote: normalizedCost,
+    feeQuote: normalizedFee,
+    averagePrice: normalizedVolume > 0 ? normalizeFloating(normalizedCost / normalizedVolume) : null,
     makerCount,
     takerCount,
     unknownLiquidityCount,
