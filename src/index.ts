@@ -8,6 +8,7 @@ import {
 import { fetchAllTickers, fetchTradableAssetPairs } from "./kraken-markets";
 import { fetchPreTradeBook } from "./kraken-pretrade";
 import { buildMarketUniverse, type MarketCandidate, type MarketUniverse } from "./market-universe";
+import { type FastEntryGate } from "./research-lab";
 import { ResearchLabState } from "./research-lab-state";
 import type { Env } from "./types";
 
@@ -170,6 +171,37 @@ async function executionQuality(env: Env, forceRefresh = false): Promise<Respons
   return response;
 }
 
+function executionGatesFromReport(value: unknown): Record<string, FastEntryGate> {
+  if (!value || typeof value !== "object") return {};
+  const report = value as { generatedAt?: unknown; ranked?: unknown };
+  if (!Array.isArray(report.ranked)) return {};
+  const reportGeneratedAt = typeof report.generatedAt === "number" ? report.generatedAt : Date.now();
+  const gates: Record<string, FastEntryGate> = {};
+  for (const raw of report.ranked) {
+    if (!raw || typeof raw !== "object") continue;
+    const item = raw as {
+      pairKey?: unknown;
+      generatedAt?: unknown;
+      fastExecutionEligible?: unknown;
+      immediateRoundTripCostPct?: unknown;
+      blocker?: unknown;
+      error?: unknown;
+    };
+    if (typeof item.pairKey !== "string") continue;
+    gates[item.pairKey] = {
+      checkedAt: typeof item.generatedAt === "number" ? item.generatedAt : reportGeneratedAt,
+      allowed: item.fastExecutionEligible === true,
+      costPct: typeof item.immediateRoundTripCostPct === "number"
+        ? item.immediateRoundTripCostPct
+        : null,
+      blocker: typeof item.blocker === "string"
+        ? item.blocker
+        : typeof item.error === "string" ? item.error : null,
+    };
+  }
+  return gates;
+}
+
 async function runResearchLab(env: Env): Promise<Response> {
   const universeResponse = await marketUniverse(env);
   if (!universeResponse.ok) {
@@ -186,10 +218,14 @@ async function runResearchLab(env: Env): Promise<Response> {
   }
 
   const universe = (await universeResponse.json()) as MarketUniverse;
+  const executionResponse = await executionQuality(env);
+  const executionGates = executionResponse.ok
+    ? executionGatesFromReport(await executionResponse.json())
+    : {};
   return researchLabSingleton(env).fetch("https://lab/tick", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(universe),
+    body: JSON.stringify({ universe, executionGates }),
   });
 }
 
@@ -200,7 +236,7 @@ function dashboard(): Response {
 :root{color-scheme:dark}body{font-family:-apple-system,BlinkMacSystemFont,sans-serif;background:#0b1020;color:#fff;margin:0;padding:22px}main{max-width:760px;margin:auto}.card{background:#151c32;border:1px solid #2b3659;border-radius:18px;padding:18px;margin:14px 0}.ok{color:#5ee6a8}.warn{color:#ffd166}.danger{color:#ff8585}.muted{color:#aeb8d4}pre{white-space:pre-wrap;word-break:break-word;font-size:13px}button,input{font:inherit;border-radius:12px}button{padding:12px 14px;border:0;font-weight:700;margin:5px 5px 5px 0;background:#eef2ff;color:#10172c}button:disabled{opacity:.55}input{box-sizing:border-box;width:100%;padding:13px;border:1px solid #405078;background:#0e1529;color:#fff;margin:8px 0}.grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}.divider{border-top:1px solid #2b3659;margin:18px 0}@media(max-width:520px){.grid{grid-template-columns:1fr}}</style></head>
 <body><main><h1>Auto Bolsa AI</h1><p class="ok">Modo PAPER obligatorio · Trading real bloqueado</p>
 <div class="card"><h2>Calidad de ejecución rápida</h2><p class="muted">Simula ahora mismo una compra y venta de 10 € contra los diez primeros niveles públicos del libro, incluyendo las dos comisiones taker.</p><pre id="execution">Cargando…</pre></div>
-<div class="card"><h2>Laboratorio multihorizonte</h2><p class="muted">Compara cohortes fijas de compra rápida, intradía y medio plazo. Cada estrategia usa 50 € virtuales independientes solo para medir; esos saldos no se suman ni representan dinero disponible.</p><pre id="lab">Cargando…</pre></div>
+<div class="card"><h2>Laboratorio multihorizonte</h2><p class="muted">Las nuevas compras rápidas necesitan además un libro público reciente y favorable. Las salidas de seguridad nunca quedan bloqueadas por ese veto.</p><pre id="lab">Cargando…</pre></div>
 <div class="card"><h2>Mapa automático de mercados</h2><p class="muted">Clasifica los pares EUR de Kraken para 50 € y compara compra rápida, intradía y medio plazo después de costes.</p><pre id="markets">Cargando…</pre></div>
 <div class="card"><h2>Expediente PAPER</h2><p class="muted">La app exige días, velas cerradas, operaciones y métricas mínimas antes de permitir siquiera una revisión humana.</p><pre id="readiness">Cargando…</pre></div>
 <div class="card"><h2>Simulador automático</h2><pre id="status">Cargando…</pre></div>
@@ -210,7 +246,7 @@ function dashboard(): Response {
 <input id="compareKey" type="password" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="Clave pública V2">
 <input id="compareSecret" type="password" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="Secreto privado V2">
 <button onclick="compareCredentials()">Comparar con Cloudflare localmente</button><pre id="compareResult">Sin comparación todavía.</pre></div>
-<p class="warn">La compra rápida no evita pérdidas. Antes de considerar una oportunidad, el sistema mide spread, profundidad, deslizamiento y las dos comisiones. Todo continúa en PAPER.</p>
+<p class="warn">La compra rápida no evita pérdidas. Antes de abrir una simulación nueva, el sistema exige spread, profundidad, deslizamiento y costes compatibles. Todo continúa en PAPER.</p>
 <script>
 let lockoutTimer;
 async function load(){try{const [statusResponse,readinessResponse,marketsResponse,labResponse,executionResponse]=await Promise.all([fetch('/api/status'),fetch('/api/readiness'),fetch('/api/markets'),fetch('/api/lab'),fetch('/api/execution')]);const status=await statusResponse.json();const readiness=await readinessResponse.json();const markets=await marketsResponse.json();const lab=await labResponse.json();const execution=await executionResponse.json();document.getElementById('status').textContent=JSON.stringify(status,null,2);document.getElementById('readiness').textContent=JSON.stringify(readiness,null,2);document.getElementById('markets').textContent=JSON.stringify(markets,null,2);document.getElementById('lab').textContent=JSON.stringify(lab,null,2);document.getElementById('execution').textContent=JSON.stringify(execution,null,2)}catch(e){document.getElementById('status').textContent='Error cargando estado';document.getElementById('readiness').textContent='Error cargando expediente PAPER';document.getElementById('markets').textContent='Error cargando mapa de mercados';document.getElementById('lab').textContent='Error cargando laboratorio';document.getElementById('execution').textContent='Error cargando calidad de ejecución'}}
@@ -231,7 +267,7 @@ export default {
     if (request.method === "GET" && url.pathname === "/") return dashboard();
     if (request.method === "GET" && url.pathname === "/health") {
       return new Response(
-        JSON.stringify({ ok: true, service: "auto-bolsa-ai", version: "0.16.0", mode: "paper", liveTrading: false }),
+        JSON.stringify({ ok: true, service: "auto-bolsa-ai", version: "0.17.0", mode: "paper", liveTrading: false }),
         { headers: jsonHeaders },
       );
     }
@@ -304,7 +340,7 @@ export default {
     }
     if (url.pathname.startsWith("/api/live")) {
       return Response.json(
-        { error: "LIVE_TRADING_HARD_DISABLED", message: "La versión 0.16 solo permite simulación, auditorías, trazabilidad, libros públicos y comparación PAPER." },
+        { error: "LIVE_TRADING_HARD_DISABLED", message: "La versión 0.17 solo permite simulación y exige evidencia pública reciente para cualquier entrada rápida PAPER." },
         { status: 403 },
       );
     }
@@ -316,7 +352,6 @@ export default {
       Promise.all([
         singleton(env).fetch("https://bot/tick", { method: "POST" }).then(() => undefined),
         runResearchLab(env).then(() => undefined).catch(() => undefined),
-        executionQuality(env).then(() => undefined).catch(() => undefined),
       ]).then(() => undefined),
     );
   },
