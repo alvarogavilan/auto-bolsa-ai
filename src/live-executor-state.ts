@@ -13,10 +13,9 @@ import {
 } from "./live-executor";
 import { defaultLiveGuardrailConfig, liveTradingEnabledFromEnv } from "./live-guardrails";
 import { FakeLiveOrderTransport, KrakenLiveOrderTransport, type LiveOrderTransport } from "./live-transport";
-import type { Env } from "./types";
+import { BOT_STATE_SINGLETON_NAME, type Env } from "./types";
 
 const STORAGE_KEY = "live-executor-snapshot";
-const NONCE_KEY = "live-executor-kraken-nonce";
 
 /**
  * Durable Object que persiste el estado del ejecutor LIVE.
@@ -43,14 +42,19 @@ export class LiveExecutorState extends DurableObject<Env> {
     await this.ctx.storage.put(STORAGE_KEY, state);
   }
 
+  /**
+   * El ejecutor LIVE NUNCA mantiene su propio contador de nonce: pide el
+   * siguiente a la única autoridad persistente (`BotState`), la misma que ya
+   * sirve las llamadas privadas de PAPER para esta clave de API. Dos
+   * contadores independientes podrían emitir nonces desordenados y disparar
+   * el bloqueo temporal de Kraken (ver docs/kraken-api-safety.md).
+   */
   private async nextNonce(): Promise<string> {
-    const stored = await this.ctx.storage.get<string>(NONCE_KEY);
-    const last = stored ? BigInt(stored) : 0n;
-    const timeBased = BigInt(Date.now()) * 1000n;
-    const next = timeBased > last ? timeBased : last + 1n;
-    const value = next.toString();
-    await this.ctx.storage.put(NONCE_KEY, value);
-    return value;
+    const botState = this.env.BOT_STATE.get(this.env.BOT_STATE.idFromName(BOT_STATE_SINGLETON_NAME));
+    const response = await botState.fetch("https://bot/kraken/next-nonce", { method: "POST" });
+    if (!response.ok) throw new Error(`No se pudo obtener el nonce compartido: HTTP ${response.status}`);
+    const { nonce } = (await response.json()) as { nonce: string };
+    return nonce;
   }
 
   /**
@@ -73,6 +77,7 @@ export class LiveExecutorState extends DurableObject<Env> {
   private guardrailConfig() {
     return defaultLiveGuardrailConfig({
       liveTradingEnabled: liveTradingEnabledFromEnv(this.env.LIVE_TRADING_ENABLED),
+      allowedPairs: [this.env.PAIR || "XBTEUR"],
     });
   }
 

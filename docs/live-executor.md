@@ -7,20 +7,33 @@ paralelo a la estrategia PAPER y sin ningún camino que la active hoy.
 
 - `src/kraken.ts`: `addOrder`, `queryOrders`, `openOrders`, `closedOrders`,
   `cancelOrder`. Reutilizan la firma HMAC-SHA512 y el manejo de `nonce` ya
-  validados por `kraken-auth.test.ts`.
-- `src/live-transport.ts`: interfaz `LiveOrderTransport` +
-  `KrakenLiveOrderTransport` (real) + `FakeLiveOrderTransport` (mock por
-  defecto, sin red, usado en todas las pruebas).
+  validados por `kraken-auth.test.ts`. `KrakenApiError`/`isKrakenOrderRejection`
+  distinguen un rechazo explícito de Kraken (`EOrder:*`) de cualquier otro
+  fallo (HTTP, red, `EAPI:*`, `EGeneral:*`).
+- `src/kraken-nonce.ts`: `computeNextNonce`, el cálculo puro del nonce. Existe
+  una única autoridad persistente por clave de API (`BotState`, ver
+  `docs/kraken-api-safety.md`); el ejecutor LIVE le pide el nonce a esa misma
+  autoridad en vez de mantener su propio contador.
+- `src/live-transport.ts`: interfaz `LiveOrderTransport` (incluye
+  `findByClOrdId` y `fetchBalances`) + `KrakenLiveOrderTransport` (real) +
+  `FakeLiveOrderTransport` (mock por defecto, sin red, usado en todas las
+  pruebas).
 - `src/live-guardrails.ts`: puertas de riesgo puras — interruptor
-  `LIVE_TRADING_ENABLED`, una sola orden activa, una sola posición abierta,
-  tamaño máximo (5 EUR por defecto), pérdida diaria, drawdown, datos de
-  mercado obsoletos y errores de transporte consecutivos.
+  `LIVE_TRADING_ENABLED`, una sola orden activa, una sola posición abierta
+  (inventario real, no un booleano), tamaño máximo (5 EUR por defecto),
+  validación estricta de la intención (números finitos/positivos, par
+  permitido, `volumeBase × limitPrice` coherente con `notionalEur`), pérdida
+  diaria, drawdown, datos de mercado obsoletos y errores de transporte
+  consecutivos.
 - `src/live-executor.ts`: máquina de estados (`prepared → submitted →
   partially_filled/filled/cancelled/rejected/reconciliation_required`),
-  `cl_ord_id` único con idempotencia persistente en el snapshot,
-  reconciliación contra órdenes abiertas/cerradas remotas, reintento acotado,
-  cancelación de emergencia con cierre conservador y un registro auditable de
-  cada transición.
+  `cl_ord_id` único (UUID estándar) con idempotencia persistente en el
+  snapshot, inventario real (`pair`, `quantityBase`, `averageCostEur`,
+  `reservedQuantityBase`) actualizado por cada fill incremental —no solo al
+  cerrar la orden—, reconciliación contra órdenes abiertas/cerradas remotas y
+  contra el balance real, reintento acotado que nunca reenvía a ciegas
+  (`findByClOrdId` primero), cancelación de emergencia con cierre
+  conservador, y un registro auditable de cada transición.
 - `src/live-executor-state.ts`: Durable Object que persiste el snapshot
   anterior en `ctx.storage`, para que la idempotencia y la reconciliación
   sobrevivan a un reinicio del proceso.
@@ -30,7 +43,9 @@ paralelo a la estrategia PAPER y sin ningún camino que la active hoy.
 - `LIVE_TRADING_ENABLED` no aparece en `wrangler.jsonc`. La variable llega
   como `undefined` a `Env`, y `liveTradingEnabledFromEnv` solo devuelve
   `true` para el literal `"true"`. `evaluateLiveGuardrails` comprueba este
-  interruptor primero y de forma independiente del resto de puertas.
+  interruptor primero y de forma independiente del resto de puertas, y
+  `submitOrder` lo vuelve a comprobar (junto con todas las demás puertas)
+  justo antes de enviar, no solo al preparar.
 - `LiveExecutorState` se exporta desde `src/index.ts` únicamente para que
   Cloudflare pueda instanciar el Durable Object declarado en
   `wrangler.jsonc`. **Ninguna ruta HTTP ni el `scheduled()` del Worker
@@ -44,22 +59,39 @@ paralelo a la estrategia PAPER y sin ningún camino que la active hoy.
   otro caso `LiveExecutorState` construye `FakeLiveOrderTransport`, que nunca
   hace una petición de red.
 - Ni la estrategia PAPER (`bot-state.ts`, `research-lab.ts`) ni sus rutas se
-  han modificado.
+  han modificado. El único cambio en `bot-state.ts` es exponer
+  `POST /kraken/next-nonce` para que exista una única autoridad de nonce.
 
 ## Modelo de amenazas e invariantes
 
 | Amenaza | Invariante que la mitiga |
 | --- | --- |
-| Activación accidental por variable de entorno mal puesta | `liveTradingEnabledFromEnv` exige el literal exacto `"true"`; ausente o cualquier otro valor es `false`. |
-| Doble envío de la misma orden (reintento de red, doble clic) | `cl_ord_id` único derivado de un `idempotencyKey` persistido en `idempotencyIndex`; `prepareOrder` devuelve la orden existente en vez de crear una nueva. El transporte también deduplica por `cl_ord_id`. |
-| Abrir dos posiciones o dos órdenes a la vez | `activeClOrdId` y `hasOpenPosition` bloquean estructuralmente cualquier nueva orden de apertura mientras haya una activa. |
-| Orden de tamaño excesivo | `maxOrderNotionalEur` (5 EUR por defecto) se valida antes de generar el `cl_ord_id`. |
-| Reventar el límite de pérdida diaria o drawdown | Guardrails de `dayStartEquityEur`/`peakEquityEur` idénticos en espíritu a los de `bot-state.ts`. |
-| Actuar sobre datos de mercado obsoletos | `lastMarketDataAt` con `maxMarketDataAgeMs` (5 minutos por defecto); sin lectura reciente, todo se bloquea. |
+| Activación accidental por variable de entorno mal puesta | `liveTradingEnabledFromEnv` exige el literal exacto `"true"`; ausente o cualquier otro valor es `false`. Se comprueba tanto en `prepare` como, de nuevo, justo antes de `submit`. |
+| Doble envío de la misma orden (reintento de red, doble clic) | `cl_ord_id` único (UUID estándar) derivado de un `idempotencyKey` persistido en `idempotencyIndex`; `prepareOrder` devuelve la orden existente en vez de crear una nueva. El transporte también deduplica por `cl_ord_id`. |
+| Reenviar a ciegas una orden ambigua tras un timeout | Si `exchangeOrderId` es `null`, `retryReconciliation` primero llama a `findByClOrdId` contra abiertas/cerradas; solo si el exchange no la conoce en absoluto se reenvía. |
+| Dos contadores de nonce independientes desordenando la clave | Autoridad única (`BotState.nextKrakenNonce`, endpoint `POST /kraken/next-nonce`); `LiveExecutorState` nunca mantiene su propio contador. `computeNextNonce` está probado por separado. |
+| Confundir un fallo de transporte con un rechazo real | Solo un código `EOrder:*` explícito de Kraken es un rechazo terminal (`isKrakenOrderRejection`); timeout, red, HTTP 5xx, `EAPI:*`/`EGeneral:*` o respuesta ambigua siempre van a `reconciliation_required`. |
+| Abrir dos posiciones o dos órdenes a la vez | `activeClOrdId` bloquea cualquier orden nueva mientras haya una activa; el inventario real (`quantityBase > 0`) bloquea abrir una segunda posición. |
+| Vender un activo o una cantidad que no se tiene | El inventario exige que el par de la venta coincida con el de la posición y que el volumen no supere lo realmente disponible (`quantityBase - reservedQuantityBase`). |
+| Orden de tamaño excesivo o mal formada | `maxOrderNotionalEur` (5 EUR por defecto) y `validateOrderIntent` (números finitos/positivos, par permitido, `volumeBase × limitPrice` coherente con `notionalEur`) se validan antes de generar el `cl_ord_id`. |
+| Reventar el límite de pérdida diaria o drawdown, incluso entre `prepare` y `submit` | Guardrails de `dayStartEquityEur`/`peakEquityEur` idénticos en espíritu a los de `bot-state.ts`, re-evaluados justo antes de enviar. |
+| Actuar sobre datos de mercado obsoletos, incluso si caducan después de `prepare` | `lastMarketDataAt` con `maxMarketDataAgeMs` (5 minutos por defecto); se re-evalúa en `submit`, no solo en `prepare`. |
 | Fallos en cascada del transporte | `consecutiveTransportErrors` con disyuntor configurable; además cada intento de envío está acotado por `MAX_SUBMISSION_ATTEMPTS`. |
 | Estado ambiguo tras timeout o respuesta ininteligible | Nunca se asume éxito ni fracaso: se transiciona a `reconciliation_required` y solo `reconcile()`/`retryReconciliation()` resuelven la verdad contra el exchange. |
+| Perder inventario real en la contabilidad tras un fill parcial cancelado | El inventario se actualiza por cada delta de ejecución (`applyFillDelta`), no solo cuando la orden llega a `filled`; una orden `cancelled` tras un fill parcial deja la cantidad realmente ejecutada, ni más ni menos. |
+| Inventario local desincronizado del balance real | `reconcile()` también contrasta `inventory.quantityBase` contra `fetchBalances()` (tolerando los prefijos `X`/`XX` de Kraken); una discrepancia fuerza `reconciliation_required` en toda orden no terminal. |
+| Creer que "cancelación de emergencia" también liquida una posición ya ejecutada | `emergencyCancelAll` solo cancela órdenes; si queda inventario, activa `emergencyStopRequiresManualLiquidation` en vez de vender nada automáticamente. |
 | Emergencia con órdenes en curso | `emergencyCancelAll` cancela toda orden no terminal (o la cierra localmente si nunca llegó a enviarse) y activa `emergencyStopActive`, que bloquea cualquier nueva orden hasta que se despeje explícitamente. |
-| Pérdida de estado por reinicio del proceso | El snapshot es un objeto plano serializable; `LiveExecutorState` lo persiste en `ctx.storage` y `test/live-executor.test.ts` verifica que un ciclo `JSON.stringify`/`JSON.parse` conserva órdenes, idempotencia y auditoría. |
+| Pérdida de estado por reinicio del proceso | El snapshot es un objeto plano serializable; `LiveExecutorState` lo persiste en `ctx.storage` y `test/live-executor.test.ts` verifica que un ciclo `JSON.stringify`/`JSON.parse` conserva órdenes, inventario, idempotencia y auditoría. |
+
+## Limitación reconocida
+
+La reconciliación contrasta órdenes (abiertas/cerradas) y balances, pero no
+baja al nivel de operaciones/fills individuales (`TradesHistory` de Kraken).
+Para el alcance de esta infraestructura desactivada —que nunca envía nada a
+producción— se considera suficiente; profundizar en reconciliación por
+operación individual queda como trabajo explícito antes de un piloto manual
+(ver más abajo).
 
 ## Lo que falta explícitamente para un piloto manual
 
@@ -72,11 +104,15 @@ Ninguno de estos pasos se ha dado en este PR:
 3. Conceder a la API key de Kraken los permisos mínimos de trading (sin
    retirada) y verificarlos con el auditor de permisos ya existente.
 4. Definir y probar en producción el procedimiento manual de cancelación de
-   emergencia (quién lo acciona, con qué credencial, en qué plazo).
+   emergencia (quién lo acciona, con qué credencial, en qué plazo) y la ruta
+   real de liquidación manual cuando `emergencyStopRequiresManualLiquidation`
+   quede activo.
 5. Ejecutar la reconciliación (`reconcile`) en un cron real y decidir la
    cadencia y las alertas ante `reconciliation_required` prolongado.
-6. Fijar el tamaño máximo real de piloto (el código usa 5 EUR) y el criterio
+6. Profundizar la reconciliación a nivel de operación/fill individual
+   (`TradesHistory`), no solo estado de orden y balance agregado.
+7. Fijar el tamaño máximo real de piloto (el código usa 5 EUR) y el criterio
    explícito de las puertas del README ("Puertas obligatorias antes de
    operar con dinero real").
-7. Revisión humana explícita y registrada del primer ciclo real antes de
+8. Revisión humana explícita y registrada del primer ciclo real antes de
    dejarlo desatendido.

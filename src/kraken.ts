@@ -176,10 +176,37 @@ export async function signKrakenRequest(
   return bytesToBase64(signature);
 }
 
+/**
+ * Error explícito devuelto por Kraken (payload.error no vacío), distinto de un
+ * fallo HTTP/red genérico. Conserva los códigos originales (p. ej.
+ * "EOrder:Insufficient funds", "EAPI:Invalid nonce") para que el llamante
+ * pueda decidir si es un rechazo real de la orden o un fallo de transporte
+ * que debe tratarse como ambiguo. Ver `isKrakenOrderRejection`.
+ */
+export class KrakenApiError extends Error {
+  readonly codes: string[];
+  constructor(codes: string[]) {
+    super(`Kraken private: ${codes.join(", ")}`);
+    this.name = "KrakenApiError";
+    this.codes = codes;
+  }
+}
+
+/**
+ * Solo un código `EOrder:*` significa que Kraken evaluó la orden y la
+ * rechazó explícitamente (fondos insuficientes, tamaño inválido, etc.).
+ * Cualquier otro fallo (HTTP, red, `EAPI:*`, `EGeneral:*`, JSON malformado)
+ * es ambiguo: no sabemos si la orden llegó a procesarse, así que nunca debe
+ * tratarse como un rechazo terminal.
+ */
+export function isKrakenOrderRejection(error: unknown): error is KrakenApiError {
+  return error instanceof KrakenApiError && error.codes.some((code) => code.startsWith("EOrder:"));
+}
+
 async function parsePrivateResponse<T>(response: Response): Promise<T> {
   if (!response.ok) throw new Error(`Kraken private HTTP ${response.status}`);
   const payload = (await response.json()) as KrakenResponse<T>;
-  if (payload.error.length > 0) throw new Error(`Kraken private: ${payload.error.join(", ")}`);
+  if (payload.error.length > 0) throw new KrakenApiError(payload.error);
   return payload.result;
 }
 

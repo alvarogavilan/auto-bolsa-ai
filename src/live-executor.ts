@@ -8,6 +8,12 @@ import {
 } from "./live-guardrails";
 import type { LiveOrderTransport, LiveTransportOrderState } from "./live-transport";
 
+const EPSILON = 1e-9;
+
+function money(value: number): number {
+  return Math.round(value * 1_000_000) / 1_000_000;
+}
+
 export type LiveOrderStatus =
   | "prepared"
   | "submitted"
@@ -71,6 +77,20 @@ export interface LiveAuditEntry {
   detail: string;
 }
 
+/**
+ * Inventario real del único activo que puede sostenerse a la vez. Sustituye a
+ * un booleano `hasOpenPosition`: un fill parcial cancelado deja cantidad
+ * realmente en cartera, y eso debe reflejarse aunque la orden que lo produjo
+ * termine en `cancelled`, no solo cuando termina en `filled`.
+ */
+export interface LiveInventory {
+  pair: string | null;
+  quantityBase: number;
+  averageCostEur: number | null;
+  /** Cantidad ya comprometida por una orden de cierre en curso. */
+  reservedQuantityBase: number;
+}
+
 export interface LiveExecutorSnapshot {
   schemaVersion: "live-executor-snapshot-v1";
   createdAt: number;
@@ -78,7 +98,7 @@ export interface LiveExecutorSnapshot {
   orders: Record<string, LiveOrder>;
   idempotencyIndex: Record<string, string>;
   activeClOrdId: string | null;
-  hasOpenPosition: boolean;
+  inventory: LiveInventory;
   dayKey: string;
   dayStartEquityEur: number;
   currentEquityEur: number;
@@ -87,6 +107,8 @@ export interface LiveExecutorSnapshot {
   lastMarketDataAt: number | null;
   emergencyStopActive: boolean;
   emergencyStopReason: string | null;
+  /** Verdadero si, tras una parada de emergencia, queda inventario sin liquidar. */
+  emergencyStopRequiresManualLiquidation: boolean;
   nextAuditSequence: number;
   auditLog: LiveAuditEntry[];
 }
@@ -113,7 +135,7 @@ export function initializeLiveExecutor(initialEquityEur: number, now = Date.now(
     orders: {},
     idempotencyIndex: {},
     activeClOrdId: null,
-    hasOpenPosition: false,
+    inventory: { pair: null, quantityBase: 0, averageCostEur: null, reservedQuantityBase: 0 },
     dayKey: utcDay(now),
     dayStartEquityEur: initialEquityEur,
     currentEquityEur: initialEquityEur,
@@ -122,6 +144,7 @@ export function initializeLiveExecutor(initialEquityEur: number, now = Date.now(
     lastMarketDataAt: null,
     emergencyStopActive: false,
     emergencyStopReason: null,
+    emergencyStopRequiresManualLiquidation: false,
     nextAuditSequence: 1,
     auditLog: [],
   };
@@ -158,12 +181,28 @@ function orderIntentForSide(side: LiveOrderSide): LiveOrderIntent {
   return side === "buy" ? "open" : "close";
 }
 
-function guardrailContext(state: LiveExecutorSnapshot, request: LiveOrderRequest): LiveGuardrailContext {
+function guardrailContext(
+  state: LiveExecutorSnapshot,
+  request: LiveOrderRequest,
+  excludeClOrdId: string | null,
+): LiveGuardrailContext {
+  // La reserva de inventario, si existe, siempre pertenece a la orden activa
+  // (única por diseño). Al re-validar esa misma orden en `submit`, su propia
+  // reserva no debe restarse de la disponibilidad: se estaría comparando el
+  // volumen de la orden contra sí misma y bloqueándola siempre.
+  const reservedForAvailability = excludeClOrdId !== null && state.activeClOrdId === excludeClOrdId
+    ? 0
+    : state.inventory.reservedQuantityBase;
   return {
     orderIntent: orderIntentForSide(request.side),
-    hasActiveOrder: state.activeClOrdId !== null,
-    hasOpenPosition: state.hasOpenPosition,
-    requestedNotionalEur: request.notionalEur,
+    pair: request.pair,
+    volumeBase: request.volumeBase,
+    limitPrice: request.limitPrice,
+    notionalEur: request.notionalEur,
+    hasActiveOrder: state.activeClOrdId !== null && state.activeClOrdId !== excludeClOrdId,
+    inventoryQuantityBase: state.inventory.quantityBase,
+    inventoryReservedQuantityBase: reservedForAvailability,
+    inventoryPair: state.inventory.pair,
     dayStartEquityEur: state.dayStartEquityEur,
     currentEquityEur: state.currentEquityEur,
     peakEquityEur: state.peakEquityEur,
@@ -173,13 +212,19 @@ function guardrailContext(state: LiveExecutorSnapshot, request: LiveOrderRequest
   };
 }
 
+/**
+ * Evalúa todas las puertas de riesgo. `excludeClOrdId` permite re-evaluar en
+ * el momento del envío sin que la propia orden (ya activa desde `prepare`)
+ * se autobloquee por el límite estructural de una sola orden.
+ */
 export function checkLiveGuardrails(
   state: LiveExecutorSnapshot,
   config: LiveGuardrailConfig,
   request: LiveOrderRequest,
   now = Date.now(),
+  excludeClOrdId: string | null = null,
 ): LiveGuardrailResult {
-  return evaluateLiveGuardrails(config, guardrailContext(state, request), now);
+  return evaluateLiveGuardrails(config, guardrailContext(state, request, excludeClOrdId), now);
 }
 
 /**
@@ -207,7 +252,9 @@ export function prepareOrder(
     return { ok: false, state, blockers: result.blockers };
   }
 
-  const clOrdId = `live-${crypto.randomUUID()}`;
+  // UUID estándar sin prefijo: Kraken exige `cl_ord_id` como identificador de
+  // texto libre acotado, y un prefijo añadido lo alarga innecesariamente.
+  const clOrdId = crypto.randomUUID();
   const order: LiveOrder = {
     clOrdId,
     idempotencyKey: request.idempotencyKey,
@@ -225,6 +272,11 @@ export function prepareOrder(
   state.orders[clOrdId] = order;
   state.idempotencyIndex[request.idempotencyKey] = clOrdId;
   state.activeClOrdId = clOrdId;
+  if (orderIntentForSide(request.side) === "close") {
+    // Reserva la cantidad que esta orden de cierre pretende vender: el límite
+    // de una sola orden activa garantiza que solo hay una reserva a la vez.
+    state.inventory.reservedQuantityBase = request.volumeBase;
+  }
   appendAudit(state, "order_prepared", `${request.side} ${request.notionalEur} EUR ${request.pair}`, clOrdId, now);
   return { ok: true, state, order, deduplicated: false };
 }
@@ -256,8 +308,46 @@ function transition(
 
   if (TERMINAL_STATUSES.has(next)) {
     if (state.activeClOrdId === order.clOrdId) state.activeClOrdId = null;
-    if (next === "filled") {
-      state.hasOpenPosition = order.request.side === "buy";
+    if (orderIntentForSide(order.request.side) === "close") {
+      // Libera la reserva de inventario tanto si la venta se completó como si
+      // se canceló o fue rechazada: en cualquier caso deja de estar "en vuelo".
+      state.inventory.reservedQuantityBase = 0;
+    }
+  }
+}
+
+/**
+ * Aplica el delta de ejecución al inventario real, no al estado de la orden.
+ * Se llama con la cantidad ejecutada acumulada más reciente conocida por el
+ * exchange, independientemente de si la orden termina `filled`,
+ * `partially_filled` o incluso `cancelled` tras un fill parcial: ese
+ * inventario ya existe y no puede perderse silenciosamente.
+ */
+function applyFillDelta(
+  state: LiveExecutorSnapshot,
+  order: LiveOrder,
+  newFilledVolumeBase: number,
+  newAveragePrice: number | null,
+): void {
+  const delta = newFilledVolumeBase - order.filledVolumeBase;
+  order.filledVolumeBase = newFilledVolumeBase;
+  if (newAveragePrice !== null) order.averageFillPrice = newAveragePrice;
+  if (delta <= EPSILON) return;
+
+  const inventory = state.inventory;
+  const fillPrice = newAveragePrice ?? order.request.limitPrice;
+  if (order.request.side === "buy") {
+    const priorCost = inventory.quantityBase * (inventory.averageCostEur ?? 0);
+    const newQuantity = money(inventory.quantityBase + delta);
+    inventory.averageCostEur = newQuantity > EPSILON ? (priorCost + delta * fillPrice) / newQuantity : null;
+    inventory.quantityBase = newQuantity;
+    inventory.pair = order.request.pair;
+  } else {
+    inventory.quantityBase = Math.max(0, money(inventory.quantityBase - delta));
+    if (inventory.quantityBase <= EPSILON) {
+      inventory.quantityBase = 0;
+      inventory.averageCostEur = null;
+      inventory.pair = null;
     }
   }
 }
@@ -281,6 +371,22 @@ export async function submitOrder(
   if (order.status !== "prepared" && order.status !== "reconciliation_required") {
     // Reintento idempotente: la orden ya progresó, no hay nada que reenviar.
     return { ok: true, state, order };
+  }
+
+  // Entre `prepare` y `submit` pueden haber caducado los datos de mercado,
+  // haberse alcanzado la pérdida diaria/drawdown, o haberse activado una
+  // parada de emergencia. Se re-evalúan todas las puertas justo antes de
+  // enviar, excluyendo el bloqueo por "orden activa" de esta misma orden.
+  const revalidation = checkLiveGuardrails(state, config, order.request, now, order.clOrdId);
+  if (!revalidation.allowed) {
+    transition(
+      state,
+      order,
+      "cancelled",
+      `Bloqueada antes de enviar: ${revalidation.blockers.join("; ")}`,
+      now,
+    );
+    return { ok: false, state, order, blockers: revalidation.blockers };
   }
 
   if (order.attempts >= MAX_SUBMISSION_ATTEMPTS) {
@@ -341,8 +447,11 @@ function applyRemoteTruth(
   remote: LiveTransportOrderState,
   now: number,
 ): void {
-  order.filledVolumeBase = remote.volumeExecutedBase;
-  order.averageFillPrice = remote.averagePrice;
+  // Siempre se fija, no solo la primera vez: cubre tanto la reconciliación
+  // habitual (ya lo tenía) como el caso de `retryReconciliation` en el que se
+  // acaba de localizar la orden por `cl_ord_id` y `exchangeOrderId` era null.
+  order.exchangeOrderId = remote.exchangeOrderId;
+  applyFillDelta(state, order, remote.volumeExecutedBase, remote.averagePrice);
   const nextStatus = statusFromRemote(remote);
   if (!nextStatus) {
     appendAudit(state, "reconciliation_unresolved", "El transporte devolvió un estado remoto no reconocido", order.clOrdId, now);
@@ -351,7 +460,44 @@ function applyRemoteTruth(
   transition(state, order, nextStatus, "Reconciliada con el estado remoto del exchange", now, remote);
 }
 
-/** Contrasta cada orden no terminal contra las órdenes abiertas/cerradas remotas. */
+const RECONCILE_BALANCE_TOLERANCE_BASE = 1e-6;
+
+function baseAssetFromPair(pair: string): string | null {
+  return pair.endsWith("EUR") ? pair.slice(0, -3) : null;
+}
+
+/**
+ * Contrasta el inventario derivado de los fills contra el balance real de
+ * Kraken para el activo base. Prueba las variantes de código de activo que
+ * usa Kraken (con y sin prefijo `X`) porque no todos los pares las usan por
+ * igual. Sin ninguna clave reconocible en `balances`, no hay evidencia para
+ * contradecir el inventario local, así que se reporta consistente.
+ */
+export function reconcileInventoryAgainstBalances(
+  inventory: LiveInventory,
+  balances: Record<string, string>,
+  toleranceBase = RECONCILE_BALANCE_TOLERANCE_BASE,
+): { consistent: boolean; observedBalance: number | null } {
+  if (!inventory.pair) return { consistent: true, observedBalance: null };
+  const asset = baseAssetFromPair(inventory.pair);
+  if (!asset) return { consistent: true, observedBalance: null };
+
+  for (const key of [asset, `X${asset}`, `XX${asset}`]) {
+    const raw = balances[key];
+    if (raw === undefined) continue;
+    const observed = Number(raw);
+    if (!Number.isFinite(observed)) continue;
+    return { consistent: Math.abs(observed - inventory.quantityBase) <= toleranceBase, observedBalance: observed };
+  }
+  return { consistent: true, observedBalance: null };
+}
+
+/**
+ * Contrasta cada orden no terminal contra las órdenes abiertas/cerradas
+ * remotas, y el inventario derivado contra el balance real. La reconciliación
+ * de fills/operaciones individuales (TradesHistory) queda fuera de esta
+ * versión desactivada; ver docs/live-executor.md.
+ */
 export async function reconcile(
   state: LiveExecutorSnapshot,
   transport: LiveOrderTransport,
@@ -375,6 +521,26 @@ export async function reconcile(
     applyRemoteTruth(state, order, remote, now);
   }
 
+  const balances = await transport.fetchBalances().catch(() => null);
+  if (balances) {
+    const check = reconcileInventoryAgainstBalances(state.inventory, balances);
+    if (!check.consistent) {
+      state.consecutiveTransportErrors += 1;
+      appendAudit(
+        state,
+        "balance_mismatch_detected",
+        `Inventario local=${state.inventory.quantityBase}, balance observado=${check.observedBalance}`,
+        null,
+        now,
+      );
+      for (const order of Object.values(state.orders)) {
+        if (!TERMINAL_STATUSES.has(order.status)) {
+          transition(state, order, "reconciliation_required", "Discrepancia de balance detectada", now);
+        }
+      }
+    }
+  }
+
   state.updatedAt = now;
   return state;
 }
@@ -391,6 +557,17 @@ export async function retryReconciliation(
   if (!order || order.status !== "reconciliation_required") return state;
 
   if (!order.exchangeOrderId) {
+    // Nunca reenviar a ciegas: si la orden original llegó a procesarse en el
+    // exchange (el timeout fue solo en la respuesta), reenviar con el mismo
+    // cl_ord_id debería ser idempotente, pero no hay garantía universal de
+    // ello. Antes de intentarlo, se busca explícitamente por cl_ord_id.
+    const remote = await transport.findByClOrdId(order.clOrdId);
+    if (remote) {
+      state.consecutiveTransportErrors = 0;
+      appendAudit(state, "reconciliation_found_by_cl_ord_id", "Orden localizada por cl_ord_id antes de reenviar", clOrdId, now);
+      applyRemoteTruth(state, order, remote, now);
+      return state;
+    }
     await submitOrder(state, transport, config, clOrdId, now);
     return state;
   }
@@ -411,8 +588,13 @@ export async function retryReconciliation(
 }
 
 /**
- * Cancelación de emergencia: cancela cualquier orden no terminal y activa la parada
- * estructural. No intenta abrir posiciones nuevas ni "arreglar" nada: solo detiene.
+ * Cancelación de emergencia: cancela cualquier orden no terminal y activa la
+ * parada estructural. NO liquida una posición ya ejecutada: si al terminar
+ * queda inventario (`state.inventory.quantityBase > 0`), se marca
+ * `emergencyStopRequiresManualLiquidation = true` para que quede explícito
+ * que hace falta una decisión y una ruta de cierre real, reconciliada, no
+ * automática. "Cierre conservador" aquí significa únicamente "dejar de
+ * intentar operar", nunca "vender lo que ya se compró".
  */
 export async function emergencyCancelAll(
   state: LiveExecutorSnapshot,
@@ -446,13 +628,26 @@ export async function emergencyCancelAll(
     }
   }
 
+  state.emergencyStopRequiresManualLiquidation = state.inventory.quantityBase > EPSILON;
+  if (state.emergencyStopRequiresManualLiquidation) {
+    appendAudit(
+      state,
+      "emergency_stop_leaves_open_inventory",
+      `Quedan ${state.inventory.quantityBase} en inventario de ${state.inventory.pair}: requiere revisión y cierre manual`,
+      null,
+      now,
+    );
+  }
+
   state.updatedAt = now;
   return state;
 }
 
+/** Despeja la parada de emergencia. Requiere que un humano haya revisado el inventario pendiente. */
 export function clearEmergencyStop(state: LiveExecutorSnapshot, reason: string, now = Date.now()): void {
   state.emergencyStopActive = false;
   state.emergencyStopReason = null;
+  state.emergencyStopRequiresManualLiquidation = false;
   appendAudit(state, "emergency_stop_cleared", reason, null, now);
   state.updatedAt = now;
 }

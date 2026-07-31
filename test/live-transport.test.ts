@@ -85,4 +85,30 @@ describe("FakeLiveOrderTransport", () => {
     const secondCancel = await transport.cancelOrder(alreadyClosed.exchangeOrderId!);
     expect(secondCancel.cancelled).toBe(false);
   });
+
+  it("registers the order remotely even when the client only observes a timeout afterwards", async () => {
+    const transport = new FakeLiveOrderTransport();
+    transport.scriptScenario("phantom-1", { kind: "accept-but-report-timeout" });
+    await expect(transport.createOrder(request("phantom-1"))).rejects.toThrow(/Timeout/);
+
+    const found = await transport.findByClOrdId("phantom-1");
+    expect(found).not.toBeNull();
+    expect(found?.clOrdId).toBe("phantom-1");
+
+    const open = await transport.listOpenOrders();
+    const closed = await transport.listClosedOrders();
+    expect(open.length + closed.length).toBe(1);
+  });
+
+  it("findByClOrdId returns null for an order the exchange never received", async () => {
+    const transport = new FakeLiveOrderTransport();
+    expect(await transport.findByClOrdId("never-sent")).toBeNull();
+  });
+
+  it("reports a settable simulated balance instead of an always-empty placeholder", async () => {
+    const transport = new FakeLiveOrderTransport();
+    expect(await transport.fetchBalances()).toEqual({ ZEUR: "0" });
+    transport.setBalance("XXBT", "1.5");
+    expect(await transport.fetchBalances()).toEqual({ ZEUR: "0", XXBT: "1.5" });
+  });
 });

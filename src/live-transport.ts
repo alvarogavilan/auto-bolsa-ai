@@ -1,4 +1,4 @@
-import { addOrder, cancelOrder, closedOrders, openOrders, queryOrders } from "./kraken";
+import { addOrder, cancelOrder, closedOrders, fetchBalance, isKrakenOrderRejection, openOrders, queryOrders } from "./kraken";
 
 export type LiveOrderSide = "buy" | "sell";
 
@@ -38,6 +38,12 @@ export interface LiveTransportCancelResult {
 export interface LiveOrderTransport {
   createOrder(request: LiveTransportOrderRequest): Promise<LiveTransportAck>;
   queryOrder(exchangeOrderId: string): Promise<LiveTransportOrderState | null>;
+  /**
+   * Busca una orden por `cl_ord_id` entre abiertas y cerradas. Debe usarse
+   * antes de reenviar una orden que quedó sin `exchangeOrderId` tras un fallo
+   * de transporte: si el exchange ya la conoce, reenviar sería ambiguo.
+   */
+  findByClOrdId(clOrdId: string): Promise<LiveTransportOrderState | null>;
   cancelOrder(exchangeOrderId: string): Promise<LiveTransportCancelResult>;
   listOpenOrders(): Promise<LiveTransportOrderState[]>;
   listClosedOrders(): Promise<LiveTransportOrderState[]>;
@@ -79,11 +85,14 @@ export class KrakenLiveOrderTransport implements LiveOrderTransport {
         raw: result,
       };
     } catch (error) {
-      return {
-        kind: "rejected",
-        exchangeOrderId: null,
-        raw: error instanceof Error ? error.message : "unknown transport error",
-      };
+      // Solo un rechazo explícito de Kraken (EOrder:*) es terminal. Cualquier
+      // otro fallo (timeout, red, 5xx, EAPI/EGeneral, JSON malformado) se
+      // propaga: el llamante (`submitOrder`) lo convierte en
+      // `reconciliation_required`, nunca en un rechazo asumido.
+      if (isKrakenOrderRejection(error)) {
+        return { kind: "rejected", exchangeOrderId: null, raw: error.codes };
+      }
+      throw error;
     }
   }
 
@@ -92,6 +101,11 @@ export class KrakenLiveOrderTransport implements LiveOrderTransport {
     const [order] = await queryOrders([exchangeOrderId], this.apiKey, this.apiSecret, nonce);
     if (!order) return null;
     return toTransportState(order);
+  }
+
+  async findByClOrdId(clOrdId: string): Promise<LiveTransportOrderState | null> {
+    const [open, closed] = await Promise.all([this.listOpenOrders(), this.listClosedOrders()]);
+    return [...open, ...closed].find((order) => order.clOrdId === clOrdId) ?? null;
   }
 
   async cancelOrder(exchangeOrderId: string): Promise<LiveTransportCancelResult> {
@@ -113,7 +127,8 @@ export class KrakenLiveOrderTransport implements LiveOrderTransport {
   }
 
   async fetchBalances(): Promise<Record<string, string>> {
-    throw new Error("KrakenLiveOrderTransport.fetchBalances no está implementado en la versión desactivada");
+    const nonce = await this.nextNonce();
+    return fetchBalance(this.apiKey, this.apiSecret, nonce);
   }
 }
 
@@ -145,6 +160,7 @@ export type FakeTransportScenario =
   | { kind: "accept-open" }
   | { kind: "reject"; reason: string }
   | { kind: "timeout" }
+  | { kind: "accept-but-report-timeout" }
   | { kind: "unknown" }
   | { kind: "partial-then-fill"; firstFillFraction: number };
 
@@ -155,7 +171,13 @@ export type FakeTransportScenario =
 export class FakeLiveOrderTransport implements LiveOrderTransport {
   private readonly scenarioQueues = new Map<string, FakeTransportScenario[]>();
   private readonly orders = new Map<string, LiveTransportOrderState>();
+  private readonly balances = new Map<string, string>([["ZEUR", "0"]]);
   private sequence = 0;
+
+  /** Fija el balance simulado de un activo (uso exclusivo de pruebas). */
+  setBalance(asset: string, amount: string): void {
+    this.balances.set(asset, amount);
+  }
 
   /**
    * Encola uno o varios escenarios para las próximas llamadas a `createOrder` con
@@ -205,7 +227,19 @@ export class FakeLiveOrderTransport implements LiveOrderTransport {
       averagePrice: Number(request.limitPrice),
       reason: null,
     });
+
+    if (scenario.kind === "accept-but-report-timeout") {
+      // El "exchange" simulado sí procesó la orden, pero el cliente nunca ve
+      // la respuesta: modela un timeout de red después de que Kraken ya
+      // aceptó la orden. `findByClOrdId` debe poder recuperarla.
+      throw new Error("Timeout simulado tras aceptación remota real");
+    }
+
     return { kind: "accepted", exchangeOrderId, raw: { clOrdId: request.clOrdId } };
+  }
+
+  async findByClOrdId(clOrdId: string): Promise<LiveTransportOrderState | null> {
+    return [...this.orders.values()].find((order) => order.clOrdId === clOrdId) ?? null;
   }
 
   /** Avanza manualmente una orden simulada de parcial a completada (uso exclusivo de pruebas). */
@@ -239,6 +273,6 @@ export class FakeLiveOrderTransport implements LiveOrderTransport {
   }
 
   async fetchBalances(): Promise<Record<string, string>> {
-    return { ZEUR: "0" };
+    return Object.fromEntries(this.balances);
   }
 }

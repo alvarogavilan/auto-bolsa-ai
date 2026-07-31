@@ -11,7 +11,7 @@ import { LiveExecutorState } from "./live-executor-state";
 import { buildMarketUniverse, type MarketCandidate, type MarketUniverse } from "./market-universe";
 import { type FastEntryGate } from "./research-lab";
 import { ResearchLabState } from "./research-lab-state";
-import type { Env } from "./types";
+import { BOT_STATE_SINGLETON_NAME, type Env } from "./types";
 
 // LiveExecutorState se exporta para que Cloudflare pueda instanciar el Durable
 // Object declarado en wrangler.jsonc, pero ninguna ruta de este fichero lo invoca:
@@ -24,7 +24,7 @@ const MARKET_CACHE_TTL_SECONDS = 60 * 60;
 const EXECUTION_CACHE_TTL_SECONDS = 5 * 60;
 
 function singleton(env: Env): DurableObjectStub {
-  return env.BOT_STATE.get(env.BOT_STATE.idFromName("auto-bolsa-ai-singleton"));
+  return env.BOT_STATE.get(env.BOT_STATE.idFromName(BOT_STATE_SINGLETON_NAME));
 }
 
 function researchLabSingleton(env: Env): DurableObjectStub {

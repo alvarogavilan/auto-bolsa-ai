@@ -1,3 +1,9 @@
+// Nombre fijo del único BotState desplegado. Es también la autoridad única del
+// nonce de Kraken: cualquier código que firme llamadas privadas (incluido el
+// ejecutor LIVE) debe pedir el nonce a esta instancia, nunca mantener su propio
+// contador. Ver `nextKrakenNonce` en bot-state.ts.
+export const BOT_STATE_SINGLETON_NAME = "auto-bolsa-ai-singleton";
+
 export interface Env {
   BOT_STATE: DurableObjectNamespace;
   RESEARCH_LAB: DurableObjectNamespace;

@@ -3,6 +3,8 @@
 // necesita fallar para bloquear cualquier envío, pero cada una se evalúa de forma
 // independiente para que ningún cambio futuro pueda "olvidar" una sola puerta.
 
+const EPSILON = 1e-9;
+
 export interface LiveGuardrailConfig {
   liveTradingEnabled: boolean;
   maxOrderNotionalEur: number;
@@ -10,15 +12,27 @@ export interface LiveGuardrailConfig {
   maxDrawdownPct: number;
   maxConsecutiveTransportErrors: number;
   maxMarketDataAgeMs: number;
+  /** Pares permitidos para operar en LIVE. Cualquier otro par se bloquea. */
+  allowedPairs: readonly string[];
+  /** Tolerancia relativa entre volumeBase × limitPrice y notionalEur declarado. */
+  maxNotionalDeviationPct: number;
 }
 
 export type LiveOrderIntent = "open" | "close";
 
 export interface LiveGuardrailContext {
   orderIntent: LiveOrderIntent;
+  pair: string;
+  volumeBase: number;
+  limitPrice: number;
+  notionalEur: number;
   hasActiveOrder: boolean;
-  hasOpenPosition: boolean;
-  requestedNotionalEur: number;
+  /** Cantidad realmente en inventario del activo (no un booleano). */
+  inventoryQuantityBase: number;
+  /** Cantidad ya reservada por una orden de cierre en curso. */
+  inventoryReservedQuantityBase: number;
+  /** Par al que corresponde el inventario actual, o null si no hay ninguno. */
+  inventoryPair: string | null;
   dayStartEquityEur: number;
   currentEquityEur: number;
   peakEquityEur: number;
@@ -44,12 +58,55 @@ export function defaultLiveGuardrailConfig(
     maxDrawdownPct: 0.05,
     maxConsecutiveTransportErrors: 3,
     maxMarketDataAgeMs: 5 * 60_000,
+    allowedPairs: ["XBTEUR"],
+    maxNotionalDeviationPct: 0.01,
     ...overrides,
   };
 }
 
 export function liveTradingEnabledFromEnv(value: string | undefined): boolean {
   return value === "true";
+}
+
+/**
+ * Validación de la intención en sí misma, independiente del estado del
+ * ejecutor: números finitos y positivos, par permitido, y que
+ * `volumeBase × limitPrice` sea coherente con el `notionalEur` declarado.
+ */
+export function validateOrderIntent(
+  context: Pick<LiveGuardrailContext, "pair" | "volumeBase" | "limitPrice" | "notionalEur">,
+  config: Pick<LiveGuardrailConfig, "allowedPairs" | "maxNotionalDeviationPct">,
+): string[] {
+  const blockers: string[] = [];
+
+  if (!Number.isFinite(context.volumeBase) || context.volumeBase <= 0) {
+    blockers.push("volumeBase debe ser un número finito y positivo");
+  }
+  if (!Number.isFinite(context.limitPrice) || context.limitPrice <= 0) {
+    blockers.push("limitPrice debe ser un número finito y positivo");
+  }
+  if (!Number.isFinite(context.notionalEur) || context.notionalEur <= 0) {
+    blockers.push("notionalEur debe ser un número finito y positivo");
+  }
+  if (!config.allowedPairs.includes(context.pair)) {
+    blockers.push(`Par no permitido: ${context.pair}`);
+  }
+
+  if (
+    Number.isFinite(context.volumeBase) && context.volumeBase > 0
+    && Number.isFinite(context.limitPrice) && context.limitPrice > 0
+    && Number.isFinite(context.notionalEur) && context.notionalEur > 0
+  ) {
+    const impliedNotional = context.volumeBase * context.limitPrice;
+    const deviationPct = Math.abs(impliedNotional - context.notionalEur) / context.notionalEur;
+    if (deviationPct > config.maxNotionalDeviationPct) {
+      blockers.push(
+        `volumeBase × limitPrice (${impliedNotional}) no coincide con notionalEur declarado (${context.notionalEur})`,
+      );
+    }
+  }
+
+  return blockers;
 }
 
 export function evaluateLiveGuardrails(
@@ -72,22 +129,31 @@ export function evaluateLiveGuardrails(
     blockers.push("Ya existe una orden activa (límite estructural de una sola orden)");
   }
 
-  if (context.orderIntent === "open" && context.hasOpenPosition) {
+  blockers.push(...validateOrderIntent(context, config));
+
+  const hasOpenPosition = context.inventoryQuantityBase > EPSILON;
+  if (context.orderIntent === "open" && hasOpenPosition) {
     blockers.push("Ya existe una posición abierta (límite estructural de una sola posición)");
   }
 
-  if (context.orderIntent === "close" && !context.hasOpenPosition) {
-    blockers.push("No hay posición abierta que cerrar");
+  if (context.orderIntent === "close") {
+    if (!hasOpenPosition) {
+      blockers.push("No hay posición abierta que cerrar");
+    } else {
+      if (context.inventoryPair !== null && context.inventoryPair !== context.pair) {
+        blockers.push(`La posición abierta es de ${context.inventoryPair}, no de ${context.pair}`);
+      }
+      const availableQuantityBase = context.inventoryQuantityBase - context.inventoryReservedQuantityBase;
+      if (context.volumeBase > availableQuantityBase + EPSILON) {
+        blockers.push("La venta solicitada supera el inventario real disponible del activo");
+      }
+    }
   }
 
-  if (context.requestedNotionalEur > config.maxOrderNotionalEur) {
+  if (context.notionalEur > config.maxOrderNotionalEur) {
     blockers.push(
-      `Tamaño solicitado ${context.requestedNotionalEur} EUR supera el máximo configurado ${config.maxOrderNotionalEur} EUR`,
+      `Tamaño solicitado ${context.notionalEur} EUR supera el máximo configurado ${config.maxOrderNotionalEur} EUR`,
     );
-  }
-
-  if (context.requestedNotionalEur <= 0) {
-    blockers.push("El tamaño solicitado debe ser positivo");
   }
 
   if (context.dayStartEquityEur > 0) {

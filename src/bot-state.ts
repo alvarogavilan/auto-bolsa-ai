@@ -5,6 +5,7 @@ import {
   type PaperDailyCheckpoint,
 } from "./daily-checkpoints";
 import { fetchBalance, fetchOhlc, inspectKrakenCredentials } from "./kraken";
+import { computeNextNonce } from "./kraken-nonce";
 import { selectMarketObservation } from "./market-evidence";
 import { calculateOperationalHealth } from "./operational-health";
 import { calculatePaperReadiness } from "./paper-readiness";
@@ -230,11 +231,17 @@ export class BotState extends DurableObject<Env> {
     snapshot.maxObservedDrawdownPct = Math.max(snapshot.maxObservedDrawdownPct, current);
   }
 
+  /**
+   * Única autoridad persistente del nonce de Kraken para esta clave de API.
+   * Cualquier código del Worker que necesite firmar una llamada privada
+   * (incluido el ejecutor LIVE, ver `LiveExecutorState`) debe pedir el nonce
+   * aquí en vez de mantener su propio contador: dos contadores independientes
+   * podrían emitir nonces desordenados y bloquear la clave en Kraken.
+   */
   private async nextKrakenNonce(): Promise<string> {
     const stored = await this.ctx.storage.get<string>(KRAKEN_NONCE_KEY);
     const last = stored ? BigInt(stored) : 0n;
-    const timeBased = BigInt(Date.now()) * 1000n;
-    const next = timeBased > last ? timeBased : last + 1n;
+    const next = computeNextNonce(last, Date.now());
     const value = next.toString();
     await this.ctx.storage.put(KRAKEN_NONCE_KEY, value);
     return value;
@@ -603,6 +610,9 @@ export class BotState extends DurableObject<Env> {
           summary: summarizeSignalEvidence(ledger),
           liveTrading: false,
         });
+      }
+      if (request.method === "POST" && url.pathname === "/kraken/next-nonce") {
+        return Response.json({ nonce: await this.nextKrakenNonce() });
       }
       if (request.method === "GET" && url.pathname === "/kraken/diagnostics") {
         return this.krakenDiagnostics();
