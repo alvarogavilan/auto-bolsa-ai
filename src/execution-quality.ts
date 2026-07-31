@@ -25,6 +25,33 @@ export interface SellFillSimulation {
   levelsUsed: number;
 }
 
+export interface ExitPriceTarget {
+  targetNetReturnPct: number;
+  requiredAverageExitPrice: number;
+  requiredMoveFromAverageBuyPct: number;
+  expectedNetProfitEur: number;
+}
+
+export interface MakerExecutionPlan {
+  makerFeePctEachSide: number;
+  theoreticalBreakEvenMovePct: number;
+  theoreticalTargetMovePct: number;
+  theoreticalFeeSavingsPctVsTaker: number;
+  eligibleForPaperResearch: boolean;
+  passiveFillEvidenceRequired: true;
+  warning: string;
+}
+
+export type ExecutionRouteId = "fast-taker" | "intraday-taker" | "swing-taker" | "fast-maker";
+export type ExecutionRouteStatus = "paper-candidate" | "research-only" | "rejected";
+
+export interface ExecutionRouteAssessment {
+  route: ExecutionRouteId;
+  status: ExecutionRouteStatus;
+  holdingWindow: string;
+  reason: string;
+}
+
 export interface ExecutionQualityResult {
   schemaVersion: "pretrade-execution-quality-v1";
   symbol: string;
@@ -46,8 +73,13 @@ export interface ExecutionQualityResult {
   immediateNetProceedsEur: number | null;
   immediateRoundTripLossEur: number | null;
   immediateRoundTripCostPct: number | null;
+  breakEvenTarget: ExitPriceTarget | null;
+  modestProfitTarget: ExitPriceTarget | null;
+  makerPlan: MakerExecutionPlan;
   range24hPct: number;
   rangeToRoundTripCostMultiple: number | null;
+  executionRoutes: ExecutionRouteAssessment[];
+  recommendedPaperLane: "fast" | "intraday" | "swing" | null;
   fastMarketFilterPassed: boolean;
   orderBookCoveragePassed: boolean;
   costHurdlePassed: boolean;
@@ -59,6 +91,47 @@ export interface ExecutionQualityResult {
 
 function round(value: number): number {
   return Math.round(value * 100_000_000) / 100_000_000;
+}
+
+function theoreticalFeeOnlyMovePct(
+  entryFeePct: number,
+  exitFeePct: number,
+  targetNetReturnPct: number,
+): number {
+  if (entryFeePct < 0 || exitFeePct < 0 || exitFeePct >= 1 || targetNetReturnPct < -1) {
+    return Number.POSITIVE_INFINITY;
+  }
+  return ((1 + entryFeePct) * (1 + targetNetReturnPct)) / (1 - exitFeePct) - 1;
+}
+
+function calculateExitTarget(
+  buy: BuyFillSimulation,
+  buyFeeEur: number,
+  sellFeePct: number,
+  targetNetReturnPct: number,
+): ExitPriceTarget | null {
+  if (
+    !buy.covered
+    || buy.baseQuantity <= 0
+    || buy.averagePrice === null
+    || sellFeePct < 0
+    || sellFeePct >= 1
+  ) {
+    return null;
+  }
+
+  const initialOutflowEur = buy.quoteSpentEur + buyFeeEur;
+  const requiredNetProceedsEur = initialOutflowEur * (1 + targetNetReturnPct);
+  const requiredGrossProceedsEur = requiredNetProceedsEur / (1 - sellFeePct);
+  const requiredAverageExitPrice = requiredGrossProceedsEur / buy.baseQuantity;
+  const requiredMoveFromAverageBuyPct = requiredAverageExitPrice / buy.averagePrice - 1;
+
+  return {
+    targetNetReturnPct: round(targetNetReturnPct),
+    requiredAverageExitPrice: round(requiredAverageExitPrice),
+    requiredMoveFromAverageBuyPct: round(requiredMoveFromAverageBuyPct),
+    expectedNetProfitEur: round(initialOutflowEur * targetNetReturnPct),
+  };
 }
 
 export function simulateMarketBuy(levels: PreTradeLevel[], quoteEur: number): BuyFillSimulation {
@@ -141,11 +214,67 @@ export function simulateMarketSell(levels: PreTradeLevel[], baseQuantity: number
   };
 }
 
+function buildExecutionRoutes(
+  candidate: MarketCandidate,
+  coveragePassed: boolean,
+  immediateRoundTripCostPct: number | null,
+  rangeMultiple: number | null,
+  makerEligible: boolean,
+): { routes: ExecutionRouteAssessment[]; recommendedPaperLane: "fast" | "intraday" | "swing" | null } {
+  const cost = immediateRoundTripCostPct ?? Number.POSITIVE_INFINITY;
+  const multiple = rangeMultiple ?? 0;
+  const fast = candidate.fastEligible && coveragePassed && cost <= 0.015 && multiple >= 2.25;
+  const intraday = candidate.intradayEligible && coveragePassed && cost <= 0.02 && multiple >= 1.75;
+  const swing = candidate.swingEligible && coveragePassed && multiple >= 1;
+
+  const routes: ExecutionRouteAssessment[] = [
+    {
+      route: "fast-taker",
+      status: fast ? "paper-candidate" : "rejected",
+      holdingWindow: "15 minutos a 3 horas",
+      reason: fast
+        ? "La profundidad y el recorrido superan el coste de cruzar el libro dos veces."
+        : "No supera simultáneamente liquidez, coste y recorrido exigidos para compra rápida.",
+    },
+    {
+      route: "intraday-taker",
+      status: intraday ? "paper-candidate" : "rejected",
+      holdingWindow: "1 a 12 horas",
+      reason: intraday
+        ? "El horizonte intradía ofrece más margen para absorber costes que la salida inmediata."
+        : "El recorrido o la liquidez todavía no justifican una operación intradía.",
+    },
+    {
+      route: "swing-taker",
+      status: swing ? "paper-candidate" : "rejected",
+      holdingWindow: "1 a 14 días",
+      reason: swing
+        ? "El mercado puede investigarse con menor rotación y menor presión relativa de comisiones."
+        : "Ni siquiera el horizonte medio ofrece recorrido suficiente frente al coste estimado.",
+    },
+    {
+      route: "fast-maker",
+      status: makerEligible ? "research-only" : "rejected",
+      holdingWindow: "Orden pasiva sin garantía de ejecución",
+      reason: makerEligible
+        ? "Reduce comisiones teóricas, pero necesita demostrar fills reales en PAPER antes de compararse con taker."
+        : "La ventaja teórica maker no compensa la falta de liquidez o el mercado no supera el filtro rápido.",
+    },
+  ];
+
+  return {
+    routes,
+    recommendedPaperLane: fast ? "fast" : intraday ? "intraday" : swing ? "swing" : null,
+  };
+}
+
 export function analyzeExecutionQuality(
   candidate: MarketCandidate,
   book: PreTradeBook,
   notionalEur = 10,
   takerFeePctEachSide = 0.004,
+  makerFeePctEachSide = 0.0023,
+  modestTargetNetReturnPct = 0.003,
 ): ExecutionQualityResult {
   const buy = simulateMarketBuy(book.asks, notionalEur);
   const bestAsk = book.asks[0]?.price ?? candidate.ask;
@@ -165,6 +294,13 @@ export function analyzeExecutionQuality(
   const immediateRoundTripCostPct = immediateRoundTripLossEur === null || initialOutflowEur <= 0
     ? null
     : immediateRoundTripLossEur / initialOutflowEur;
+  const breakEvenTarget = calculateExitTarget(buy, buyFeeEur, takerFeePctEachSide, 0);
+  const modestProfitTarget = calculateExitTarget(
+    buy,
+    buyFeeEur,
+    takerFeePctEachSide,
+    modestTargetNetReturnPct,
+  );
   const rangeToRoundTripCostMultiple = immediateRoundTripCostPct !== null && immediateRoundTripCostPct > 0
     ? candidate.range24hPct / immediateRoundTripCostPct
     : null;
@@ -176,6 +312,34 @@ export function analyzeExecutionQuality(
   const fastExecutionEligible = fastMarketFilterPassed
     && orderBookCoveragePassed
     && costHurdlePassed;
+  const makerBreakEvenMovePct = theoreticalFeeOnlyMovePct(makerFeePctEachSide, makerFeePctEachSide, 0);
+  const makerTargetMovePct = theoreticalFeeOnlyMovePct(
+    makerFeePctEachSide,
+    makerFeePctEachSide,
+    modestTargetNetReturnPct,
+  );
+  const makerEligible = fastMarketFilterPassed
+    && orderBookCoveragePassed
+    && makerFeePctEachSide < takerFeePctEachSide
+    && candidate.range24hPct >= makerTargetMovePct * 2.25;
+  const makerPlan: MakerExecutionPlan = {
+    makerFeePctEachSide: round(makerFeePctEachSide),
+    theoreticalBreakEvenMovePct: round(makerBreakEvenMovePct),
+    theoreticalTargetMovePct: round(makerTargetMovePct),
+    theoreticalFeeSavingsPctVsTaker: round(
+      Math.max(0, (takerFeePctEachSide - makerFeePctEachSide) * 2),
+    ),
+    eligibleForPaperResearch: makerEligible,
+    passiveFillEvidenceRequired: true,
+    warning: "Una orden maker puede no ejecutarse o hacerlo parcialmente; el ahorro de comisión no es beneficio garantizado.",
+  };
+  const { routes: executionRoutes, recommendedPaperLane } = buildExecutionRoutes(
+    candidate,
+    orderBookCoveragePassed,
+    immediateRoundTripCostPct,
+    rangeToRoundTripCostMultiple,
+    makerEligible,
+  );
 
   let blocker: string | null = null;
   if (!fastMarketFilterPassed) blocker = "market-filter-not-passed";
@@ -206,16 +370,23 @@ export function analyzeExecutionQuality(
     immediateNetProceedsEur: immediateNetProceedsEur === null ? null : round(immediateNetProceedsEur),
     immediateRoundTripLossEur: immediateRoundTripLossEur === null ? null : round(immediateRoundTripLossEur),
     immediateRoundTripCostPct: immediateRoundTripCostPct === null ? null : round(immediateRoundTripCostPct),
+    breakEvenTarget,
+    modestProfitTarget,
+    makerPlan,
     range24hPct: candidate.range24hPct,
     rangeToRoundTripCostMultiple: rangeToRoundTripCostMultiple === null ? null : round(rangeToRoundTripCostMultiple),
+    executionRoutes,
+    recommendedPaperLane,
     fastMarketFilterPassed,
     orderBookCoveragePassed,
     costHurdlePassed,
     fastExecutionEligible,
     blocker,
     message: fastExecutionEligible
-      ? "El libro actual absorbe 10 EUR y el recorrido de 24 h supera el umbral de costes; sigue siendo solo candidato PAPER."
-      : "El mercado no supera todavía todos los filtros de ejecución rápida.",
+      ? "La vía rápida supera los filtros PAPER, pero vender antes del precio de equilibrio convertiría los costes en pérdida."
+      : recommendedPaperLane
+        ? `La vía rápida no compensa ahora; el carril ${recommendedPaperLane} ofrece un horizonte PAPER más razonable.`
+        : "El mercado no supera todavía ningún carril PAPER después de costes.",
     liveTrading: false,
   };
 }
