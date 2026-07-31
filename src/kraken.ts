@@ -100,29 +100,28 @@ export async function signKrakenRequest(
   return bytesToBase64(signature);
 }
 
-async function privatePost<T>(
+async function privatePostJson<T>(
   apiPath: string,
   apiKey: string,
   apiSecret: string,
   nonce: string,
-  fields: Record<string, string> = {},
+  fields: Record<string, string | number> = {},
 ): Promise<T> {
   const normalizedApiKey = normalizeCredential(apiKey);
   const normalizedApiSecret = normalizeCredential(apiSecret);
   if (!normalizedApiKey || !normalizedApiSecret) throw new Error("Kraken credentials are empty after normalization");
 
-  const form = new URLSearchParams({ nonce, ...fields });
-  const postData = form.toString();
+  const postData = JSON.stringify({ nonce: Number(nonce), ...fields });
   const signature = await signKrakenRequest(apiPath, nonce, postData, normalizedApiSecret);
 
   const response = await fetch(`${API_BASE}${apiPath.replace(/^\/0/, "")}`, {
     method: "POST",
     headers: {
       Accept: "application/json",
-      "Content-Type": "application/x-www-form-urlencoded; charset=utf-8",
+      "Content-Type": "application/json",
       "API-Key": normalizedApiKey,
       "API-Sign": signature,
-      "User-Agent": "auto-bolsa-ai/0.4",
+      "User-Agent": "auto-bolsa-ai/0.5",
     },
     body: postData,
   });
@@ -134,7 +133,7 @@ async function privatePost<T>(
 }
 
 export async function fetchApiKeyInfo(apiKey: string, apiSecret: string, nonce: string): Promise<KrakenApiKeyInfo> {
-  const result = await privatePost<Record<string, unknown>>(
+  const result = await privatePostJson<Record<string, unknown>>(
     "/0/private/GetApiKeyInfo",
     apiKey,
     apiSecret,
@@ -160,7 +159,7 @@ export async function fetchOhlc(pair: string, interval = 15): Promise<Candle[]> 
   url.searchParams.set("interval", String(interval));
 
   const response = await fetch(url, {
-    headers: { Accept: "application/json", "User-Agent": "auto-bolsa-ai/0.4" },
+    headers: { Accept: "application/json", "User-Agent": "auto-bolsa-ai/0.5" },
   });
   if (!response.ok) throw new Error(`Kraken OHLC HTTP ${response.status}`);
 
