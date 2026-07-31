@@ -78,6 +78,25 @@ describe("validate-only Kraken order preflight", () => {
     expect(calls).toBe(0);
   });
 
+  it("rejects a runtime-manipulated sell side before contacting Kraken", async () => {
+    let calls = 0;
+    const manipulated = { ...intent, side: "sell" } as unknown as typeof intent;
+
+    await expect(runValidateOnlyOrderPreflight({
+      intent: manipulated,
+      metadata,
+      apiKey: "key",
+      apiSecret: "secret",
+      nonce: "3",
+      submit: async () => {
+        calls += 1;
+        return { txid: [], descr: {} };
+      },
+    })).rejects.toThrow(/solo admite compras límite validate-only/);
+
+    expect(calls).toBe(0);
+  });
+
   it("returns an explicit validate-only rejection for EOrder errors", async () => {
     const result = await runValidateOnlyOrderPreflight({
       intent,
