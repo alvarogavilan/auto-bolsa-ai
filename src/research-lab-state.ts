@@ -10,6 +10,7 @@ import {
   type FastEntryGate,
   type ResearchLabState as StoredResearchLabState,
 } from "./research-lab";
+import { buildShadowLiveDemo } from "./shadow-live-demo";
 import {
   buildBenchmarkComparison,
   sanitizeBenchmarkMap,
@@ -77,7 +78,7 @@ export class ResearchLabState extends DurableObject<Env> {
     if (!stored || stored.schemaVersion !== "multi-horizon-paper-lab-v1") return null;
     return {
       ...stored,
-      version: "0.17.0-paper",
+      version: "0.19.0-paper",
       mode: "paper",
       liveTrading: false,
       strategies: Array.isArray(stored.strategies) ? stored.strategies : [],
@@ -87,7 +88,7 @@ export class ResearchLabState extends DurableObject<Env> {
   private async write(state: StoredResearchLabState): Promise<void> {
     await this.ctx.storage.put(STORAGE_KEY, {
       ...state,
-      version: "0.17.0-paper",
+      version: "0.19.0-paper",
       mode: "paper",
       liveTrading: false,
     });
@@ -174,13 +175,17 @@ export class ResearchLabState extends DurableObject<Env> {
       this.ctx.storage.put(EXECUTION_GATES_KEY, payload.executionGates),
       this.ctx.storage.put(BENCHMARKS_KEY, benchmarks),
     ]);
+
+    const fastExecutionGates = this.executionGateSummary(state, payload.executionGates, now);
+    const benchmarkComparison = buildBenchmarkComparison(state.strategies, benchmarks);
     return Response.json({
       initialized: true,
       dueStrategiesProcessed: due.length,
       state,
       summary: summarizeResearchLab(state, now),
-      fastExecutionGates: this.executionGateSummary(state, payload.executionGates, now),
-      benchmarkComparison: buildBenchmarkComparison(state.strategies, benchmarks),
+      shadowLiveDemo: buildShadowLiveDemo(state, payload.executionGates, benchmarks, now),
+      fastExecutionGates,
+      benchmarkComparison,
       liveTrading: false,
     });
   }
@@ -198,17 +203,34 @@ export class ResearchLabState extends DurableObject<Env> {
         return Response.json({
           initialized: false,
           mode: "paper",
+          shadowLiveDemo: {
+            schemaVersion: "shadow-live-demo-v1",
+            mode: "shadow-live",
+            status: "initializing",
+            virtualCapitalEur: 50,
+            usesRealKrakenMarketData: true,
+            sendsOrdersToKraken: false,
+            realBalanceTouched: false,
+            message: "El DEMO se inicializará con el próximo ciclo automático válido.",
+            eligibleForLiveReview: false,
+            liveTrading: false,
+          },
           message: "El laboratorio se inicializará con el próximo mapa de mercados válido.",
           eligibleForLiveReview: false,
           liveTrading: false,
         });
       }
+
+      const now = Date.now();
+      const fastExecutionGates = this.executionGateSummary(state, executionGates, now);
+      const benchmarkComparison = buildBenchmarkComparison(state.strategies, benchmarks);
       return Response.json({
         initialized: true,
         state,
-        summary: summarizeResearchLab(state),
-        fastExecutionGates: this.executionGateSummary(state, executionGates),
-        benchmarkComparison: buildBenchmarkComparison(state.strategies, benchmarks),
+        summary: summarizeResearchLab(state, now),
+        shadowLiveDemo: buildShadowLiveDemo(state, executionGates, benchmarks, now),
+        fastExecutionGates,
+        benchmarkComparison,
         liveTrading: false,
       });
     }
