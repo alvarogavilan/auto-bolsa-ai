@@ -3,6 +3,8 @@ import {
   assessKrakenPermissions,
   fingerprintKrakenCredentials,
   inspectKrakenCredentials,
+  isKrakenOrderRejection,
+  KrakenApiError,
   normalizeCredential,
   signKrakenRequest,
 } from "../src/kraken";
@@ -92,5 +94,18 @@ describe("Kraken API safety", () => {
     ]);
     expect(result.safe).toBe(false);
     expect(result.forbidden).toContain("withdraw-funds");
+  });
+
+  it("only classifies an explicit EOrder: code from Kraken as an order rejection", () => {
+    expect(isKrakenOrderRejection(new KrakenApiError(["EOrder:Insufficient funds"]))).toBe(true);
+    expect(isKrakenOrderRejection(new KrakenApiError(["EOrder:Invalid volume"]))).toBe(true);
+  });
+
+  it("never classifies transport, auth, or ambiguous failures as an order rejection", () => {
+    expect(isKrakenOrderRejection(new KrakenApiError(["EAPI:Invalid nonce"]))).toBe(false);
+    expect(isKrakenOrderRejection(new KrakenApiError(["EGeneral:Temporary lockout"]))).toBe(false);
+    expect(isKrakenOrderRejection(new Error("Kraken private HTTP 503"))).toBe(false);
+    expect(isKrakenOrderRejection(new TypeError("fetch failed"))).toBe(false);
+    expect(isKrakenOrderRejection("not even an Error")).toBe(false);
   });
 });

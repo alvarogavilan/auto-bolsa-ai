@@ -1,0 +1,14 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    // Programa de comprobación SEPARADO, solo para pruebas. "node" habilita
+    // fs/path para test/kraken-single-authority.test.ts (lee src/*.ts como
+    // texto para una prueba arquitectónica) sin filtrar tipos de Node al
+    // programa de producción (tsconfig.json), que sigue viendo únicamente
+    // @cloudflare/workers-types. `npm run typecheck` ejecuta ambos programas
+    // por separado; solo el de producción certifica compatibilidad con
+    // Cloudflare Workers.
+    "types": ["@cloudflare/workers-types", "node"]
+  },
+  "include": ["src/**/*.ts", "test/**/*.ts"]
+}

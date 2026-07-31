@@ -176,10 +176,37 @@ export async function signKrakenRequest(
   return bytesToBase64(signature);
 }
 
+/**
+ * Error explícito devuelto por Kraken (payload.error no vacío), distinto de un
+ * fallo HTTP/red genérico. Conserva los códigos originales (p. ej.
+ * "EOrder:Insufficient funds", "EAPI:Invalid nonce") para que el llamante
+ * pueda decidir si es un rechazo real de la orden o un fallo de transporte
+ * que debe tratarse como ambiguo. Ver `isKrakenOrderRejection`.
+ */
+export class KrakenApiError extends Error {
+  readonly codes: string[];
+  constructor(codes: string[]) {
+    super(`Kraken private: ${codes.join(", ")}`);
+    this.name = "KrakenApiError";
+    this.codes = codes;
+  }
+}
+
+/**
+ * Solo un código `EOrder:*` significa que Kraken evaluó la orden y la
+ * rechazó explícitamente (fondos insuficientes, tamaño inválido, etc.).
+ * Cualquier otro fallo (HTTP, red, `EAPI:*`, `EGeneral:*`, JSON malformado)
+ * es ambiguo: no sabemos si la orden llegó a procesarse, así que nunca debe
+ * tratarse como un rechazo terminal.
+ */
+export function isKrakenOrderRejection(error: unknown): error is KrakenApiError {
+  return error instanceof KrakenApiError && error.codes.some((code) => code.startsWith("EOrder:"));
+}
+
 async function parsePrivateResponse<T>(response: Response): Promise<T> {
   if (!response.ok) throw new Error(`Kraken private HTTP ${response.status}`);
   const payload = (await response.json()) as KrakenResponse<T>;
-  if (payload.error.length > 0) throw new Error(`Kraken private: ${payload.error.join(", ")}`);
+  if (payload.error.length > 0) throw new KrakenApiError(payload.error);
   return payload.result;
 }
 
@@ -260,6 +287,149 @@ export async function fetchApiKeyInfo(apiKey: string, apiSecret: string, nonce: 
       : [],
     lastUsed: typeof result.lastUsed === "string" || result.lastUsed === null ? result.lastUsed : null,
   };
+}
+
+export interface KrakenAddOrderRequest {
+  pair: string;
+  type: "buy" | "sell";
+  ordertype: "limit" | "market";
+  volume: string;
+  price?: string;
+  clOrdId: string;
+  validate?: boolean;
+}
+
+export interface KrakenAddOrderResult {
+  txid: string[];
+  descr: { order?: string };
+}
+
+export interface KrakenOrderInfo {
+  txid: string;
+  status: string;
+  clOrdId: string | null;
+  volume: number;
+  volumeExecuted: number;
+  averagePrice: number | null;
+  openTimestamp: number | null;
+  closeTimestamp: number | null;
+  reason: string | null;
+}
+
+// Cliente REST spot mínimo para crear, consultar y cancelar órdenes. Reutiliza la
+// firma y el manejo de nonce ya validados en `privatePostJson`/`privatePostForm`.
+// Ningún endpoint del Worker instancia el transporte que llama a estas funciones
+// contra Kraken real: ver `KrakenLiveOrderTransport` en `live-transport.ts`.
+export async function addOrder(
+  request: KrakenAddOrderRequest,
+  apiKey: string,
+  apiSecret: string,
+  nonce: string,
+): Promise<KrakenAddOrderResult> {
+  const fields: Record<string, string> = {
+    pair: request.pair,
+    type: request.type,
+    ordertype: request.ordertype,
+    volume: request.volume,
+    cl_ord_id: request.clOrdId,
+  };
+  if (request.price) fields.price = request.price;
+  if (request.validate) fields.validate = "true";
+  const result = await privatePostForm<Record<string, unknown>>(
+    "/0/private/AddOrder",
+    apiKey,
+    apiSecret,
+    nonce,
+    fields,
+  );
+  const txid = Array.isArray(result.txid)
+    ? result.txid.filter((value): value is string => typeof value === "string")
+    : [];
+  const descr = (result.descr && typeof result.descr === "object" ? result.descr : {}) as { order?: string };
+  return { txid, descr };
+}
+
+function parseOrderInfo(txid: string, raw: unknown): KrakenOrderInfo | null {
+  if (!raw || typeof raw !== "object") return null;
+  const order = raw as Record<string, unknown>;
+  return {
+    txid,
+    status: typeof order.status === "string" ? order.status : "unknown",
+    clOrdId: typeof order.cl_ord_id === "string" ? order.cl_ord_id : null,
+    volume: Number(order.vol ?? 0),
+    volumeExecuted: Number(order.vol_exec ?? 0),
+    averagePrice: order.price ? Number(order.price) : null,
+    openTimestamp: order.opentm ? Number(order.opentm) : null,
+    closeTimestamp: order.closetm ? Number(order.closetm) : null,
+    reason: typeof order.reason === "string" ? order.reason : null,
+  };
+}
+
+export async function queryOrders(
+  txids: string[],
+  apiKey: string,
+  apiSecret: string,
+  nonce: string,
+): Promise<KrakenOrderInfo[]> {
+  if (txids.length === 0) return [];
+  const result = await privatePostForm<Record<string, unknown>>(
+    "/0/private/QueryOrders",
+    apiKey,
+    apiSecret,
+    nonce,
+    { txid: txids.join(",") },
+  );
+  return Object.entries(result)
+    .map(([txid, raw]) => parseOrderInfo(txid, raw))
+    .filter((order): order is KrakenOrderInfo => order !== null);
+}
+
+export async function openOrders(
+  apiKey: string,
+  apiSecret: string,
+  nonce: string,
+): Promise<KrakenOrderInfo[]> {
+  const result = await privatePostForm<{ open?: Record<string, unknown> }>(
+    "/0/private/OpenOrders",
+    apiKey,
+    apiSecret,
+    nonce,
+  );
+  return Object.entries(result.open ?? {})
+    .map(([txid, raw]) => parseOrderInfo(txid, raw))
+    .filter((order): order is KrakenOrderInfo => order !== null);
+}
+
+export async function closedOrders(
+  apiKey: string,
+  apiSecret: string,
+  nonce: string,
+): Promise<KrakenOrderInfo[]> {
+  const result = await privatePostForm<{ closed?: Record<string, unknown> }>(
+    "/0/private/ClosedOrders",
+    apiKey,
+    apiSecret,
+    nonce,
+  );
+  return Object.entries(result.closed ?? {})
+    .map(([txid, raw]) => parseOrderInfo(txid, raw))
+    .filter((order): order is KrakenOrderInfo => order !== null);
+}
+
+export async function cancelOrder(
+  txid: string,
+  apiKey: string,
+  apiSecret: string,
+  nonce: string,
+): Promise<{ count: number }> {
+  const result = await privatePostForm<{ count?: number }>(
+    "/0/private/CancelOrder",
+    apiKey,
+    apiSecret,
+    nonce,
+    { txid },
+  );
+  return { count: Number(result.count ?? 0) };
 }
 
 export async function fetchOhlc(pair: string, interval = 15): Promise<Candle[]> {

@@ -6,11 +6,14 @@
   "scripts": {
     "dev": "wrangler dev --test-scheduled",
     "deploy": "wrangler deploy",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.test.json",
+    "typecheck:worker": "tsc --noEmit -p tsconfig.json",
+    "typecheck:test": "tsc --noEmit -p tsconfig.test.json",
     "test": "vitest run"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "5.20260731.1",
+    "@types/node": "^26.1.2",
     "typescript": "7.0.2",
     "vitest": "4.1.10",
     "wrangler": "4.118.0"
