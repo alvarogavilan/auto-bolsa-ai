@@ -34,9 +34,13 @@ paralelo a la estrategia PAPER y sin ningún camino que la active hoy.
   contra el balance real, reintento acotado que nunca reenvía a ciegas
   (`findByClOrdId` primero), cancelación de emergencia con cierre
   conservador, y un registro auditable de cada transición.
-- `src/live-executor-state.ts`: Durable Object que persiste el snapshot
-  anterior en `ctx.storage`, para que la idempotencia y la reconciliación
-  sobrevivan a un reinicio del proceso.
+- `src/live-executor-state.ts`: Durable Object que persistiría el snapshot en
+  `ctx.storage` para sobrevivir a un reinicio del proceso. **No está enlazado
+  en `wrangler.jsonc` ni exportado desde `index.ts`: Cloudflare no lo
+  despliega, no existe como recurso real en la cuenta.** La recuperación tras
+  reinicio se valida en los tests serializando/deserializando el snapshot
+  (el mismo objeto plano que este Durable Object guardaría), sin necesidad de
+  desplegar nada para demostrarlo.
 
 ## Por qué es seguro desplegarlo
 
@@ -46,11 +50,11 @@ paralelo a la estrategia PAPER y sin ningún camino que la active hoy.
   interruptor primero y de forma independiente del resto de puertas, y
   `submitOrder` lo vuelve a comprobar (junto con todas las demás puertas)
   justo antes de enviar, no solo al preparar.
-- `LiveExecutorState` se exporta desde `src/index.ts` únicamente para que
-  Cloudflare pueda instanciar el Durable Object declarado en
-  `wrangler.jsonc`. **Ninguna ruta HTTP ni el `scheduled()` del Worker
-  invocan `env.LIVE_EXECUTOR`.** El objeto persiste, pero nada lo llama en
-  producción.
+- `LiveExecutorState` NO se exporta desde `src/index.ts` ni tiene binding en
+  `wrangler.jsonc`: Cloudflare nunca lo instancia. No es que "nada lo llame en
+  producción" — directamente no existe en producción como Durable Object. Es
+  el diseño más conservador posible: la infraestructura técnica existe como
+  código probado, sin crear ningún recurso nuevo en la cuenta de Cloudflare.
 - Las rutas `/api/live*` siguen devolviendo `403 LIVE_TRADING_HARD_DISABLED`
   exactamente igual que antes de este cambio; ese bloque de código no se ha
   tocado.
@@ -82,7 +86,8 @@ paralelo a la estrategia PAPER y sin ningún camino que la active hoy.
 | Inventario local desincronizado del balance real | `reconcile()` también contrasta `inventory.quantityBase` contra `fetchBalances()` (tolerando los prefijos `X`/`XX` de Kraken); una discrepancia fuerza `reconciliation_required` en toda orden no terminal. |
 | Creer que "cancelación de emergencia" también liquida una posición ya ejecutada | `emergencyCancelAll` solo cancela órdenes; si queda inventario, activa `emergencyStopRequiresManualLiquidation` en vez de vender nada automáticamente. |
 | Emergencia con órdenes en curso | `emergencyCancelAll` cancela toda orden no terminal (o la cierra localmente si nunca llegó a enviarse) y activa `emergencyStopActive`, que bloquea cualquier nueva orden hasta que se despeje explícitamente. |
-| Pérdida de estado por reinicio del proceso | El snapshot es un objeto plano serializable; `LiveExecutorState` lo persiste en `ctx.storage` y `test/live-executor.test.ts` verifica que un ciclo `JSON.stringify`/`JSON.parse` conserva órdenes, inventario, idempotencia y auditoría. |
+| Pérdida de estado por reinicio del proceso | El snapshot es un objeto plano serializable, del tipo que `LiveExecutorState` persistiría en `ctx.storage`; `test/live-executor.test.ts` verifica que un ciclo `JSON.stringify`/`JSON.parse` conserva órdenes, inventario, idempotencia y auditoría. |
+| Crear un recurso real en Cloudflare para una infraestructura que debe seguir desactivada | `LiveExecutorState` no tiene binding ni migración en `wrangler.jsonc` y no se exporta desde `index.ts`: Cloudflare no lo despliega. |
 
 ## Limitación reconocida
 
@@ -97,8 +102,10 @@ operación individual queda como trabajo explícito antes de un piloto manual
 
 Ninguno de estos pasos se ha dado en este PR:
 
-1. Añadir una ruta HTTP autenticada (o un flujo separado) que realmente
-   invoque `env.LIVE_EXECUTOR`; hoy no existe ninguna.
+1. Añadir el binding y la migración de `LiveExecutorState` en
+   `wrangler.jsonc`, exportarlo desde `index.ts`, y solo entonces añadir una
+   ruta HTTP autenticada (o un flujo separado) que invoque `env.LIVE_EXECUTOR`;
+   hoy no existe ninguna de las tres cosas.
 2. Poner `LIVE_TRADING_ENABLED=true` como secreto/variable de Cloudflare de
    forma explícita y separada de cualquier despliegue automático.
 3. Conceder a la API key de Kraken los permisos mínimos de trading (sin

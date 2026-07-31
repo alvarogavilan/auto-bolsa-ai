@@ -7,7 +7,8 @@ export const BOT_STATE_SINGLETON_NAME = "auto-bolsa-ai-singleton";
 export interface Env {
   BOT_STATE: DurableObjectNamespace;
   RESEARCH_LAB: DurableObjectNamespace;
-  LIVE_EXECUTOR: DurableObjectNamespace;
+  // No hay LIVE_EXECUTOR: LiveExecutorState no está enlazado en wrangler.jsonc
+  // ni desplegado en Cloudflare. Ver docs/live-executor.md.
   TRADING_MODE: string;
   PAIR: string;
   INITIAL_CASH_EUR: string;

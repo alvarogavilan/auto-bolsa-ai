@@ -18,14 +18,18 @@ import { BOT_STATE_SINGLETON_NAME, type Env } from "./types";
 const STORAGE_KEY = "live-executor-snapshot";
 
 /**
- * Durable Object que persiste el estado del ejecutor LIVE.
+ * Durable Object que persistiría el estado del ejecutor LIVE.
  *
- * IMPORTANTE: esta clase no está enlazada a ninguna ruta HTTP ni al cron del
- * Worker. Nada en `index.ts` invoca `env.LIVE_EXECUTOR`. Existe únicamente para
- * validar que la persistencia, la idempotencia y la reconciliación sobreviven a
- * un reinicio (recreando el objeto desde `ctx.storage`), tal y como exige la
- * issue de construcción en paralelo. Conectarla a una ruta real es un paso
- * futuro y deliberadamente separado (ver docs/live-executor.md).
+ * IMPORTANTE: esta clase NO está enlazada en `wrangler.jsonc` (no hay binding
+ * ni migración) ni exportada desde `index.ts`, así que Cloudflare no la
+ * instancia ni la despliega: no existe como recurso real en la cuenta. Solo
+ * vive como código fuente, comprobado por `tsc --noEmit` y ejercitado
+ * indirectamente a través de las funciones puras de `live-executor.ts` (la
+ * recuperación tras reinicio se valida serializando/deserializando el
+ * snapshot en los tests, igual que el resto del ejecutor). Enlazarla de
+ * verdad —añadir el binding y la migración en `wrangler.jsonc`, exportarla
+ * desde `index.ts`— es un paso futuro y deliberadamente separado (ver
+ * docs/live-executor.md).
  */
 export class LiveExecutorState extends DurableObject<Env> {
   constructor(ctx: DurableObjectState, env: Env) {
