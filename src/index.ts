@@ -28,7 +28,7 @@ function dashboard(): Response {
 <div class="card"><h2>Expediente PAPER</h2><p class="muted">La app exige días, velas cerradas, operaciones y métricas mínimas antes de permitir siquiera una revisión humana.</p><pre id="readiness">Cargando…</pre></div>
 <div class="card"><h2>Simulador automático</h2><pre id="status">Cargando…</pre></div>
 <div class="card"><h2>Control privado</h2><p class="muted">El token solo se usa en esta pestaña y no se guarda.</p><input id="token" type="password" autocomplete="off" placeholder="ADMIN_TOKEN de Cloudflare">
-<div class="grid"><button onclick="admin('/api/tick','POST')">Ejecutar ciclo ahora</button><button onclick="admin('/api/checkpoints','GET')">Verificar registro diario</button><button onclick="admin('/api/kraken/diagnostics','GET')">Diagnóstico local</button><button id="krakenButton" onclick="admin('/api/kraken/connection','GET')">Probar conexión Kraken</button><button id="permissionButton" onclick="admin('/api/kraken/permissions','GET')">Auditar permisos Kraken</button><button onclick="admin('/api/pause','POST')">Pausar motor</button><button onclick="admin('/api/resume','POST')">Reanudar motor</button></div><pre id="adminResult">Sin comprobaciones todavía.</pre>
+<div class="grid"><button onclick="admin('/api/tick','POST')">Ejecutar ciclo ahora</button><button onclick="admin('/api/signals','GET')">Analizar señales PAPER</button><button onclick="admin('/api/checkpoints','GET')">Verificar registro diario</button><button onclick="admin('/api/kraken/diagnostics','GET')">Diagnóstico local</button><button id="krakenButton" onclick="admin('/api/kraken/connection','GET')">Probar conexión Kraken</button><button id="permissionButton" onclick="admin('/api/kraken/permissions','GET')">Auditar permisos Kraken</button><button onclick="admin('/api/pause','POST')">Pausar motor</button><button onclick="admin('/api/resume','POST')">Reanudar motor</button></div><pre id="adminResult">Sin comprobaciones todavía.</pre>
 <div class="divider"></div><h3>Comparar la pareja V2 sin enviarla</h3><p class="muted">Pega aquí la clave pública y el secreto V2. El navegador los compara mediante SHA-256; nunca se mandan al servidor y los campos se borran al terminar.</p>
 <input id="compareKey" type="password" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="Clave pública V2">
 <input id="compareSecret" type="password" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="Secreto privado V2">
@@ -54,7 +54,7 @@ export default {
     if (request.method === "GET" && url.pathname === "/") return dashboard();
     if (request.method === "GET" && url.pathname === "/health") {
       return new Response(
-        JSON.stringify({ ok: true, service: "auto-bolsa-ai", version: "0.12.0", mode: "paper", liveTrading: false }),
+        JSON.stringify({ ok: true, service: "auto-bolsa-ai", version: "0.13.0", mode: "paper", liveTrading: false }),
         { headers: jsonHeaders },
       );
     }
@@ -67,6 +67,10 @@ export default {
     if (request.method === "GET" && url.pathname === "/api/checkpoints") {
       if (!isAuthorized(request, env)) return new Response("Unauthorized", { status: 401 });
       return singleton(env).fetch("https://bot/checkpoints");
+    }
+    if (request.method === "GET" && url.pathname === "/api/signals") {
+      if (!isAuthorized(request, env)) return new Response("Unauthorized", { status: 401 });
+      return singleton(env).fetch("https://bot/signals");
     }
     if (request.method === "GET" && url.pathname === "/api/kraken/fingerprints") {
       if (!isAuthorized(request, env)) return new Response("Unauthorized", { status: 401 });
@@ -125,7 +129,7 @@ export default {
     }
     if (url.pathname.startsWith("/api/live")) {
       return Response.json(
-        { error: "LIVE_TRADING_HARD_DISABLED", message: "La versión 0.12 solo permite simulación, auditorías, trazabilidad y evaluación PAPER." },
+        { error: "LIVE_TRADING_HARD_DISABLED", message: "La versión 0.13 solo permite simulación, auditorías, trazabilidad y análisis PAPER." },
         { status: 403 },
       );
     }
