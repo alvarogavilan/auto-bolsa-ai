@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { KrakenAssetPair } from "../src/kraken-markets";
-import { resolveLivePairMetadata } from "../src/live-pair-metadata";
+import { resolveLivePairMetadata, resolveLivePairResolution } from "../src/live-pair-metadata";
 
 function pair(overrides: Partial<KrakenAssetPair> = {}): KrakenAssetPair {
   return {
@@ -33,6 +33,21 @@ describe("LIVE pair metadata from Kraken AssetPairs", () => {
       priceDecimals: 1,
     });
     expect(resolveLivePairMetadata(pairs, "xbt/eur")).toEqual({
+      orderMinBase: 0.00005,
+      lotDecimals: 8,
+      priceDecimals: 1,
+    });
+  });
+
+  it("preserves exact Kraken aliases for order and TradesHistory evidence", () => {
+    const resolution = resolveLivePairResolution([pair()], "XBTEUR");
+    expect(resolution.canonicalPair).toBe("XXBTZEUR");
+    expect(resolution.acceptedPairCodes).toEqual(expect.arrayContaining([
+      "XXBTZEUR",
+      "XBTEUR",
+      "XBT/EUR",
+    ]));
+    expect(resolution.metadata).toEqual({
       orderMinBase: 0.00005,
       lotDecimals: 8,
       priceDecimals: 1,

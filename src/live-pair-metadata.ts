@@ -11,20 +11,37 @@ function aliases(pair: KrakenAssetPair): string[] {
     .filter((value) => value.length > 0);
 }
 
+function acceptedPairCodes(pair: KrakenAssetPair): string[] {
+  const values = [pair.key, pair.altname, pair.wsname ?? ""];
+  const expanded = values.flatMap((value) => {
+    const trimmed = value.trim();
+    if (!trimmed) return [];
+    const normalized = normalizedPairName(trimmed);
+    return normalized === trimmed ? [trimmed] : [trimmed, normalized];
+  });
+  return [...new Set(expanded)];
+}
+
 function validNonNegativeInteger(value: number): boolean {
   return Number.isInteger(value) && value >= 0 && value <= 18;
 }
 
+export interface LivePairResolution {
+  requestedPair: string;
+  canonicalPair: string;
+  acceptedPairCodes: string[];
+  metadata: LivePairMetadata;
+}
+
 /**
- * Convierte la respuesta pública AssetPairs de Kraken en los metadatos exactos
- * que usan las puertas LIVE. Falla cerrado ante par desconocido, suspendido o
- * datos inválidos: nunca sustituye silenciosamente mínimos o precisiones por
- * valores escritos a mano.
+ * Resuelve un par y conserva todos los identificadores que Kraken puede usar
+ * en órdenes y TradesHistory. Falla cerrado ante par desconocido, suspendido
+ * o datos inválidos; nunca inventa aliases, mínimos o precisiones.
  */
-export function resolveLivePairMetadata(
+export function resolveLivePairResolution(
   pairs: readonly KrakenAssetPair[],
   requestedPair: string,
-): LivePairMetadata {
+): LivePairResolution {
   const normalized = normalizedPairName(requestedPair);
   const pair = pairs.find((candidate) => aliases(candidate).includes(normalized));
 
@@ -43,16 +60,39 @@ export function resolveLivePairMetadata(
   }
 
   return {
-    orderMinBase: pair.ordermin,
-    lotDecimals: pair.lotDecimals,
-    priceDecimals: pair.pairDecimals,
+    requestedPair,
+    canonicalPair: pair.key,
+    acceptedPairCodes: acceptedPairCodes(pair),
+    metadata: {
+      orderMinBase: pair.ordermin,
+      lotDecimals: pair.lotDecimals,
+      priceDecimals: pair.pairDecimals,
+    },
   };
+}
+
+/**
+ * Convierte la respuesta pública AssetPairs de Kraken en los metadatos exactos
+ * que usan las puertas LIVE. Falla cerrado ante par desconocido, suspendido o
+ * datos inválidos: nunca sustituye silenciosamente mínimos o precisiones por
+ * valores escritos a mano.
+ */
+export function resolveLivePairMetadata(
+  pairs: readonly KrakenAssetPair[],
+  requestedPair: string,
+): LivePairMetadata {
+  return resolveLivePairResolution(pairs, requestedPair).metadata;
+}
+
+/** Obtiene AssetPairs y devuelve metadatos junto con aliases verificables. */
+export async function fetchLivePairResolution(requestedPair: string): Promise<LivePairResolution> {
+  return resolveLivePairResolution(await fetchTradableAssetPairs(), requestedPair);
 }
 
 /** Obtiene AssetPairs por la API pública y devuelve un mapa listo para guardrails. */
 export async function fetchLivePairMetadata(
   requestedPair: string,
 ): Promise<Readonly<Record<string, LivePairMetadata>>> {
-  const metadata = resolveLivePairMetadata(await fetchTradableAssetPairs(), requestedPair);
+  const metadata = (await fetchLivePairResolution(requestedPair)).metadata;
   return { [requestedPair]: metadata };
 }

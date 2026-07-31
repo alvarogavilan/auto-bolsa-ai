@@ -5,27 +5,36 @@ import {
   initializeLiveExecutor,
   observeMarket,
   prepareOrder,
-  reconcile,
-  retryReconciliation,
   submitOrder,
   type LiveExecutorSnapshot,
   type LiveOrderRequest,
 } from "./live-executor";
-import { defaultLiveGuardrailConfig, liveTradingEnabledFromEnv, type LivePairMetadata } from "./live-guardrails";
-import { fetchLivePairMetadata } from "./live-pair-metadata";
+import { defaultLiveGuardrailConfig, liveTradingEnabledFromEnv, type LiveGuardrailConfig } from "./live-guardrails";
+import { fetchLivePairResolution, type LivePairResolution } from "./live-pair-metadata";
 import { FakeLiveOrderTransport, KrakenLiveOrderTransport, type LiveOrderTransport } from "./live-transport";
+import {
+  KrakenLiveFillEvidenceSource,
+  UnavailableLiveFillEvidenceSource,
+  reconcileWithVerifiedFills,
+  type LiveFillEvidenceSource,
+} from "./live-verified-reconciliation";
 import { BOT_STATE_SINGLETON_NAME, type Env } from "./types";
 
 const STORAGE_KEY = "live-executor-snapshot";
-const PAIR_METADATA_CACHE_KEY = "live-pair-metadata-cache-v1";
+const PAIR_METADATA_CACHE_KEY = "live-pair-resolution-cache-v2";
 const PAIR_METADATA_TTL_MS = 60 * 60_000;
 
-interface StoredPairMetadata {
-  schemaVersion: "live-pair-metadata-cache-v1";
+interface StoredPairResolution {
+  schemaVersion: "live-pair-resolution-cache-v2";
   pair: string;
   fetchedAt: number;
   expiresAt: number;
-  metadata: Readonly<Record<string, LivePairMetadata>>;
+  resolution: LivePairResolution;
+}
+
+interface LiveReconciliationContext {
+  resolution: LivePairResolution;
+  config: LiveGuardrailConfig;
 }
 
 /**
@@ -35,12 +44,8 @@ interface StoredPairMetadata {
  * ni migración) ni exportada desde `index.ts`, así que Cloudflare no la
  * instancia ni la despliega: no existe como recurso real en la cuenta. Solo
  * vive como código fuente, comprobado por `tsc --noEmit` y ejercitado
- * indirectamente a través de las funciones puras de `live-executor.ts` (la
- * recuperación tras reinicio se valida serializando/deserializando el
- * snapshot en los tests, igual que el resto del ejecutor). Enlazarla de
- * verdad —añadir el binding y la migración en `wrangler.jsonc`, exportarla
- * desde `index.ts`— es un paso futuro y deliberadamente separado (ver
- * docs/live-executor.md).
+ * indirectamente a través de las funciones puras del ejecutor. Enlazarla de
+ * verdad es un paso futuro y deliberadamente separado.
  */
 export class LiveExecutorState extends DurableObject<Env> {
   constructor(ctx: DurableObjectState, env: Env) {
@@ -59,10 +64,7 @@ export class LiveExecutorState extends DurableObject<Env> {
 
   /**
    * El ejecutor LIVE NUNCA mantiene su propio contador de nonce: pide el
-   * siguiente a la única autoridad persistente (`BotState`), la misma que ya
-   * sirve las llamadas privadas de PAPER para esta clave de API. Dos
-   * contadores independientes podrían emitir nonces desordenados y disparar
-   * el bloqueo temporal de Kraken (ver docs/kraken-api-safety.md).
+   * siguiente a la única autoridad persistente (`BotState`).
    */
   private async nextNonce(): Promise<string> {
     const botState = this.env.BOT_STATE.get(this.env.BOT_STATE.idFromName(BOT_STATE_SINGLETON_NAME));
@@ -73,9 +75,8 @@ export class LiveExecutorState extends DurableObject<Env> {
   }
 
   /**
-   * El transporte real solo se construye si `LIVE_TRADING_ENABLED === "true"` Y
-   * hay credenciales configuradas. Con la variable ausente (estado por defecto en
-   * producción) siempre se usa el mock, así que ninguna llamada llega a Kraken.
+   * El transporte real solo se construye si `LIVE_TRADING_ENABLED === "true"`
+   * y hay credenciales. Hoy la variable está ausente y siempre se usa el mock.
    */
   private transport(): LiveOrderTransport {
     const enabled = liveTradingEnabledFromEnv(this.env.LIVE_TRADING_ENABLED);
@@ -90,46 +91,65 @@ export class LiveExecutorState extends DurableObject<Env> {
   }
 
   /**
-   * Obtiene mínimos y precisiones desde AssetPairs y los conserva en Durable
-   * Object storage. Para preparar/enviar una orden se exige información fresca.
-   * Reconciliar o cancelar en emergencia puede usar la última copia conocida si
-   * la API pública cae: una avería de datos nunca debe impedir una salida segura.
+   * Igual que el transporte, la fuente real de fills solo puede construirse
+   * bajo la activación explícita futura. Cualquier otra composición falla
+   * cerrada: nunca inventa un historial vacío como si fuese prueba suficiente.
    */
-  private async pairMetadata(
+  private fillEvidenceSource(): LiveFillEvidenceSource {
+    const enabled = liveTradingEnabledFromEnv(this.env.LIVE_TRADING_ENABLED);
+    if (enabled && this.env.KRAKEN_API_KEY && this.env.KRAKEN_API_SECRET) {
+      return new KrakenLiveFillEvidenceSource(
+        this.env.KRAKEN_API_KEY,
+        this.env.KRAKEN_API_SECRET,
+        () => this.nextNonce(),
+      );
+    }
+    return new UnavailableLiveFillEvidenceSource();
+  }
+
+  /**
+   * Obtiene mínimos, precisiones y aliases desde AssetPairs y los conserva en
+   * storage. Preparar/enviar exige información fresca. Reconciliar o cancelar
+   * en emergencia puede usar la última copia conocida si la API pública cae.
+   */
+  private async pairResolution(
     pair: string,
     now: number,
     allowStale: boolean,
-  ): Promise<Readonly<Record<string, LivePairMetadata>>> {
-    const stored = await this.ctx.storage.get<StoredPairMetadata>(PAIR_METADATA_CACHE_KEY);
-    const matchesPair = stored?.schemaVersion === "live-pair-metadata-cache-v1" && stored.pair === pair;
+  ): Promise<LivePairResolution> {
+    const stored = await this.ctx.storage.get<StoredPairResolution>(PAIR_METADATA_CACHE_KEY);
+    const matchesPair = stored?.schemaVersion === "live-pair-resolution-cache-v2" && stored.pair === pair;
 
-    if (matchesPair && stored.expiresAt > now) return stored.metadata;
+    if (matchesPair && stored.expiresAt > now) return stored.resolution;
 
     try {
-      const metadata = await fetchLivePairMetadata(pair);
-      const value: StoredPairMetadata = {
-        schemaVersion: "live-pair-metadata-cache-v1",
+      const resolution = await fetchLivePairResolution(pair);
+      const value: StoredPairResolution = {
+        schemaVersion: "live-pair-resolution-cache-v2",
         pair,
         fetchedAt: now,
         expiresAt: now + PAIR_METADATA_TTL_MS,
-        metadata,
+        resolution,
       };
       await this.ctx.storage.put(PAIR_METADATA_CACHE_KEY, value);
-      return metadata;
+      return resolution;
     } catch (error) {
-      if (allowStale && matchesPair) return stored.metadata;
+      if (allowStale && matchesPair) return stored.resolution;
       const message = error instanceof Error ? error.message : "No se pudieron obtener metadatos de Kraken";
       throw new Error(`LIVE bloqueado por metadatos de mercado no verificables: ${message}`);
     }
   }
 
-  private async guardrailConfig(now: number, allowStale = false) {
+  private async reconciliationContext(now: number, allowStale = false): Promise<LiveReconciliationContext> {
     const pair = this.env.PAIR || "XBTEUR";
-    const pairMetadata = await this.pairMetadata(pair, now, allowStale);
-    return defaultLiveGuardrailConfig({
-      liveTradingEnabled: liveTradingEnabledFromEnv(this.env.LIVE_TRADING_ENABLED),
-      pairMetadata,
-    });
+    const resolution = await this.pairResolution(pair, now, allowStale);
+    return {
+      resolution,
+      config: defaultLiveGuardrailConfig({
+        liveTradingEnabled: liveTradingEnabledFromEnv(this.env.LIVE_TRADING_ENABLED),
+        pairMetadata: { [pair]: resolution.metadata },
+      }),
+    };
   }
 
   async fetch(request: Request): Promise<Response> {
@@ -151,7 +171,8 @@ export class LiveExecutorState extends DurableObject<Env> {
     if (request.method === "POST" && url.pathname === "/prepare") {
       const body = (await request.json()) as LiveOrderRequest;
       const state = await this.read();
-      const result = prepareOrder(state, await this.guardrailConfig(now), body, now);
+      const { config } = await this.reconciliationContext(now);
+      const result = prepareOrder(state, config, body, now);
       await this.write(result.state);
       return Response.json(result, { status: result.ok ? 200 : 409 });
     }
@@ -159,45 +180,59 @@ export class LiveExecutorState extends DurableObject<Env> {
     if (request.method === "POST" && url.pathname === "/submit") {
       const body = (await request.json()) as { clOrdId: string };
       const state = await this.read();
-      const result = await submitOrder(
-        state,
-        this.transport(),
-        await this.guardrailConfig(now),
-        body.clOrdId,
-        now,
-      );
+      const { config } = await this.reconciliationContext(now);
+      const result = await submitOrder(state, this.transport(), config, body.clOrdId, now);
       await this.write(result.state);
       return Response.json(result, { status: result.ok ? 200 : 409 });
     }
 
     if (request.method === "POST" && url.pathname === "/reconcile") {
       const state = await this.read();
-      await reconcile(state, this.transport(), await this.guardrailConfig(now, true), now);
+      const { config, resolution } = await this.reconciliationContext(now, true);
+      const report = await reconcileWithVerifiedFills(
+        state,
+        this.transport(),
+        this.fillEvidenceSource(),
+        config,
+        resolution,
+        now,
+      );
       await this.write(state);
-      return Response.json(state);
+      return Response.json({ state, verifiedReconciliation: report }, { status: report.ok ? 200 : 409 });
     }
 
     if (request.method === "POST" && url.pathname === "/retry") {
       const body = (await request.json()) as { clOrdId: string };
       const state = await this.read();
-      await retryReconciliation(
+      if (!state.orders[body.clOrdId]) {
+        return Response.json({ error: "Orden desconocida" }, { status: 404 });
+      }
+      // Un retry nunca reenvía. Ejecuta de nuevo la reconciliación completa
+      // contra órdenes, fills individuales y balance usando una sola puerta.
+      const { config, resolution } = await this.reconciliationContext(now, true);
+      const report = await reconcileWithVerifiedFills(
         state,
         this.transport(),
-        await this.guardrailConfig(now, true),
-        body.clOrdId,
+        this.fillEvidenceSource(),
+        config,
+        resolution,
         now,
       );
       await this.write(state);
-      return Response.json(state);
+      return Response.json(
+        { state, requestedClOrdId: body.clOrdId, verifiedReconciliation: report },
+        { status: report.ok ? 200 : 409 },
+      );
     }
 
     if (request.method === "POST" && url.pathname === "/emergency-cancel-all") {
       const body = (await request.json().catch(() => ({}))) as { reason?: string };
       const state = await this.read();
+      const { config } = await this.reconciliationContext(now, true);
       await emergencyCancelAll(
         state,
         this.transport(),
-        await this.guardrailConfig(now, true),
+        config,
         body.reason ?? "Cancelación de emergencia manual",
         now,
       );
