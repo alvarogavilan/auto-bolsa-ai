@@ -58,8 +58,6 @@ export interface RunPreflightOptions {
 }
 
 const realValidateOnlySubmitter: ValidateOnlySubmitter = async ({ request, apiKey, apiSecret, nonce }) => {
-  // `validate` se fija aquí y no procede del usuario, Env ni caller. Esta es la
-  // única llamada a AddOrder permitida por este módulo.
   return addOrder({ ...request, validate: true }, apiKey, apiSecret, nonce);
 };
 
@@ -76,6 +74,9 @@ function validateIntent(intent: LiveOrderPreflightIntent, metadata: LivePairMeta
       maxNotionalDeviationPct: 0.01,
     },
   );
+  if ((intent as { side?: unknown }).side !== "buy") {
+    blockers.push("El preflight solo admite compras límite validate-only");
+  }
   if (intent.notionalEur > PREFLIGHT_MAX_NOTIONAL_EUR) {
     blockers.push(`El preflight no admite más de ${PREFLIGHT_MAX_NOTIONAL_EUR} EUR`);
   }
@@ -110,8 +111,6 @@ export async function runValidateOnlyOrderPreflight(
   const submit = options.submit ?? realValidateOnlySubmitter;
 
   try {
-    // El wrapper vuelve a forzar validate=true incluso si un submitter real se
-    // reemplaza en el futuro. Los tests inspeccionan el objeto exacto recibido.
     const result = await submit({
       request: { ...request, validate: true },
       apiKey: options.apiKey,
