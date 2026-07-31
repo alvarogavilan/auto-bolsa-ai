@@ -16,7 +16,7 @@ const intent = {
 
 describe("validate-only Kraken order preflight", () => {
   it("forces validate=true and accepts only an empty txid response", async () => {
-    let captured: ValidateOnlyKrakenCall | null = null;
+    const capturedCalls: ValidateOnlyKrakenCall[] = [];
     const result = await runValidateOnlyOrderPreflight({
       intent,
       metadata,
@@ -25,11 +25,13 @@ describe("validate-only Kraken order preflight", () => {
       nonce: "123",
       now: 1_800_000_000_000,
       submit: async (call) => {
-        captured = call;
+        capturedCalls.push(call);
         return { txid: [], descr: { order: "buy 0.0001 XBTEUR @ limit 50000" } };
       },
     });
 
+    expect(capturedCalls).toHaveLength(1);
+    const captured = capturedCalls[0];
     expect(captured?.request.validate).toBe(true);
     expect(captured?.request.ordertype).toBe("limit");
     expect(captured?.request.type).toBe("buy");
