@@ -6,6 +6,7 @@ export type SignalOutcome =
   | "hold"
   | "risk-blocked"
   | "cooldown-blocked"
+  | "execution-blocked"
   | "stop-loss-executed"
   | "take-profit-executed";
 
@@ -40,6 +41,7 @@ export interface SignalEvidenceStats {
   takeProfitsExecuted: number;
   riskBlocks: number;
   cooldownBlocks: number;
+  executionBlocks: number;
   holds: number;
 }
 
@@ -67,6 +69,7 @@ export function emptySignalEvidenceLedger(): SignalEvidenceLedger {
       takeProfitsExecuted: 0,
       riskBlocks: 0,
       cooldownBlocks: 0,
+      executionBlocks: 0,
       holds: 0,
     },
     entries: [],
@@ -105,6 +108,9 @@ export function appendSignalEvidence(
       break;
     case "cooldown-blocked":
       stats.cooldownBlocks += 1;
+      break;
+    case "execution-blocked":
+      stats.executionBlocks += 1;
       break;
     case "hold":
       stats.holds += 1;
