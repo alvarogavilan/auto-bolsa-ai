@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { assessKrakenPermissions, signKrakenRequest } from "../src/kraken";
+import {
+  assessKrakenPermissions,
+  inspectKrakenCredentials,
+  normalizeCredential,
+  signKrakenRequest,
+} from "../src/kraken";
 
 const officialSecret =
   "kQH5HW/8p1uGOVjbgWA7FunAmGO8lsSUXNsu3eow76sz84Q18fWxnyRzBHCd3pd5nE9qa99HAZtuZuj6F1huXg==";
@@ -17,6 +22,18 @@ describe("Kraken API safety", () => {
     );
   });
 
+  it("signs the URL-encoded Balance probe deterministically", async () => {
+    const signature = await signKrakenRequest(
+      "/0/private/Balance",
+      "1616492376594",
+      "nonce=1616492376594",
+      officialSecret,
+    );
+    expect(signature).toBe(
+      "1nH4vwR+8FHiYh1QT649xXkGd3JR3x0DWkgv3u9Ed/Qqv6KPtgQpEU4m+Emb/VgpEji3j1XNwI+HCbfXxmrTOg==",
+    );
+  });
+
   it("signs the JSON body required by GetApiKeyInfo", async () => {
     const signature = await signKrakenRequest(
       "/0/private/GetApiKeyInfo",
@@ -29,16 +46,16 @@ describe("Kraken API safety", () => {
     );
   });
 
-  it("normalizes spaces and accidental quotes around a copied API secret", async () => {
-    const signature = await signKrakenRequest(
-      "/0/private/AddOrder",
-      "1616492376594",
-      "nonce=1616492376594&ordertype=limit&pair=XBTUSD&price=37500&type=buy&volume=1.25",
-      `  "${officialSecret}"\n`,
-    );
-    expect(signature).toBe(
-      "4/dpxb3iT4tp/ZCVEwSnEsLxx0bqyhLpdfOpc6fn7OR8+UClSV5n9E6aSS8MPtnRfp32bAb0nmbRn6H8ndwLUQ==",
-    );
+  it("removes spaces, zero-width characters, quotes and line breaks copied on iOS", () => {
+    expect(normalizeCredential(` \"ab\u200Bcd\n ef\" `)).toBe("abcdef");
+  });
+
+  it("reports safe local diagnostics without exposing the API secret", () => {
+    const diagnostics = inspectKrakenCredentials(" ABCD 1234\n", ` \"${officialSecret}\"\n`);
+    expect(diagnostics.apiKeyLast4).toBe("1234");
+    expect(diagnostics.apiSecretBase64Valid).toBe(true);
+    expect(diagnostics.apiSecretDecodedBytes).toBe(64);
+    expect(JSON.stringify(diagnostics)).not.toContain(officialSecret);
   });
 
   it("accepts only the intended non-withdrawal permission set", () => {

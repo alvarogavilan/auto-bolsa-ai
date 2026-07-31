@@ -13,6 +13,18 @@ export interface KrakenApiKeyInfo {
   lastUsed: string | null;
 }
 
+export interface KrakenCredentialDiagnostics {
+  apiKeyPresent: boolean;
+  apiKeyLength: number;
+  apiKeyLast4: string | null;
+  apiKeyCharactersRemoved: number;
+  apiSecretPresent: boolean;
+  apiSecretLength: number;
+  apiSecretCharactersRemoved: number;
+  apiSecretBase64Valid: boolean;
+  apiSecretDecodedBytes: number | null;
+}
+
 export const REQUIRED_KRAKEN_PERMISSIONS = [
   "query-funds",
   "query-open-trades",
@@ -35,16 +47,46 @@ function asNumber(value: unknown, label: string): number {
   return parsed;
 }
 
-function normalizeCredential(value: string): string {
-  const trimmed = value.trim();
+export function normalizeCredential(value: string): string {
+  let normalized = value.trim();
   if (
-    trimmed.length >= 2 &&
-    ((trimmed.startsWith('"') && trimmed.endsWith('"')) ||
-      (trimmed.startsWith("'") && trimmed.endsWith("'")))
+    normalized.length >= 2 &&
+    ((normalized.startsWith('"') && normalized.endsWith('"')) ||
+      (normalized.startsWith("'") && normalized.endsWith("'")))
   ) {
-    return trimmed.slice(1, -1).trim();
+    normalized = normalized.slice(1, -1);
   }
-  return trimmed;
+
+  // API keys and base64 secrets never contain whitespace. Removing all whitespace,
+  // zero-width characters and BOMs protects against copy/paste artefacts on iOS.
+  return normalized.replace(/[\s\u200B-\u200D\u2060\uFEFF]/g, "");
+}
+
+export function inspectKrakenCredentials(apiKey: string, apiSecret: string): KrakenCredentialDiagnostics {
+  const normalizedApiKey = normalizeCredential(apiKey);
+  const normalizedApiSecret = normalizeCredential(apiSecret);
+  let apiSecretBase64Valid = false;
+  let apiSecretDecodedBytes: number | null = null;
+
+  try {
+    const decoded = atob(normalizedApiSecret);
+    apiSecretBase64Valid = normalizedApiSecret.length > 0;
+    apiSecretDecodedBytes = decoded.length;
+  } catch {
+    apiSecretBase64Valid = false;
+  }
+
+  return {
+    apiKeyPresent: normalizedApiKey.length > 0,
+    apiKeyLength: normalizedApiKey.length,
+    apiKeyLast4: normalizedApiKey.length >= 4 ? normalizedApiKey.slice(-4) : null,
+    apiKeyCharactersRemoved: Math.max(0, apiKey.length - normalizedApiKey.length),
+    apiSecretPresent: normalizedApiSecret.length > 0,
+    apiSecretLength: normalizedApiSecret.length,
+    apiSecretCharactersRemoved: Math.max(0, apiSecret.length - normalizedApiSecret.length),
+    apiSecretBase64Valid,
+    apiSecretDecodedBytes,
+  };
 }
 
 function bytesToBase64(bytes: Uint8Array): string {
@@ -100,6 +142,40 @@ export async function signKrakenRequest(
   return bytesToBase64(signature);
 }
 
+async function parsePrivateResponse<T>(response: Response): Promise<T> {
+  if (!response.ok) throw new Error(`Kraken private HTTP ${response.status}`);
+  const payload = (await response.json()) as KrakenResponse<T>;
+  if (payload.error.length > 0) throw new Error(`Kraken private: ${payload.error.join(", ")}`);
+  return payload.result;
+}
+
+async function privatePostForm<T>(
+  apiPath: string,
+  apiKey: string,
+  apiSecret: string,
+  nonce: string,
+  fields: Record<string, string> = {},
+): Promise<T> {
+  const normalizedApiKey = normalizeCredential(apiKey);
+  const normalizedApiSecret = normalizeCredential(apiSecret);
+  if (!normalizedApiKey || !normalizedApiSecret) throw new Error("Kraken credentials are empty after normalization");
+
+  const postData = new URLSearchParams({ nonce, ...fields }).toString();
+  const signature = await signKrakenRequest(apiPath, nonce, postData, normalizedApiSecret);
+  const response = await fetch(`${API_BASE}${apiPath.replace(/^\/0/, "")}`, {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/x-www-form-urlencoded; charset=utf-8",
+      "API-Key": normalizedApiKey,
+      "API-Sign": signature,
+      "User-Agent": "auto-bolsa-ai/0.6",
+    },
+    body: postData,
+  });
+  return parsePrivateResponse<T>(response);
+}
+
 async function privatePostJson<T>(
   apiPath: string,
   apiKey: string,
@@ -113,7 +189,6 @@ async function privatePostJson<T>(
 
   const postData = JSON.stringify({ nonce: Number(nonce), ...fields });
   const signature = await signKrakenRequest(apiPath, nonce, postData, normalizedApiSecret);
-
   const response = await fetch(`${API_BASE}${apiPath.replace(/^\/0/, "")}`, {
     method: "POST",
     headers: {
@@ -121,15 +196,15 @@ async function privatePostJson<T>(
       "Content-Type": "application/json",
       "API-Key": normalizedApiKey,
       "API-Sign": signature,
-      "User-Agent": "auto-bolsa-ai/0.5",
+      "User-Agent": "auto-bolsa-ai/0.6",
     },
     body: postData,
   });
-  if (!response.ok) throw new Error(`Kraken private HTTP ${response.status}`);
+  return parsePrivateResponse<T>(response);
+}
 
-  const payload = (await response.json()) as KrakenResponse<T>;
-  if (payload.error.length > 0) throw new Error(`Kraken private: ${payload.error.join(", ")}`);
-  return payload.result;
+export async function fetchBalance(apiKey: string, apiSecret: string, nonce: string): Promise<Record<string, string>> {
+  return privatePostForm<Record<string, string>>("/0/private/Balance", apiKey, apiSecret, nonce);
 }
 
 export async function fetchApiKeyInfo(apiKey: string, apiSecret: string, nonce: string): Promise<KrakenApiKeyInfo> {
@@ -159,7 +234,7 @@ export async function fetchOhlc(pair: string, interval = 15): Promise<Candle[]> 
   url.searchParams.set("interval", String(interval));
 
   const response = await fetch(url, {
-    headers: { Accept: "application/json", "User-Agent": "auto-bolsa-ai/0.5" },
+    headers: { Accept: "application/json", "User-Agent": "auto-bolsa-ai/0.6" },
   });
   if (!response.ok) throw new Error(`Kraken OHLC HTTP ${response.status}`);
 

@@ -1,5 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
-import { assessKrakenPermissions, fetchApiKeyInfo, fetchOhlc } from "./kraken";
+import { fetchBalance, fetchOhlc, inspectKrakenCredentials } from "./kraken";
 import { calculateIndicators, decide } from "./strategy";
 import type { BotConfig, BotSnapshot, Env, PaperTrade } from "./types";
 
@@ -80,13 +80,54 @@ export class BotState extends DurableObject<Env> {
     return value;
   }
 
+  private krakenDiagnostics(): Response {
+    if (!this.env.KRAKEN_API_KEY || !this.env.KRAKEN_API_SECRET) {
+      return Response.json(
+        {
+          configured: false,
+          networkCall: false,
+          message: "Faltan los secretos KRAKEN_API_KEY y KRAKEN_API_SECRET en Cloudflare.",
+          liveTrading: false,
+        },
+        { status: 412 },
+      );
+    }
+
+    return Response.json({
+      configured: true,
+      networkCall: false,
+      ...inspectKrakenCredentials(this.env.KRAKEN_API_KEY, this.env.KRAKEN_API_SECRET),
+      message: "Diagnóstico local completado sin contactar con Kraken.",
+      liveTrading: false,
+    });
+  }
+
+  private async lockKraken(message: string, status = 429): Promise<Response> {
+    const retryAt = Date.now() + KRAKEN_LOCKOUT_MS;
+    await this.ctx.storage.put(KRAKEN_LOCKOUT_UNTIL_KEY, retryAt);
+    return Response.json(
+      {
+        configured: true,
+        connected: false,
+        safePermissions: null,
+        temporaryLockout: true,
+        retryAt: new Date(retryAt).toISOString(),
+        retryAfterSeconds: Math.ceil(KRAKEN_LOCKOUT_MS / 1000),
+        error: message,
+        message: "No se enviarán más llamadas privadas a Kraken durante 15 minutos.",
+        liveTrading: false,
+      },
+      { status },
+    );
+  }
+
   private async krakenConnection(): Promise<Response> {
     if (!this.env.KRAKEN_API_KEY || !this.env.KRAKEN_API_SECRET) {
       return Response.json(
         {
           configured: false,
           connected: false,
-          safePermissions: false,
+          safePermissions: null,
           message: "Faltan los secretos KRAKEN_API_KEY y KRAKEN_API_SECRET en Cloudflare.",
           liveTrading: false,
         },
@@ -101,7 +142,7 @@ export class BotState extends DurableObject<Env> {
         {
           configured: true,
           connected: false,
-          safePermissions: false,
+          safePermissions: null,
           temporaryLockout: true,
           retryAt: new Date(lockoutUntil).toISOString(),
           retryAfterSeconds: Math.ceil((lockoutUntil - now) / 1000),
@@ -114,49 +155,38 @@ export class BotState extends DurableObject<Env> {
 
     try {
       const nonce = await this.nextKrakenNonce();
-      const info = await fetchApiKeyInfo(this.env.KRAKEN_API_KEY, this.env.KRAKEN_API_SECRET, nonce);
-      const assessment = assessKrakenPermissions(info.permissions);
+      const balances = await fetchBalance(this.env.KRAKEN_API_KEY, this.env.KRAKEN_API_SECRET, nonce);
+      const eurRaw = balances.ZEUR ?? balances.EUR ?? "0";
+      const eurParsed = Number(eurRaw);
       await this.ctx.storage.delete(KRAKEN_LOCKOUT_UNTIL_KEY);
+
       return Response.json({
         configured: true,
         connected: true,
-        safePermissions: assessment.safe,
-        apiKeyName: info.apiKeyName,
-        permissions: info.permissions,
-        missingPermissions: assessment.missing,
-        forbiddenPermissions: assessment.forbidden,
-        ipRestrictionEnabled: info.ipAllowlist.length > 0,
-        expiresAt: info.validUntil && info.validUntil !== "0" ? info.validUntil : null,
+        authenticationEndpoint: "Balance",
+        safePermissions: null,
+        permissionAudit: "pending",
+        eurBalance: Number.isFinite(eurParsed) ? eurParsed : null,
+        nonZeroAssetCount: Object.values(balances).filter((value) => Number(value) > 0).length,
         liveTrading: false,
-        message: assessment.safe
-          ? "Conexión válida y permisos seguros. El trading real continúa bloqueado."
-          : "Conexión válida, pero los permisos no coinciden con la política segura.",
+        message: "Autenticación válida. La auditoría automática de permisos se hará en un paso separado; el trading real continúa bloqueado.",
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Kraken connection failed";
-      if (message.includes("EGeneral:Temporary lockout")) {
-        const retryAt = Date.now() + KRAKEN_LOCKOUT_MS;
-        await this.ctx.storage.put(KRAKEN_LOCKOUT_UNTIL_KEY, retryAt);
-        return Response.json(
-          {
-            configured: true,
-            connected: false,
-            safePermissions: false,
-            temporaryLockout: true,
-            retryAt: new Date(retryAt).toISOString(),
-            retryAfterSeconds: Math.ceil(KRAKEN_LOCKOUT_MS / 1000),
-            message: "Kraken ha aplicado un bloqueo temporal. No se enviarán más llamadas durante 15 minutos.",
-            liveTrading: false,
-          },
-          { status: 429 },
-        );
-      }
+      if (message.includes("EGeneral:Temporary lockout")) return this.lockKraken(message);
+
+      const authenticationFailure = [
+        "EAPI:Invalid key",
+        "EAPI:Invalid signature",
+        "EAPI:Invalid nonce",
+      ].some((code) => message.includes(code));
+      if (authenticationFailure) return this.lockKraken(message);
 
       return Response.json(
         {
           configured: true,
           connected: false,
-          safePermissions: false,
+          safePermissions: null,
           error: message,
           liveTrading: false,
         },
@@ -308,6 +338,9 @@ export class BotState extends DurableObject<Env> {
     try {
       if (request.method === "POST" && url.pathname === "/tick") {
         return Response.json(await this.tick());
+      }
+      if (request.method === "GET" && url.pathname === "/kraken/diagnostics") {
+        return this.krakenDiagnostics();
       }
       if (request.method === "GET" && url.pathname === "/kraken/connection") {
         return this.krakenConnection();

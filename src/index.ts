@@ -22,13 +22,13 @@ function dashboard(): Response {
 <body><main><h1>Auto Bolsa AI</h1><p class="ok">Modo PAPER obligatorio · Trading real bloqueado</p>
 <div class="card"><h2>Simulador automático</h2><pre id="status">Cargando…</pre></div>
 <div class="card"><h2>Control privado</h2><p class="muted">El token solo se usa en esta pestaña y no se guarda.</p><input id="token" type="password" autocomplete="off" placeholder="ADMIN_TOKEN de Cloudflare">
-<div class="grid"><button onclick="admin('/api/tick','POST')">Ejecutar ciclo ahora</button><button id="krakenButton" onclick="admin('/api/kraken/connection','GET')">Comprobar Kraken</button><button onclick="admin('/api/pause','POST')">Pausar motor</button><button onclick="admin('/api/resume','POST')">Reanudar motor</button></div><pre id="adminResult">Sin comprobaciones todavía.</pre></div>
-<p class="warn">Las claves de Kraken nunca se muestran ni se envían al navegador. Las órdenes reales siguen bloqueadas por código.</p>
+<div class="grid"><button onclick="admin('/api/tick','POST')">Ejecutar ciclo ahora</button><button onclick="admin('/api/kraken/diagnostics','GET')">Diagnóstico local</button><button id="krakenButton" onclick="admin('/api/kraken/connection','GET')">Probar conexión Kraken</button><button onclick="admin('/api/pause','POST')">Pausar motor</button><button onclick="admin('/api/resume','POST')">Reanudar motor</button></div><pre id="adminResult">Sin comprobaciones todavía.</pre></div>
+<p class="warn">El diagnóstico local no contacta con Kraken. La prueba de conexión realiza una sola llamada privada. Las órdenes reales siguen bloqueadas por código.</p>
 <script>
 let lockoutTimer;
 async function load(){try{const r=await fetch('/api/status');const d=await r.json();document.getElementById('status').textContent=JSON.stringify(d,null,2)}catch(e){document.getElementById('status').textContent='Error cargando estado'}}
-function startLockout(seconds){clearInterval(lockoutTimer);const button=document.getElementById('krakenButton');let remaining=Math.max(1,Number(seconds)||900);button.disabled=true;const draw=()=>{button.textContent='Kraken bloqueado · '+remaining+' s';remaining-=1;if(remaining<0){clearInterval(lockoutTimer);button.disabled=false;button.textContent='Comprobar Kraken'}};draw();lockoutTimer=setInterval(draw,1000)}
-async function admin(path,method){const token=document.getElementById('token').value;const out=document.getElementById('adminResult');if(!token){out.textContent='Introduce primero el ADMIN_TOKEN.';return}out.textContent='Comprobando…';try{const r=await fetch(path,{method,headers:{Authorization:'Bearer '+token}});const text=await r.text();let data;try{data=JSON.parse(text)}catch{data={status:r.status,response:text}}out.textContent=JSON.stringify(data,null,2);if(data&&data.temporaryLockout)startLockout(data.retryAfterSeconds);if(path!='/api/kraken/connection')load()}catch(e){out.textContent='Error de conexión'}}
+function startLockout(seconds){clearInterval(lockoutTimer);const button=document.getElementById('krakenButton');let remaining=Math.max(1,Number(seconds)||900);button.disabled=true;const draw=()=>{button.textContent='Kraken bloqueado · '+remaining+' s';remaining-=1;if(remaining<0){clearInterval(lockoutTimer);button.disabled=false;button.textContent='Probar conexión Kraken'}};draw();lockoutTimer=setInterval(draw,1000)}
+async function admin(path,method){const token=document.getElementById('token').value;const out=document.getElementById('adminResult');if(!token){out.textContent='Introduce primero el ADMIN_TOKEN.';return}out.textContent='Comprobando…';try{const r=await fetch(path,{method,headers:{Authorization:'Bearer '+token}});const text=await r.text();let data;try{data=JSON.parse(text)}catch{data={status:r.status,response:text}}out.textContent=JSON.stringify(data,null,2);if(data&&data.temporaryLockout)startLockout(data.retryAfterSeconds);if(!path.startsWith('/api/kraken'))load()}catch(e){out.textContent='Error de conexión'}}
 load();setInterval(load,15000)
 </script></main></body></html>`;
   return new Response(html, { headers: { "Content-Type": "text/html; charset=utf-8" } });
@@ -41,16 +41,16 @@ export default {
     if (request.method === "GET" && url.pathname === "/") return dashboard();
     if (request.method === "GET" && url.pathname === "/health") {
       return new Response(
-        JSON.stringify({ ok: true, service: "auto-bolsa-ai", version: "0.3.0", mode: "paper", liveTrading: false }),
+        JSON.stringify({ ok: true, service: "auto-bolsa-ai", version: "0.6.0", mode: "paper", liveTrading: false }),
         { headers: jsonHeaders },
       );
     }
     if (request.method === "GET" && url.pathname === "/api/status") {
       return singleton(env).fetch("https://bot/status");
     }
-    if (request.method === "GET" && url.pathname === "/api/kraken/connection") {
+    if (request.method === "GET" && ["/api/kraken/connection", "/api/kraken/diagnostics"].includes(url.pathname)) {
       if (!isAuthorized(request, env)) return new Response("Unauthorized", { status: 401 });
-      return singleton(env).fetch("https://bot/kraken/connection");
+      return singleton(env).fetch(`https://bot${url.pathname.replace("/api", "")}`);
     }
     if (request.method === "POST" && ["/api/tick", "/api/pause", "/api/resume", "/api/reset"].includes(url.pathname)) {
       if (!isAuthorized(request, env)) return new Response("Unauthorized", { status: 401 });
@@ -58,7 +58,7 @@ export default {
     }
     if (url.pathname.startsWith("/api/live")) {
       return Response.json(
-        { error: "LIVE_TRADING_HARD_DISABLED", message: "La versión 0.3 solo permite simulación y verificación segura de conexión." },
+        { error: "LIVE_TRADING_HARD_DISABLED", message: "La versión 0.6 solo permite simulación y verificación segura de conexión." },
         { status: 403 },
       );
     }
