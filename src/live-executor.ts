@@ -385,7 +385,16 @@ function applyFillDelta(
   }
 }
 
-/** Envía (o reenvía de forma idempotente) una orden `prepared`/`reconciliation_required` al transporte. */
+/**
+ * Envía una orden, exclusivamente si está en `prepared`. NUNCA reenvía una
+ * orden en `reconciliation_required`: ese estado es ambiguo por definición
+ * (no se sabe si el exchange ya la procesó) y solo `retryReconciliation()`
+ * —que localiza por `cl_ord_id`/consulta antes de decidir— puede resolverlo.
+ * Si algún futuro llamador invoca `submitOrder()` directamente sobre una
+ * orden en `reconciliation_required` (saltándose `retryReconciliation`), se
+ * bloquea aquí también: nunca se llama a `transport.createOrder()` en ese
+ * estado, pase lo que pase por encima.
+ */
 export async function submitOrder(
   state: LiveExecutorSnapshot,
   transport: LiveOrderTransport,
@@ -401,7 +410,13 @@ export async function submitOrder(
     return { ok: false, state, order, blockers: ["LIVE_TRADING_ENABLED no está activado"] };
   }
 
-  if (order.status !== "prepared" && order.status !== "reconciliation_required") {
+  if (order.status === "reconciliation_required") {
+    const reason = "submitOrder() no reenvía una orden en reconciliation_required; solo retryReconciliation() puede resolverla";
+    appendAudit(state, "submission_blocked_ambiguous_order", reason, clOrdId, now);
+    return { ok: false, state, order, blockers: [reason] };
+  }
+
+  if (order.status !== "prepared") {
     // Reintento idempotente: la orden ya progresó, no hay nada que reenviar.
     return { ok: true, state, order };
   }
@@ -596,7 +611,13 @@ export async function reconcile(
   return state;
 }
 
-/** Reintenta una orden en `reconciliation_required`: reenvía si nunca obtuvo id remoto, o consulta si sí lo tiene. */
+/**
+ * Reintenta resolver una orden en `reconciliation_required`: si nunca obtuvo
+ * `exchangeOrderId`, la busca por `cl_ord_id`; si ya lo tiene, consulta su
+ * estado. Nunca reenvía la orden ni llama a `transport.createOrder()` — la
+ * única función que puede hacerlo es `submitOrder()`, y esta ni siquiera la
+ * invoca.
+ */
 export async function retryReconciliation(
   state: LiveExecutorSnapshot,
   transport: LiveOrderTransport,

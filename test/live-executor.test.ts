@@ -310,6 +310,36 @@ describe("live executor: never resubmits an order the exchange might already kno
     expect(state.emergencyStopActive).toBe(true);
     expect(state.emergencyStopReason).toMatch(/requiere revisión humana/);
   });
+
+  it("refuses to resend a reconciliation_required order even if submitOrder() is called directly, bypassing retryReconciliation", async () => {
+    const state = readyState();
+    const config = enabledConfig();
+    const transport = new FakeLiveOrderTransport();
+    const prepared = prepareOrder(state, config, buyRequest("direct-submit-bypass"), NOW);
+    if (!prepared.ok) throw new Error("expected prepare to succeed");
+    transport.scriptScenario(prepared.order.clOrdId, { kind: "timeout" });
+
+    const first = await submitOrder(state, transport, config, prepared.order.clOrdId, NOW);
+    expect(first.order.status).toBe("reconciliation_required");
+    const attemptsAfterTimeout = first.order.attempts;
+
+    // Un futuro llamador invoca submitOrder() directamente varias veces sobre
+    // la misma orden ambigua, sin pasar por retryReconciliation.
+    for (let call = 0; call < 3; call += 1) {
+      const result = await submitOrder(state, transport, config, prepared.order.clOrdId, NOW + (call + 1) * 1_000);
+      expect(result.ok).toBe(false);
+      expect(result.order.status).toBe("reconciliation_required");
+    }
+
+    const order = state.orders[prepared.order.clOrdId];
+    // Nunca se volvió a intentar el envío: ni los intentos ni el estado cambian.
+    expect(order?.attempts).toBe(attemptsAfterTimeout);
+    expect(order?.exchangeOrderId).toBeNull();
+    expect(order?.status).toBe("reconciliation_required");
+    const open = await transport.listOpenOrders();
+    const closed = await transport.listClosedOrders();
+    expect(open.length + closed.length).toBe(0);
+  });
 });
 
 describe("live executor: base-asset precision (lot_decimals, not 6-decimal money rounding)", () => {
