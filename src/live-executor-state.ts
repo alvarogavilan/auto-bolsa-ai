@@ -11,11 +11,22 @@ import {
   type LiveExecutorSnapshot,
   type LiveOrderRequest,
 } from "./live-executor";
-import { DEFAULT_PAIR_METADATA, defaultLiveGuardrailConfig, liveTradingEnabledFromEnv } from "./live-guardrails";
+import { defaultLiveGuardrailConfig, liveTradingEnabledFromEnv, type LivePairMetadata } from "./live-guardrails";
+import { fetchLivePairMetadata } from "./live-pair-metadata";
 import { FakeLiveOrderTransport, KrakenLiveOrderTransport, type LiveOrderTransport } from "./live-transport";
 import { BOT_STATE_SINGLETON_NAME, type Env } from "./types";
 
 const STORAGE_KEY = "live-executor-snapshot";
+const PAIR_METADATA_CACHE_KEY = "live-pair-metadata-cache-v1";
+const PAIR_METADATA_TTL_MS = 60 * 60_000;
+
+interface StoredPairMetadata {
+  schemaVersion: "live-pair-metadata-cache-v1";
+  pair: string;
+  fetchedAt: number;
+  expiresAt: number;
+  metadata: Readonly<Record<string, LivePairMetadata>>;
+}
 
 /**
  * Durable Object que persistiría el estado del ejecutor LIVE.
@@ -78,14 +89,43 @@ export class LiveExecutorState extends DurableObject<Env> {
     return new FakeLiveOrderTransport();
   }
 
-  private guardrailConfig() {
+  /**
+   * Obtiene mínimos y precisiones desde AssetPairs y los conserva en Durable
+   * Object storage. Para preparar/enviar una orden se exige información fresca.
+   * Reconciliar o cancelar en emergencia puede usar la última copia conocida si
+   * la API pública cae: una avería de datos nunca debe impedir una salida segura.
+   */
+  private async pairMetadata(
+    pair: string,
+    now: number,
+    allowStale: boolean,
+  ): Promise<Readonly<Record<string, LivePairMetadata>>> {
+    const stored = await this.ctx.storage.get<StoredPairMetadata>(PAIR_METADATA_CACHE_KEY);
+    const matchesPair = stored?.schemaVersion === "live-pair-metadata-cache-v1" && stored.pair === pair;
+
+    if (matchesPair && stored.expiresAt > now) return stored.metadata;
+
+    try {
+      const metadata = await fetchLivePairMetadata(pair);
+      const value: StoredPairMetadata = {
+        schemaVersion: "live-pair-metadata-cache-v1",
+        pair,
+        fetchedAt: now,
+        expiresAt: now + PAIR_METADATA_TTL_MS,
+        metadata,
+      };
+      await this.ctx.storage.put(PAIR_METADATA_CACHE_KEY, value);
+      return metadata;
+    } catch (error) {
+      if (allowStale && matchesPair) return stored.metadata;
+      const message = error instanceof Error ? error.message : "No se pudieron obtener metadatos de Kraken";
+      throw new Error(`LIVE bloqueado por metadatos de mercado no verificables: ${message}`);
+    }
+  }
+
+  private async guardrailConfig(now: number, allowStale = false) {
     const pair = this.env.PAIR || "XBTEUR";
-    // Sin metadatos reales conocidos para el par configurado, no se inventa
-    // un mínimo/precisión arbitrario: se cae al valor de ejemplo documentado
-    // en DEFAULT_PAIR_METADATA (a sincronizar contra AssetPairs antes de un
-    // piloto real) solo si coincide; en cualquier otro caso el par
-    // simplemente no está permitido.
-    const pairMetadata = DEFAULT_PAIR_METADATA[pair] ? { [pair]: DEFAULT_PAIR_METADATA[pair] } : {};
+    const pairMetadata = await this.pairMetadata(pair, now, allowStale);
     return defaultLiveGuardrailConfig({
       liveTradingEnabled: liveTradingEnabledFromEnv(this.env.LIVE_TRADING_ENABLED),
       pairMetadata,
@@ -111,7 +151,7 @@ export class LiveExecutorState extends DurableObject<Env> {
     if (request.method === "POST" && url.pathname === "/prepare") {
       const body = (await request.json()) as LiveOrderRequest;
       const state = await this.read();
-      const result = prepareOrder(state, this.guardrailConfig(), body, now);
+      const result = prepareOrder(state, await this.guardrailConfig(now), body, now);
       await this.write(result.state);
       return Response.json(result, { status: result.ok ? 200 : 409 });
     }
@@ -119,14 +159,20 @@ export class LiveExecutorState extends DurableObject<Env> {
     if (request.method === "POST" && url.pathname === "/submit") {
       const body = (await request.json()) as { clOrdId: string };
       const state = await this.read();
-      const result = await submitOrder(state, this.transport(), this.guardrailConfig(), body.clOrdId, now);
+      const result = await submitOrder(
+        state,
+        this.transport(),
+        await this.guardrailConfig(now),
+        body.clOrdId,
+        now,
+      );
       await this.write(result.state);
       return Response.json(result, { status: result.ok ? 200 : 409 });
     }
 
     if (request.method === "POST" && url.pathname === "/reconcile") {
       const state = await this.read();
-      await reconcile(state, this.transport(), this.guardrailConfig(), now);
+      await reconcile(state, this.transport(), await this.guardrailConfig(now, true), now);
       await this.write(state);
       return Response.json(state);
     }
@@ -134,7 +180,13 @@ export class LiveExecutorState extends DurableObject<Env> {
     if (request.method === "POST" && url.pathname === "/retry") {
       const body = (await request.json()) as { clOrdId: string };
       const state = await this.read();
-      await retryReconciliation(state, this.transport(), this.guardrailConfig(), body.clOrdId, now);
+      await retryReconciliation(
+        state,
+        this.transport(),
+        await this.guardrailConfig(now, true),
+        body.clOrdId,
+        now,
+      );
       await this.write(state);
       return Response.json(state);
     }
@@ -142,7 +194,13 @@ export class LiveExecutorState extends DurableObject<Env> {
     if (request.method === "POST" && url.pathname === "/emergency-cancel-all") {
       const body = (await request.json().catch(() => ({}))) as { reason?: string };
       const state = await this.read();
-      await emergencyCancelAll(state, this.transport(), this.guardrailConfig(), body.reason ?? "Cancelación de emergencia manual", now);
+      await emergencyCancelAll(
+        state,
+        this.transport(),
+        await this.guardrailConfig(now, true),
+        body.reason ?? "Cancelación de emergencia manual",
+        now,
+      );
       await this.write(state);
       return Response.json(state);
     }
