@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   assessKrakenPermissions,
+  fingerprintKrakenCredentials,
   inspectKrakenCredentials,
   normalizeCredential,
   signKrakenRequest,
@@ -56,6 +57,16 @@ describe("Kraken API safety", () => {
     expect(diagnostics.apiSecretBase64Valid).toBe(true);
     expect(diagnostics.apiSecretDecodedBytes).toBe(64);
     expect(JSON.stringify(diagnostics)).not.toContain(officialSecret);
+  });
+
+  it("creates identical fingerprints after iPhone copy artefacts are removed", async () => {
+    const clean = await fingerprintKrakenCredentials("ABCD1234", officialSecret);
+    const copied = await fingerprintKrakenCredentials(" ABCD\u200B1234\n", ` \"${officialSecret}\"\n`);
+    expect(copied).toEqual(clean);
+    expect(clean.apiKeyFingerprint).toHaveLength(16);
+    expect(clean.apiSecretFingerprint).toHaveLength(16);
+    expect(JSON.stringify(clean)).not.toContain("ABCD1234");
+    expect(JSON.stringify(clean)).not.toContain(officialSecret);
   });
 
   it("accepts only the intended non-withdrawal permission set", () => {
