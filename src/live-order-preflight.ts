@@ -57,15 +57,16 @@ export interface RunLiveOrderPreflightOptions {
 export function forceValidateOnlyOrderRequest(
   request: Readonly<KrakenAddOrderRequest>,
 ): KrakenAddOrderRequest {
-  return {
+  const forced: KrakenAddOrderRequest = {
     pair: request.pair,
     type: request.type,
     ordertype: request.ordertype,
     volume: request.volume,
-    price: request.price,
     clOrdId: request.clOrdId,
     validate: true,
   };
+  if (request.price !== undefined) forced.price = request.price;
+  return forced;
 }
 
 /**
