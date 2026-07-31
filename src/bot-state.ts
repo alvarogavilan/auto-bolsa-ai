@@ -8,16 +8,25 @@ import { fetchBalance, fetchOhlc, inspectKrakenCredentials } from "./kraken";
 import { selectMarketObservation } from "./market-evidence";
 import { calculateOperationalHealth } from "./operational-health";
 import { calculatePaperReadiness } from "./paper-readiness";
+import {
+  appendSignalEvidence,
+  emptySignalEvidenceLedger,
+  summarizeSignalEvidence,
+  type SignalEvidenceEntry,
+  type SignalEvidenceLedger,
+  type SignalOutcome,
+} from "./signal-evidence";
 import { calculateIndicators, decide } from "./strategy";
 import type { BotConfig, BotSnapshot, Env, PaperPerformance, PaperTrade } from "./types";
 
 const STORAGE_KEY = "snapshot";
 const DAILY_CHECKPOINTS_KEY = "paper-daily-checkpoints";
+const SIGNAL_EVIDENCE_KEY = "paper-signal-evidence";
 const MAX_DAILY_CHECKPOINTS = 180;
 const KRAKEN_NONCE_KEY = "kraken-last-nonce";
 const KRAKEN_LOCKOUT_UNTIL_KEY = "kraken-lockout-until";
 const KRAKEN_LOCKOUT_MS = 15 * 60_000;
-const VERSION = "0.12.0-paper";
+const VERSION = "0.13.0-paper";
 
 function utcDay(timestamp: number): string {
   return new Date(timestamp).toISOString().slice(0, 10);
@@ -187,6 +196,26 @@ export class BotState extends DurableObject<Env> {
         ? "La evidencia diaria PAPER se conserva en una cadena criptográfica."
         : "El primer cierre diario se registrará automáticamente al cambiar el día UTC.",
     };
+  }
+
+  private async readSignalEvidence(): Promise<SignalEvidenceLedger> {
+    const stored = await this.ctx.storage.get<SignalEvidenceLedger>(SIGNAL_EVIDENCE_KEY);
+    if (!stored || stored.schemaVersion !== "paper-signal-ledger-v1") {
+      return emptySignalEvidenceLedger();
+    }
+
+    const fallback = emptySignalEvidenceLedger();
+    return {
+      ...fallback,
+      ...stored,
+      stats: { ...fallback.stats, ...stored.stats },
+      entries: Array.isArray(stored.entries) ? stored.entries : [],
+    };
+  }
+
+  private async recordSignalEvidence(entry: SignalEvidenceEntry): Promise<void> {
+    const ledger = await this.readSignalEvidence();
+    await this.ctx.storage.put(SIGNAL_EVIDENCE_KEY, appendSignalEvidence(ledger, entry));
   }
 
   private markSuccessfulCycle(snapshot: BotSnapshot, now: number): void {
@@ -480,29 +509,71 @@ export class BotState extends DurableObject<Env> {
       snapshot.config.rsiPeriod,
     );
     const decisionPrice = indicators.price;
+    const hadPositionBefore = snapshot.position !== null;
+    const rawSignal = decide(indicators, hadPositionBefore);
+    let outcome: SignalOutcome = "hold";
+    let finalReason = rawSignal.reason;
 
     if (snapshot.position && decisionPrice <= snapshot.position.stopLoss) {
-      this.sell(snapshot, decisionPrice, now, "Stop loss en vela cerrada");
+      finalReason = "Stop loss en vela cerrada";
+      this.sell(snapshot, decisionPrice, now, finalReason);
+      outcome = "stop-loss-executed";
     } else if (snapshot.position && decisionPrice >= snapshot.position.takeProfit) {
-      this.sell(snapshot, decisionPrice, now, "Take profit en vela cerrada");
+      finalReason = "Take profit en vela cerrada";
+      this.sell(snapshot, decisionPrice, now, finalReason);
+      outcome = "take-profit-executed";
     } else {
       const riskBlock = this.riskBlocked(snapshot);
       if (riskBlock) {
         snapshot.lastDecision = riskBlock;
         snapshot.paused = true;
+        finalReason = riskBlock;
+        outcome = "risk-blocked";
       } else if (this.inCooldown(snapshot, now)) {
         snapshot.lastDecision = "Cooldown de seguridad activo";
+        finalReason = snapshot.lastDecision;
+        outcome = "cooldown-blocked";
+      } else if (rawSignal.action === "buy") {
+        const before = snapshot.performance.buyTrades;
+        this.buy(snapshot, decisionPrice, now, rawSignal.reason);
+        finalReason = snapshot.lastDecision;
+        outcome = snapshot.performance.buyTrades > before ? "buy-executed" : "execution-blocked";
+      } else if (rawSignal.action === "sell") {
+        const before = snapshot.performance.sellTrades;
+        this.sell(snapshot, decisionPrice, now, rawSignal.reason);
+        finalReason = snapshot.lastDecision;
+        outcome = snapshot.performance.sellTrades > before ? "sell-executed" : "execution-blocked";
       } else {
-        const signal = decide(indicators, snapshot.position !== null);
-        if (signal.action === "buy") this.buy(snapshot, decisionPrice, now, signal.reason);
-        else if (signal.action === "sell") this.sell(snapshot, decisionPrice, now, signal.reason);
-        else snapshot.lastDecision = signal.reason;
+        snapshot.lastDecision = rawSignal.reason;
+        finalReason = rawSignal.reason;
+        outcome = "hold";
       }
     }
 
     snapshot.equityEur = this.equity(snapshot, observation.currentPrice);
     snapshot.peakEquityEur = Math.max(snapshot.peakEquityEur, snapshot.equityEur);
     this.updateObservedDrawdown(snapshot);
+
+    await this.recordSignalEvidence({
+      schemaVersion: "paper-signal-evidence-v1",
+      candleTime: observation.latestClosedCandleTime,
+      recordedAt: now,
+      price: decisionPrice,
+      fastEma: indicators.fastEma,
+      slowEma: indicators.slowEma,
+      previousFastEma: indicators.previousFastEma,
+      previousSlowEma: indicators.previousSlowEma,
+      rsi: indicators.rsi,
+      rawSignal: rawSignal.action,
+      rawReason: rawSignal.reason,
+      outcome,
+      finalReason,
+      hadPositionBefore,
+      hasPositionAfter: snapshot.position !== null,
+      equityEur: snapshot.equityEur,
+      cashEur: snapshot.cashEur,
+    });
+
     await this.write(snapshot);
     return snapshot;
   }
@@ -522,6 +593,14 @@ export class BotState extends DurableObject<Env> {
           checkpoints,
           verification: await verifyCheckpointChain(checkpoints),
           retentionDays: MAX_DAILY_CHECKPOINTS,
+          liveTrading: false,
+        });
+      }
+      if (request.method === "GET" && url.pathname === "/signals") {
+        const ledger = await this.readSignalEvidence();
+        return Response.json({
+          ...ledger,
+          summary: summarizeSignalEvidence(ledger),
           liveTrading: false,
         });
       }
@@ -551,14 +630,16 @@ export class BotState extends DurableObject<Env> {
         return Response.json(snapshot);
       }
       if (request.method === "GET" && url.pathname === "/status") {
-        const [snapshot, checkpoints] = await Promise.all([
+        const [snapshot, checkpoints, signalLedger] = await Promise.all([
           this.read(),
           this.readDailyCheckpoints(),
+          this.readSignalEvidence(),
         ]);
         return Response.json({
           ...snapshot,
           operationalHealth: calculateOperationalHealth(snapshot),
           dailyCheckpointSummary: this.dailyCheckpointSummary(checkpoints),
+          signalEvidenceSummary: summarizeSignalEvidence(signalLedger),
         });
       }
       return new Response("Not found", { status: 404 });
