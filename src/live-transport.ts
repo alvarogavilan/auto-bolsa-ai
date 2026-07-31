@@ -1,4 +1,14 @@
-import { addOrder, cancelOrder, closedOrders, fetchBalance, isKrakenOrderRejection, openOrders, queryOrders } from "./kraken";
+import {
+  addOrder,
+  cancelOrder,
+  closedOrders,
+  fetchBalance,
+  isKrakenOrderRejection,
+  openOrders,
+  queryOrders,
+  type KrakenAddOrderRequest,
+  type KrakenAddOrderResult,
+} from "./kraken";
 
 export type LiveOrderSide = "buy" | "sell";
 
@@ -30,6 +40,29 @@ export interface LiveTransportOrderState {
 
 export interface LiveTransportCancelResult {
   cancelled: boolean;
+}
+
+export interface KrakenValidateOnlyOrderCall {
+  request: KrakenAddOrderRequest;
+  apiKey: string;
+  apiSecret: string;
+  nonce: string;
+}
+
+/**
+ * Único adaptador autorizado para el preflight AddOrder. Fuerza `validate=true`
+ * en el mismo módulo que ya concentra el resto de llamadas privadas LIVE y
+ * recibe un nonce emitido por BotState; nunca crea ni calcula su propio nonce.
+ */
+export async function submitKrakenValidateOnlyOrder(
+  call: KrakenValidateOnlyOrderCall,
+): Promise<KrakenAddOrderResult> {
+  return addOrder(
+    { ...call.request, validate: true },
+    call.apiKey,
+    call.apiSecret,
+    call.nonce,
+  );
 }
 
 // Contrato que debe cumplir cualquier transporte de órdenes LIVE. El ejecutor solo
