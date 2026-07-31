@@ -51,6 +51,24 @@ export interface RunLiveOrderPreflightOptions {
 }
 
 /**
+ * Copia exclusivamente los campos permitidos y fuerza `validate:true`.
+ * Aunque un futuro llamador entregue `validate:false`, nunca alcanza Kraken.
+ */
+export function forceValidateOnlyOrderRequest(
+  request: Readonly<KrakenAddOrderRequest>,
+): KrakenAddOrderRequest {
+  return {
+    pair: request.pair,
+    type: request.type,
+    ordertype: request.ordertype,
+    volume: request.volume,
+    price: request.price,
+    clOrdId: request.clOrdId,
+    validate: true,
+  };
+}
+
+/**
  * Pasarela real y deliberadamente separada de `LiveOrderTransport.createOrder`.
  * El indicador `validate` se fija aquí y no procede del llamador. Esta clase no
  * está conectada a ninguna ruta, cron o Durable Object en producción.
@@ -65,16 +83,7 @@ export class KrakenValidateOnlyOrderGateway implements ValidateOnlyOrderGateway 
   async validate(request: Readonly<KrakenAddOrderRequest>): Promise<KrakenAddOrderResult> {
     const nonce = await this.nextNonce();
     return addOrder(
-      {
-        pair: request.pair,
-        type: request.type,
-        ordertype: request.ordertype,
-        volume: request.volume,
-        price: request.price,
-        clOrdId: request.clOrdId,
-        // Invariante de seguridad: el llamador no puede desactivar esta marca.
-        validate: true,
-      },
+      forceValidateOnlyOrderRequest(request),
       this.apiKey,
       this.apiSecret,
       nonce,
@@ -143,16 +152,16 @@ export async function runLiveOrderPreflight(
     };
   }
 
-  const clOrdId = (options.clOrdIdFactory ?? crypto.randomUUID)();
-  const request: KrakenAddOrderRequest = {
+  const clOrdId = options.clOrdIdFactory ? options.clOrdIdFactory() : crypto.randomUUID();
+  const request = forceValidateOnlyOrderRequest({
     pair: intent.pair,
     type: intent.side,
     ordertype: "limit",
     volume: String(intent.volumeBase),
     price: String(intent.limitPrice),
     clOrdId,
-    validate: true,
-  };
+    validate: false,
+  });
 
   try {
     const response = await gateway.validate(request);
