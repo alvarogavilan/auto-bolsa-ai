@@ -76,6 +76,10 @@ export interface BotSnapshot {
   peakEquityEur: number;
   dayStartEquityEur: number;
   dayKey: string;
+  paperStartedAt: number;
+  ticksObserved: number;
+  errorsObserved: number;
+  maxObservedDrawdownPct: number;
   lastPrice: number | null;
   lastTickAt: number | null;
   lastTradeAt: number | null;
