@@ -32,6 +32,8 @@ export interface PaperDailyCheckpoint {
 export interface CheckpointChainVerification {
   valid: boolean;
   checked: number;
+  anchoredAtSequence: number | null;
+  anchorPreviousHash: string | null;
   brokenAtSequence: number | null;
   latestHash: string | null;
 }
@@ -95,8 +97,12 @@ export async function createDailyCheckpoint(
 export async function verifyCheckpointChain(
   checkpoints: PaperDailyCheckpoint[],
 ): Promise<CheckpointChainVerification> {
-  let previousHash: string | null = null;
-  let expectedSequence = 1;
+  const first = checkpoints[0] ?? null;
+  const anchoredAtSequence = first?.sequence ?? null;
+  const anchorPreviousHash = first?.previousHash ?? null;
+  let previousHash = anchorPreviousHash;
+  let expectedSequence = anchoredAtSequence ?? 1;
+  let checked = 0;
 
   for (const checkpoint of checkpoints) {
     const expectedHash = await hashPayload(payloadOf(checkpoint));
@@ -108,7 +114,9 @@ export async function verifyCheckpointChain(
     if (!valid) {
       return {
         valid: false,
-        checked: expectedSequence - 1,
+        checked,
+        anchoredAtSequence,
+        anchorPreviousHash,
         brokenAtSequence: checkpoint.sequence,
         latestHash: previousHash,
       };
@@ -116,11 +124,14 @@ export async function verifyCheckpointChain(
 
     previousHash = checkpoint.hash;
     expectedSequence += 1;
+    checked += 1;
   }
 
   return {
     valid: true,
-    checked: checkpoints.length,
+    checked,
+    anchoredAtSequence,
+    anchorPreviousHash,
     brokenAtSequence: null,
     latestHash: previousHash,
   };
