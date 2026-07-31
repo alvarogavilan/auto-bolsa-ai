@@ -1,9 +1,12 @@
 import { DurableObject } from "cloudflare:workers";
-import { fetchOhlc } from "./kraken";
+import { assessKrakenPermissions, fetchApiKeyInfo, fetchOhlc } from "./kraken";
 import { calculateIndicators, decide } from "./strategy";
 import type { BotConfig, BotSnapshot, Env, PaperTrade } from "./types";
 
 const STORAGE_KEY = "snapshot";
+const KRAKEN_NONCE_KEY = "kraken-last-nonce";
+const KRAKEN_LOCKOUT_UNTIL_KEY = "kraken-lockout-until";
+const KRAKEN_LOCKOUT_MS = 15 * 60_000;
 const VERSION = "0.1.0-paper";
 
 function utcDay(timestamp: number): string {
@@ -65,6 +68,101 @@ export class BotState extends DurableObject<Env> {
 
   private async write(snapshot: BotSnapshot): Promise<void> {
     await this.ctx.storage.put(STORAGE_KEY, snapshot);
+  }
+
+  private async nextKrakenNonce(): Promise<string> {
+    const stored = await this.ctx.storage.get<string>(KRAKEN_NONCE_KEY);
+    const last = stored ? BigInt(stored) : 0n;
+    const timeBased = BigInt(Date.now()) * 1000n;
+    const next = timeBased > last ? timeBased : last + 1n;
+    const value = next.toString();
+    await this.ctx.storage.put(KRAKEN_NONCE_KEY, value);
+    return value;
+  }
+
+  private async krakenConnection(): Promise<Response> {
+    if (!this.env.KRAKEN_API_KEY || !this.env.KRAKEN_API_SECRET) {
+      return Response.json(
+        {
+          configured: false,
+          connected: false,
+          safePermissions: false,
+          message: "Faltan los secretos KRAKEN_API_KEY y KRAKEN_API_SECRET en Cloudflare.",
+          liveTrading: false,
+        },
+        { status: 412 },
+      );
+    }
+
+    const now = Date.now();
+    const lockoutUntil = (await this.ctx.storage.get<number>(KRAKEN_LOCKOUT_UNTIL_KEY)) ?? 0;
+    if (lockoutUntil > now) {
+      return Response.json(
+        {
+          configured: true,
+          connected: false,
+          safePermissions: false,
+          temporaryLockout: true,
+          retryAt: new Date(lockoutUntil).toISOString(),
+          retryAfterSeconds: Math.ceil((lockoutUntil - now) / 1000),
+          message: "Comprobación bloqueada localmente para no prolongar el bloqueo temporal de Kraken.",
+          liveTrading: false,
+        },
+        { status: 429 },
+      );
+    }
+
+    try {
+      const nonce = await this.nextKrakenNonce();
+      const info = await fetchApiKeyInfo(this.env.KRAKEN_API_KEY, this.env.KRAKEN_API_SECRET, nonce);
+      const assessment = assessKrakenPermissions(info.permissions);
+      await this.ctx.storage.delete(KRAKEN_LOCKOUT_UNTIL_KEY);
+      return Response.json({
+        configured: true,
+        connected: true,
+        safePermissions: assessment.safe,
+        apiKeyName: info.apiKeyName,
+        permissions: info.permissions,
+        missingPermissions: assessment.missing,
+        forbiddenPermissions: assessment.forbidden,
+        ipRestrictionEnabled: info.ipAllowlist.length > 0,
+        expiresAt: info.validUntil && info.validUntil !== "0" ? info.validUntil : null,
+        liveTrading: false,
+        message: assessment.safe
+          ? "Conexión válida y permisos seguros. El trading real continúa bloqueado."
+          : "Conexión válida, pero los permisos no coinciden con la política segura.",
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Kraken connection failed";
+      if (message.includes("EGeneral:Temporary lockout")) {
+        const retryAt = Date.now() + KRAKEN_LOCKOUT_MS;
+        await this.ctx.storage.put(KRAKEN_LOCKOUT_UNTIL_KEY, retryAt);
+        return Response.json(
+          {
+            configured: true,
+            connected: false,
+            safePermissions: false,
+            temporaryLockout: true,
+            retryAt: new Date(retryAt).toISOString(),
+            retryAfterSeconds: Math.ceil(KRAKEN_LOCKOUT_MS / 1000),
+            message: "Kraken ha aplicado un bloqueo temporal. No se enviarán más llamadas durante 15 minutos.",
+            liveTrading: false,
+          },
+          { status: 429 },
+        );
+      }
+
+      return Response.json(
+        {
+          configured: true,
+          connected: false,
+          safePermissions: false,
+          error: message,
+          liveTrading: false,
+        },
+        { status: 502 },
+      );
+    }
   }
 
   private equity(snapshot: BotSnapshot, price: number): number {
@@ -210,6 +308,9 @@ export class BotState extends DurableObject<Env> {
     try {
       if (request.method === "POST" && url.pathname === "/tick") {
         return Response.json(await this.tick());
+      }
+      if (request.method === "GET" && url.pathname === "/kraken/connection") {
+        return this.krakenConnection();
       }
       if (request.method === "POST" && url.pathname === "/pause") {
         const snapshot = await this.read();
