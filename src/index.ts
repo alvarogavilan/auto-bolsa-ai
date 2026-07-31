@@ -25,10 +25,10 @@ function dashboard(): Response {
 <title>Auto Bolsa AI</title><style>
 :root{color-scheme:dark}body{font-family:-apple-system,BlinkMacSystemFont,sans-serif;background:#0b1020;color:#fff;margin:0;padding:22px}main{max-width:760px;margin:auto}.card{background:#151c32;border:1px solid #2b3659;border-radius:18px;padding:18px;margin:14px 0}.ok{color:#5ee6a8}.warn{color:#ffd166}.danger{color:#ff8585}.muted{color:#aeb8d4}pre{white-space:pre-wrap;word-break:break-word;font-size:13px}button,input{font:inherit;border-radius:12px}button{padding:12px 14px;border:0;font-weight:700;margin:5px 5px 5px 0;background:#eef2ff;color:#10172c}button:disabled{opacity:.55}input{box-sizing:border-box;width:100%;padding:13px;border:1px solid #405078;background:#0e1529;color:#fff;margin:8px 0}.grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}.divider{border-top:1px solid #2b3659;margin:18px 0}@media(max-width:520px){.grid{grid-template-columns:1fr}}</style></head>
 <body><main><h1>Auto Bolsa AI</h1><p class="ok">Modo PAPER obligatorio · Trading real bloqueado</p>
-<div class="card"><h2>Expediente PAPER</h2><p class="muted">La app exige días, ciclos, operaciones y métricas mínimas antes de permitir siquiera una revisión humana.</p><pre id="readiness">Cargando…</pre></div>
+<div class="card"><h2>Expediente PAPER</h2><p class="muted">La app exige días, velas cerradas, operaciones y métricas mínimas antes de permitir siquiera una revisión humana.</p><pre id="readiness">Cargando…</pre></div>
 <div class="card"><h2>Simulador automático</h2><pre id="status">Cargando…</pre></div>
 <div class="card"><h2>Control privado</h2><p class="muted">El token solo se usa en esta pestaña y no se guarda.</p><input id="token" type="password" autocomplete="off" placeholder="ADMIN_TOKEN de Cloudflare">
-<div class="grid"><button onclick="admin('/api/tick','POST')">Ejecutar ciclo ahora</button><button onclick="admin('/api/kraken/diagnostics','GET')">Diagnóstico local</button><button id="krakenButton" onclick="admin('/api/kraken/connection','GET')">Probar conexión Kraken</button><button id="permissionButton" onclick="admin('/api/kraken/permissions','GET')">Auditar permisos Kraken</button><button onclick="admin('/api/pause','POST')">Pausar motor</button><button onclick="admin('/api/resume','POST')">Reanudar motor</button></div><pre id="adminResult">Sin comprobaciones todavía.</pre>
+<div class="grid"><button onclick="admin('/api/tick','POST')">Ejecutar ciclo ahora</button><button onclick="admin('/api/checkpoints','GET')">Verificar registro diario</button><button onclick="admin('/api/kraken/diagnostics','GET')">Diagnóstico local</button><button id="krakenButton" onclick="admin('/api/kraken/connection','GET')">Probar conexión Kraken</button><button id="permissionButton" onclick="admin('/api/kraken/permissions','GET')">Auditar permisos Kraken</button><button onclick="admin('/api/pause','POST')">Pausar motor</button><button onclick="admin('/api/resume','POST')">Reanudar motor</button></div><pre id="adminResult">Sin comprobaciones todavía.</pre>
 <div class="divider"></div><h3>Comparar la pareja V2 sin enviarla</h3><p class="muted">Pega aquí la clave pública y el secreto V2. El navegador los compara mediante SHA-256; nunca se mandan al servidor y los campos se borran al terminar.</p>
 <input id="compareKey" type="password" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="Clave pública V2">
 <input id="compareSecret" type="password" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="Secreto privado V2">
@@ -54,7 +54,7 @@ export default {
     if (request.method === "GET" && url.pathname === "/") return dashboard();
     if (request.method === "GET" && url.pathname === "/health") {
       return new Response(
-        JSON.stringify({ ok: true, service: "auto-bolsa-ai", version: "0.9.0", mode: "paper", liveTrading: false }),
+        JSON.stringify({ ok: true, service: "auto-bolsa-ai", version: "0.12.0", mode: "paper", liveTrading: false }),
         { headers: jsonHeaders },
       );
     }
@@ -63,6 +63,10 @@ export default {
     }
     if (request.method === "GET" && url.pathname === "/api/readiness") {
       return singleton(env).fetch("https://bot/readiness");
+    }
+    if (request.method === "GET" && url.pathname === "/api/checkpoints") {
+      if (!isAuthorized(request, env)) return new Response("Unauthorized", { status: 401 });
+      return singleton(env).fetch("https://bot/checkpoints");
     }
     if (request.method === "GET" && url.pathname === "/api/kraken/fingerprints") {
       if (!isAuthorized(request, env)) return new Response("Unauthorized", { status: 401 });
@@ -121,7 +125,7 @@ export default {
     }
     if (url.pathname.startsWith("/api/live")) {
       return Response.json(
-        { error: "LIVE_TRADING_HARD_DISABLED", message: "La versión 0.9 solo permite simulación, auditorías y evaluación PAPER." },
+        { error: "LIVE_TRADING_HARD_DISABLED", message: "La versión 0.12 solo permite simulación, auditorías, trazabilidad y evaluación PAPER." },
         { status: 403 },
       );
     }
