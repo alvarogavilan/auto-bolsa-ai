@@ -24,15 +24,15 @@ function pair(overrides: Partial<KrakenAssetPair> = {}): KrakenAssetPair {
 
 function ticker(overrides: Partial<KrakenTicker> = {}): KrakenTicker {
   return {
-    ask: 100_010,
-    bid: 100_000,
-    last: 100_005,
+    ask: 60_010,
+    bid: 60_000,
+    last: 60_005,
     volume24h: 1_000,
-    vwap24h: 99_000,
+    vwap24h: 59_000,
     trades24h: 30_000,
-    low24h: 96_000,
-    high24h: 103_000,
-    open24h: 98_000,
+    low24h: 56_000,
+    high24h: 63_000,
+    open24h: 58_000,
     ...overrides,
   };
 }
@@ -43,7 +43,8 @@ describe("Kraken EUR market universe", () => {
 
     expect(candidate.base).toBe("BTC");
     expect(candidate.maximumPaperAllocationEur).toBe(10);
-    expect(candidate.estimatedOrderMinimumEur).toBeGreaterThanOrEqual(10);
+    expect(candidate.estimatedOrderMinimumEur).toBeGreaterThan(6);
+    expect(candidate.estimatedOrderMinimumEur).toBeLessThan(10);
     expect(candidate.takerRoundTripCostPct).toBeGreaterThan(0.009);
     expect(candidate.fastEligible).toBe(true);
     expect(candidate.capitalFit).toBe(true);
