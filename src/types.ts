@@ -50,6 +50,18 @@ export interface PaperTrade {
   pnlEur?: number;
 }
 
+export interface PaperPerformance {
+  buyTrades: number;
+  sellTrades: number;
+  closedTrades: number;
+  winningTrades: number;
+  losingTrades: number;
+  grossProfitEur: number;
+  grossLossEur: number;
+  netPnlEur: number;
+  totalFeesEur: number;
+}
+
 export interface BotConfig {
   pair: string;
   fastPeriod: number;
@@ -77,13 +89,19 @@ export interface BotSnapshot {
   dayStartEquityEur: number;
   dayKey: string;
   paperStartedAt: number;
+  evidenceStartedAt: number;
+  evidenceMethod: "closed-15m-candles-v1";
   ticksObserved: number;
+  uniqueClosedCandlesObserved: number;
+  duplicateCandleSkips: number;
   errorsObserved: number;
   maxObservedDrawdownPct: number;
+  lastClosedCandleTime: number | null;
   lastPrice: number | null;
   lastTickAt: number | null;
   lastTradeAt: number | null;
   lastDecision: string;
   config: BotConfig;
+  performance: PaperPerformance;
   trades: PaperTrade[];
 }
