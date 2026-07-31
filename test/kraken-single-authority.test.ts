@@ -11,10 +11,14 @@ const SRC_DIR = join(process.cwd(), "src");
 // arriesga desordenar la clave y disparar el bloqueo temporal de Kraken.
 const NONCE_AUTHORITY_FILE = "bot-state.ts";
 const NONCE_PURE_FUNCTION_FILE = "kraken-nonce.ts";
-// Funciones que firman/envían una llamada privada a Kraken. Fuera de
-// bot-state.ts (la autoridad) y live-transport.ts (que recibe el nonce ya
-// emitido por esa autoridad, nunca lo calcula), nada debería llamarlas.
-const PRIVATE_KRAKEN_CALL_SITES = new Set(["bot-state.ts", "live-transport.ts"]);
+// Funciones que firman/envían una llamada privada a Kraken. Los únicos puntos
+// autorizados son la autoridad existente, el transporte LIVE encapsulado y el
+// preflight validate-only aislado. Ninguno calcula el nonce por su cuenta.
+const PRIVATE_KRAKEN_CALL_SITES = new Set([
+  "bot-state.ts",
+  "live-transport.ts",
+  "live-order-preflight.ts",
+]);
 const PRIVATE_KRAKEN_FUNCTIONS = [
   "fetchApiKeyInfo",
   "fetchBalance",
@@ -63,5 +67,13 @@ describe("Kraken single nonce authority (architectural)", () => {
       }
     }
     expect(offenders).toEqual([]);
+  });
+
+  it("keeps the extra addOrder call site strictly validate-only", () => {
+    const content = read("live-order-preflight.ts");
+    expect(content).toMatch(/function\s+forceValidateOnlyOrderRequest/);
+    expect(content).toMatch(/validate:\s*true/);
+    expect(content).toMatch(/return\s+addOrder\s*\(\s*forceValidateOnlyOrderRequest\(request\)/s);
+    expect(content).not.toMatch(/LiveOrderTransport/);
   });
 });
