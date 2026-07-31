@@ -7,12 +7,17 @@ import {
 } from "./kraken";
 import { fetchAllTickers, fetchTradableAssetPairs } from "./kraken-markets";
 import { fetchPreTradeBook } from "./kraken-pretrade";
+import { LiveExecutorState } from "./live-executor-state";
 import { buildMarketUniverse, type MarketCandidate, type MarketUniverse } from "./market-universe";
 import { type FastEntryGate } from "./research-lab";
 import { ResearchLabState } from "./research-lab-state";
 import type { Env } from "./types";
 
-export { BotState, ResearchLabState };
+// LiveExecutorState se exporta para que Cloudflare pueda instanciar el Durable
+// Object declarado en wrangler.jsonc, pero ninguna ruta de este fichero lo invoca:
+// no existe ningún `env.LIVE_EXECUTOR.get(...)` más abajo. Las rutas `/api/live*`
+// siguen devolviendo 403 sin excepción, igual que antes de esta clase existir.
+export { BotState, ResearchLabState, LiveExecutorState };
 
 const jsonHeaders = { "Content-Type": "application/json; charset=utf-8" };
 const MARKET_CACHE_TTL_SECONDS = 60 * 60;

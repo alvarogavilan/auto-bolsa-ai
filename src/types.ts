@@ -1,12 +1,16 @@
 export interface Env {
   BOT_STATE: DurableObjectNamespace;
   RESEARCH_LAB: DurableObjectNamespace;
+  LIVE_EXECUTOR: DurableObjectNamespace;
   TRADING_MODE: string;
   PAIR: string;
   INITIAL_CASH_EUR: string;
   ADMIN_TOKEN?: string;
   KRAKEN_API_KEY?: string;
   KRAKEN_API_SECRET?: string;
+  // Interruptor estructural del ejecutor LIVE. Debe permanecer ausente o "false":
+  // ninguna ruta del Worker lo lee para servir tráfico real. Ver docs/live-executor.md.
+  LIVE_TRADING_ENABLED?: string;
 }
 
 export type Side = "buy" | "sell";

@@ -13,6 +13,7 @@ Motor de trading automatizado para Kraken Spot, con simulación, gestión estric
 - Límite de pérdida diaria: 1%.
 - Drawdown máximo: 5%.
 - Sin margen, futuros, apalancamiento, martingala ni retiradas.
+- Existe un ejecutor LIVE encapsulado y permanentemente desactivado (`LIVE_TRADING_ENABLED` ausente): ver [docs/live-executor.md](docs/live-executor.md).
 
 ## Arquitectura
 
