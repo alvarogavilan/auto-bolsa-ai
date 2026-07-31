@@ -1,5 +1,4 @@
 import {
-  addOrder,
   isKrakenOrderRejection,
   type KrakenAddOrderRequest,
   type KrakenAddOrderResult,
@@ -8,6 +7,10 @@ import {
   validateOrderIntent,
   type LivePairMetadata,
 } from "./live-guardrails";
+import {
+  submitKrakenValidateOnlyOrder,
+  type KrakenValidateOnlyOrderCall,
+} from "./live-transport";
 
 export const PREFLIGHT_MAX_NOTIONAL_EUR = 5;
 
@@ -19,13 +22,7 @@ export interface LiveOrderPreflightIntent {
   notionalEur: number;
 }
 
-export interface ValidateOnlyKrakenCall {
-  request: KrakenAddOrderRequest;
-  apiKey: string;
-  apiSecret: string;
-  nonce: string;
-}
-
+export type ValidateOnlyKrakenCall = KrakenValidateOnlyOrderCall;
 export type ValidateOnlySubmitter = (call: ValidateOnlyKrakenCall) => Promise<KrakenAddOrderResult>;
 
 export interface LiveOrderPreflightResult {
@@ -56,10 +53,6 @@ export interface RunPreflightOptions {
   now?: number;
   submit?: ValidateOnlySubmitter;
 }
-
-const realValidateOnlySubmitter: ValidateOnlySubmitter = async ({ request, apiKey, apiSecret, nonce }) => {
-  return addOrder({ ...request, validate: true }, apiKey, apiSecret, nonce);
-};
 
 function validateIntent(intent: LiveOrderPreflightIntent, metadata: LivePairMetadata): string[] {
   const blockers = validateOrderIntent(
@@ -108,7 +101,7 @@ export async function runValidateOnlyOrderPreflight(
     validate: true,
   };
   const checkedAt = options.now ?? Date.now();
-  const submit = options.submit ?? realValidateOnlySubmitter;
+  const submit = options.submit ?? submitKrakenValidateOnlyOrder;
 
   try {
     const result = await submit({
