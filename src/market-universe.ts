@@ -1,4 +1,4 @@
-import type { KrakenAssetPair, KrakenTicker } from "./kraken";
+import type { KrakenAssetPair, KrakenTicker } from "./kraken-markets";
 
 export type ResearchLaneId = "fast" | "intraday" | "swing";
 
