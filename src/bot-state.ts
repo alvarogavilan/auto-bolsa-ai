@@ -1,5 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
 import { fetchBalance, fetchOhlc, inspectKrakenCredentials } from "./kraken";
+import { calculatePaperReadiness } from "./paper-readiness";
 import { calculateIndicators, decide } from "./strategy";
 import type { BotConfig, BotSnapshot, Env, PaperTrade } from "./types";
 
@@ -7,7 +8,7 @@ const STORAGE_KEY = "snapshot";
 const KRAKEN_NONCE_KEY = "kraken-last-nonce";
 const KRAKEN_LOCKOUT_UNTIL_KEY = "kraken-lockout-until";
 const KRAKEN_LOCKOUT_MS = 15 * 60_000;
-const VERSION = "0.1.0-paper";
+const VERSION = "0.9.0-paper";
 
 function utcDay(timestamp: number): string {
   return new Date(timestamp).toISOString().slice(0, 10);
@@ -48,6 +49,10 @@ function initialSnapshot(env: Env): BotSnapshot {
     peakEquityEur: initialCash,
     dayStartEquityEur: initialCash,
     dayKey: utcDay(now),
+    paperStartedAt: now,
+    ticksObserved: 0,
+    errorsObserved: 0,
+    maxObservedDrawdownPct: 0,
     lastPrice: null,
     lastTickAt: null,
     lastTradeAt: null,
@@ -63,11 +68,32 @@ export class BotState extends DurableObject<Env> {
   }
 
   private async read(): Promise<BotSnapshot> {
-    return (await this.ctx.storage.get<BotSnapshot>(STORAGE_KEY)) ?? initialSnapshot(this.env);
+    const fallback = initialSnapshot(this.env);
+    const stored = await this.ctx.storage.get<Partial<BotSnapshot>>(STORAGE_KEY);
+    if (!stored) return fallback;
+
+    return {
+      ...fallback,
+      ...stored,
+      version: VERSION,
+      mode: "paper",
+      paperStartedAt: stored.paperStartedAt ?? stored.lastTickAt ?? Date.now(),
+      ticksObserved: stored.ticksObserved ?? 0,
+      errorsObserved: stored.errorsObserved ?? 0,
+      maxObservedDrawdownPct: stored.maxObservedDrawdownPct ?? 0,
+      config: { ...fallback.config, ...(stored.config ?? {}) },
+      trades: Array.isArray(stored.trades) ? stored.trades : [],
+    };
   }
 
   private async write(snapshot: BotSnapshot): Promise<void> {
     await this.ctx.storage.put(STORAGE_KEY, snapshot);
+  }
+
+  private updateObservedDrawdown(snapshot: BotSnapshot): void {
+    if (snapshot.peakEquityEur <= 0) return;
+    const current = Math.max(0, (snapshot.peakEquityEur - snapshot.equityEur) / snapshot.peakEquityEur);
+    snapshot.maxObservedDrawdownPct = Math.max(snapshot.maxObservedDrawdownPct, current);
   }
 
   private async nextKrakenNonce(): Promise<string> {
@@ -165,11 +191,11 @@ export class BotState extends DurableObject<Env> {
         connected: true,
         authenticationEndpoint: "Balance",
         safePermissions: null,
-        permissionAudit: "pending",
+        permissionAudit: "completed-separately",
         eurBalance: Number.isFinite(eurParsed) ? eurParsed : null,
         nonZeroAssetCount: Object.values(balances).filter((value) => Number(value) > 0).length,
         liveTrading: false,
-        message: "Autenticación válida. La auditoría automática de permisos se hará en un paso separado; el trading real continúa bloqueado.",
+        message: "Autenticación válida. El trading real continúa bloqueado.",
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Kraken connection failed";
@@ -205,10 +231,14 @@ export class BotState extends DurableObject<Env> {
   }
 
   private riskBlocked(snapshot: BotSnapshot): string | null {
-    const dailyLoss = (snapshot.dayStartEquityEur - snapshot.equityEur) / snapshot.dayStartEquityEur;
-    if (dailyLoss >= snapshot.config.maxDailyLossPct) return "Límite de pérdida diaria alcanzado";
-    const drawdown = (snapshot.peakEquityEur - snapshot.equityEur) / snapshot.peakEquityEur;
-    if (drawdown >= snapshot.config.maxDrawdownPct) return "Límite de drawdown alcanzado";
+    if (snapshot.dayStartEquityEur > 0) {
+      const dailyLoss = (snapshot.dayStartEquityEur - snapshot.equityEur) / snapshot.dayStartEquityEur;
+      if (dailyLoss >= snapshot.config.maxDailyLossPct) return "Límite de pérdida diaria alcanzado";
+    }
+    if (snapshot.peakEquityEur > 0) {
+      const drawdown = (snapshot.peakEquityEur - snapshot.equityEur) / snapshot.peakEquityEur;
+      if (drawdown >= snapshot.config.maxDrawdownPct) return "Límite de drawdown alcanzado";
+    }
     return null;
   }
 
@@ -303,6 +333,7 @@ export class BotState extends DurableObject<Env> {
       snapshot.config.rsiPeriod,
     );
 
+    snapshot.ticksObserved += 1;
     snapshot.lastPrice = indicators.price;
     snapshot.lastTickAt = now;
     snapshot.equityEur = this.equity(snapshot, indicators.price);
@@ -329,6 +360,7 @@ export class BotState extends DurableObject<Env> {
 
     snapshot.equityEur = this.equity(snapshot, indicators.price);
     snapshot.peakEquityEur = Math.max(snapshot.peakEquityEur, snapshot.equityEur);
+    this.updateObservedDrawdown(snapshot);
     await this.write(snapshot);
     return snapshot;
   }
@@ -338,6 +370,9 @@ export class BotState extends DurableObject<Env> {
     try {
       if (request.method === "POST" && url.pathname === "/tick") {
         return Response.json(await this.tick());
+      }
+      if (request.method === "GET" && url.pathname === "/readiness") {
+        return Response.json(calculatePaperReadiness(await this.read()));
       }
       if (request.method === "GET" && url.pathname === "/kraken/diagnostics") {
         return this.krakenDiagnostics();
@@ -373,6 +408,7 @@ export class BotState extends DurableObject<Env> {
       const snapshot = await this.read();
       snapshot.lastTickAt = Date.now();
       snapshot.lastDecision = `ERROR: ${message}`;
+      if (url.pathname === "/tick") snapshot.errorsObserved += 1;
       await this.write(snapshot);
       return Response.json({ error: message, snapshot }, { status: 500 });
     }
