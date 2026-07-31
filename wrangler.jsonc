@@ -13,6 +13,10 @@
       {
         "name": "BOT_STATE",
         "class_name": "BotState"
+      },
+      {
+        "name": "RESEARCH_LAB",
+        "class_name": "ResearchLabState"
       }
     ]
   },
@@ -20,6 +24,10 @@
     {
       "tag": "v1",
       "new_sqlite_classes": ["BotState"]
+    },
+    {
+      "tag": "v2",
+      "new_sqlite_classes": ["ResearchLabState"]
     }
   ],
   "triggers": {
