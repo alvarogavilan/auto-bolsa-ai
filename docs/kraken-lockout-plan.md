@@ -1,1 +1,0 @@
-Temporary working note. This file will be replaced by the implementation PR.
