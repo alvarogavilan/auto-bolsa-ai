@@ -17,6 +17,18 @@ describe("Kraken API safety", () => {
     );
   });
 
+  it("signs the JSON body required by GetApiKeyInfo", async () => {
+    const signature = await signKrakenRequest(
+      "/0/private/GetApiKeyInfo",
+      "1616492376594",
+      '{"nonce":1616492376594}',
+      officialSecret,
+    );
+    expect(signature).toBe(
+      "Y+PfSbsXlj0sbAZDcyVp1igUnTeH91+HlgIEpJPjm/aBixgDgGhE06PvYLTJcj4blYBia7u1jnzYJXwj2zTODA==",
+    );
+  });
+
   it("normalizes spaces and accidental quotes around a copied API secret", async () => {
     const signature = await signKrakenRequest(
       "/0/private/AddOrder",
