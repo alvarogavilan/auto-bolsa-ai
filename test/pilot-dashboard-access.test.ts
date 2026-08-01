@@ -98,24 +98,27 @@ describe("authenticated pilot dashboard route", () => {
     expect(html).toContain("document.getElementById('runPreflightButton').style.display=clOrdId?'inline-block':'none'");
   });
 
-  it("connects /pilot and preserves permanent submission blocks", () => {
-    const index = readFileSync(join(ROOT, "src/index.ts"), "utf8");
+  it("connects /pilot through the fire-drill wrapper and preserves permanent submission blocks", () => {
+    const wrapper = readFileSync(join(ROOT, "src/index.ts"), "utf8");
+    const indexCore = readFileSync(join(ROOT, "src/index-core.ts"), "utf8");
 
-    expect(index).toContain('url.pathname === "/pilot"');
-    expect(index).toContain("return authenticatedPilotDashboard()");
-    expect(index).toContain('url.pathname === "/api/pilot/prepare-validation"');
-    expect(index).toContain('url.pathname === "/api/pilot/submit"');
-    expect(index).toContain("PILOT_SUBMISSION_NOT_ARMED");
-    expect(index).toContain('url.pathname.startsWith("/api/live")');
-    expect(index).toContain("LIVE_TRADING_HARD_DISABLED");
+    expect(wrapper).toContain('url.pathname === "/pilot"');
+    expect(wrapper).toContain("return fireDrillPilotDashboard()");
+    expect(indexCore).toContain('url.pathname === "/api/pilot/prepare-validation"');
+    expect(indexCore).toContain('url.pathname === "/api/pilot/submit"');
+    expect(indexCore).toContain("PILOT_SUBMISSION_NOT_ARMED");
+    expect(indexCore).toContain('url.pathname.startsWith("/api/live")');
+    expect(indexCore).toContain("LIVE_TRADING_HARD_DISABLED");
   });
 
   it("does not add the pilot runtime to scheduled execution", () => {
-    const index = readFileSync(join(ROOT, "src/index.ts"), "utf8");
-    const scheduled = index.slice(index.indexOf("async scheduled"));
+    const wrapper = readFileSync(join(ROOT, "src/index.ts"), "utf8");
+    const indexCore = readFileSync(join(ROOT, "src/index-core.ts"), "utf8");
+    const scheduled = indexCore.slice(indexCore.indexOf("async scheduled"));
 
     expect(scheduled).not.toContain("liveExecutorState(");
     expect(scheduled).not.toContain("/api/pilot");
     expect(scheduled).not.toContain("authenticatedPilotDashboard");
+    expect(wrapper).toContain("return coreWorker.scheduled(controller, env, ctx)");
   });
 });
