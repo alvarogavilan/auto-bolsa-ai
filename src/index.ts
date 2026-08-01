@@ -228,7 +228,7 @@ async function runResearchLab(env: Env): Promise<Response> {
 }
 
 async function forwardPilotRequest(request: Request, env: Env, targetPath: string): Promise<Response> {
-  const body = request.method === "GET" || request.method === "HEAD" ? undefined : await request.text();
+  const body = request.method === "GET" || request.method === "HEAD" ? null : await request.text();
   return liveExecutorState(env).fetch(`https://live${targetPath}`, {
     method: request.method,
     headers: { "Content-Type": request.headers.get("Content-Type") ?? "application/json" },
