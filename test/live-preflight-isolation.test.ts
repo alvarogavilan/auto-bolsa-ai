@@ -7,13 +7,16 @@ function read(path: string): string {
 }
 
 describe("dormant validate-only preflight isolation", () => {
-  it("assembles the internal preflight only inside the dormant LIVE state", () => {
+  it("assembles the internal preflight only for an exact prepared LIVE order", () => {
     const state = read("src/live-executor-state.ts");
     expect(state).toMatch(/url\.pathname\s*===\s*["']\/preflight["']/);
     expect(state).toMatch(/new\s+KrakenValidateOnlyOrderGateway/);
     expect(state).toMatch(/runLiveOrderPreflight\s*\(/);
-    expect(state).toMatch(/body\.side\s*!==\s*["']buy["']/);
+    expect(state).toMatch(/const order = state\.orders\[body\.clOrdId\]/);
+    expect(state).toMatch(/order\.status\s*!==\s*["']prepared["']/);
+    expect(state).toMatch(/clOrdIdFactory:\s*\(\)\s*=>\s*order\.clOrdId/);
     expect(state).toMatch(/maxNotionalEur:\s*5/);
+    expect(state).toMatch(/createLivePreflightCertificate\(intent, result\)/);
   });
 
   it("does not expose or instantiate LiveExecutorState in the deployed Worker", () => {

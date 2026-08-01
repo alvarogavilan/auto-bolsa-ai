@@ -4,16 +4,27 @@ import {
   initializeLiveExecutor,
   observeMarket,
   prepareOrder,
-  submitOrder,
   type LiveExecutorSnapshot,
   type LiveOrderRequest,
 } from "./live-executor";
+import {
+  submitOrderWithAtomicPreflightCertificate,
+  type AtomicLivePreflightCertificateStore,
+} from "./live-certified-submission";
 import { defaultLiveGuardrailConfig, liveTradingEnabledFromEnv, type LiveGuardrailConfig } from "./live-guardrails";
 import {
   KrakenValidateOnlyOrderGateway,
   runLiveOrderPreflight,
-  type LiveOrderPreflightIntent,
 } from "./live-order-preflight";
+import {
+  createLivePreflightCertificate,
+  type LivePreflightCertificate,
+} from "./live-preflight-certificate";
+import {
+  PersistedAtomicLivePreflightCertificateStore,
+  livePreflightCertificateStorageKey,
+  type LivePreflightCertificatePersistence,
+} from "./live-preflight-certificate-store";
 import { fetchLivePairResolution, type LivePairResolution } from "./live-pair-metadata";
 import { reconcileWithVerifiedFillsTransactional } from "./live-transactional-reconciliation";
 import { FakeLiveOrderTransport, KrakenLiveOrderTransport, type LiveOrderTransport } from "./live-transport";
@@ -49,8 +60,7 @@ interface LiveReconciliationContext {
  * ni migración) ni exportada desde `index.ts`, así que Cloudflare no la
  * instancia ni la despliega: no existe como recurso real en la cuenta. Solo
  * vive como código fuente, comprobado por `tsc --noEmit` y ejercitado
- * indirectamente a través de las funciones puras del ejecutor. Enlazarla de
- * verdad es un paso futuro y deliberadamente separado.
+ * indirectamente a través de las funciones puras del ejecutor.
  */
 export class LiveExecutorState extends DurableObject<Env> {
   constructor(ctx: DurableObjectState, env: Env) {
@@ -106,6 +116,30 @@ export class LiveExecutorState extends DurableObject<Env> {
       );
     }
     return new UnavailableLiveFillEvidenceSource();
+  }
+
+  /** Persistencia local de certificados, separada del snapshot del ejecutor. */
+  private certificatePersistence(): LivePreflightCertificatePersistence {
+    return {
+      get: async (key) => (await this.ctx.storage.get<LivePreflightCertificate>(key)) ?? null,
+      put: async (key, certificate) => {
+        await this.ctx.storage.put(key, certificate);
+      },
+    };
+  }
+
+  /**
+   * El bloqueo de concurrencia cubre solo get/check/put local. Se libera antes
+   * de cualquier llamada de red, evitando que dos envíos consuman el mismo
+   * certificado sin mantener un lock durante Kraken.
+   */
+  private certificateStore(): AtomicLivePreflightCertificateStore {
+    return new PersistedAtomicLivePreflightCertificateStore(
+      this.certificatePersistence(),
+      {
+        run: <T>(operation: () => Promise<T>) => this.ctx.blockConcurrencyWhile(operation),
+      },
+    );
   }
 
   /**
@@ -178,6 +212,7 @@ export class LiveExecutorState extends DurableObject<Env> {
             validateOnly: true,
             contactedKraken: false,
             realOrderCreated: false,
+            certificatePersisted: false,
             message: "Faltan credenciales Kraken.",
             liveTrading: false,
           },
@@ -185,9 +220,9 @@ export class LiveExecutorState extends DurableObject<Env> {
         );
       }
 
-      let body: LiveOrderPreflightIntent;
+      let body: { clOrdId: string };
       try {
-        body = (await request.json()) as LiveOrderPreflightIntent;
+        body = (await request.json()) as { clOrdId: string };
       } catch {
         return Response.json(
           {
@@ -195,6 +230,7 @@ export class LiveExecutorState extends DurableObject<Env> {
             validateOnly: true,
             contactedKraken: false,
             realOrderCreated: false,
+            certificatePersisted: false,
             message: "El cuerpo JSON del preflight no es válido.",
             liveTrading: false,
           },
@@ -202,20 +238,34 @@ export class LiveExecutorState extends DurableObject<Env> {
         );
       }
 
-      const pair = this.env.PAIR || "XBTEUR";
-      if (body.side !== "buy" || body.pair !== pair) {
+      if (!body.clOrdId?.trim()) {
+        return Response.json({ error: "Falta clOrdId para el preflight", certificatePersisted: false }, { status: 400 });
+      }
+
+      const state = await this.read();
+      const order = state.orders[body.clOrdId];
+      if (!order) {
+        return Response.json({ error: "Orden preparada desconocida", certificatePersisted: false }, { status: 404 });
+      }
+      if (order.status !== "prepared") {
         return Response.json(
-          {
-            status: "rejected",
-            validateOnly: true,
-            contactedKraken: false,
-            realOrderCreated: false,
-            message: `El preflight interno solo admite compras límite para ${pair}.`,
-            liveTrading: false,
-          },
+          { error: `El preflight exige una orden prepared; estado actual: ${order.status}`, certificatePersisted: false },
           { status: 409 },
         );
       }
+
+      const pair = this.env.PAIR || "XBTEUR";
+      if (order.request.pair !== pair) {
+        return Response.json(
+          { error: `La orden preparada no pertenece al par configurado ${pair}`, certificatePersisted: false },
+          { status: 409 },
+        );
+      }
+
+      const certificateKey = livePreflightCertificateStorageKey(order.clOrdId);
+      // Un nuevo intento de preflight invalida cualquier certificado anterior,
+      // incluso si Kraken devuelve rechazo, timeout o error de autenticación.
+      await this.ctx.storage.delete(certificateKey);
 
       const resolution = await this.pairResolution(pair, now, false);
       const gateway = new KrakenValidateOnlyOrderGateway(
@@ -223,21 +273,53 @@ export class LiveExecutorState extends DurableObject<Env> {
         this.env.KRAKEN_API_SECRET,
         () => this.nextNonce(),
       );
+      const intent = {
+        pair: order.request.pair,
+        side: order.request.side,
+        volumeBase: order.request.volumeBase,
+        limitPrice: order.request.limitPrice,
+        notionalEur: order.request.notionalEur,
+      };
       const result = await runLiveOrderPreflight(
-        body,
+        intent,
         {
           pairMetadata: { [pair]: resolution.metadata },
           maxNotionalEur: 5,
           maxNotionalDeviationPct: 0.01,
         },
         gateway,
-        { now },
+        { now, clOrdIdFactory: () => order.clOrdId },
       );
+
+      let certificate: LivePreflightCertificate | null = null;
+      if (result.status === "validated") {
+        try {
+          certificate = await createLivePreflightCertificate(intent, result);
+          await this.ctx.storage.put(certificateKey, certificate);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "No se pudo persistir el certificado";
+          return Response.json(
+            {
+              ...result,
+              status: "unknown",
+              validateOnly: true,
+              certificate: null,
+              certificatePersisted: false,
+              message: `Preflight no certificable: ${message}`,
+              liveTrading: false,
+            },
+            { status: 502 },
+          );
+        }
+      }
+
       const status = result.status === "validated" ? 200 : result.status === "rejected" ? 409 : 502;
       return Response.json(
         {
           ...result,
           validateOnly: true,
+          certificate,
+          certificatePersisted: certificate !== null,
           liveTrading: false,
         },
         { status },
@@ -257,7 +339,14 @@ export class LiveExecutorState extends DurableObject<Env> {
       const body = (await request.json()) as { clOrdId: string };
       const state = await this.read();
       const { config } = await this.reconciliationContext(now);
-      const result = await submitOrder(state, this.transport(), config, body.clOrdId, now);
+      const result = await submitOrderWithAtomicPreflightCertificate(
+        state,
+        this.transport(),
+        config,
+        this.certificateStore(),
+        body.clOrdId,
+        now,
+      );
       await this.write(result.state);
       return Response.json(result, { status: result.ok ? 200 : 409 });
     }
