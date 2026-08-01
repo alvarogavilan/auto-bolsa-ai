@@ -18,7 +18,7 @@ export async function fireDrillPilotDashboard(): Promise<Response> {
       <div class="between"><div><strong>Simulacro integral de seguridad</strong><div class="action-status">Ensaya el camino completo con transporte simulado y estado efímero.</div></div><span id="fireDrillBadge" class="badge">Pendiente</span></div>
       <div class="phase-note">No usa credenciales, no contacta con Kraken, no persiste estado y no puede crear una orden real.</div>
       <div class="validation-actions"><button id="fireDrillButton" class="small secondary" onclick="runPilotFireDrillFromApp()">Ejecutar 6 pruebas de seguridad</button></div>
-      <div id="fireDrillStatus" class="action-status">Comprueba doble toque, timeout ambiguo, fill parcial, certificado caducado, payload alterado y recuperación tras reinicio.</div>
+      <div id="fireDrillStatus" class="action-status">El informe de preparación las ejecutará automáticamente.</div>
       <div id="fireDrillChecks" class="list" style="margin-top:10px"></div>
     </section>
 
@@ -34,10 +34,10 @@ export async function fireDrillPilotDashboard(): Promise<Response> {
     const status=document.getElementById('fireDrillStatus');
     const checks=document.getElementById('fireDrillChecks');
     const items=Array.isArray(report&&report.checks)?report.checks:[];
-    badge.textContent=report&&report.passed===true?'6/6 superadas':(report&&Number.isFinite(Number(report.passedChecks))?String(report.passedChecks)+'/'+String(report.totalChecks):'Error');
+    badge.textContent=report&&report.passed===true?'6/6 superadas':(report&&Number.isFinite(Number(report.passedChecks))?String(report.passedChecks)+'/'+String(report.totalChecks):'Pendiente');
     status.textContent=report&&report.passed===true
       ?'Simulacro completo: todas las barreras fallaron cerrado. No se contactó con Kraken.'
-      :'El simulacro detectó al menos una protección no demostrada. El piloto real debe seguir bloqueado.';
+      :report?'El simulacro detectó al menos una protección no demostrada. El piloto real debe seguir bloqueado.':'Esperando el informe automático de seguridad.';
     checks.innerHTML=items.map(function(item){
       return '<div class="item '+(item.passed?'passed':'blocker')+'"><strong>'+(item.passed?'✓ ':'✗ ')+escapeHtml(item.title)+'</strong><div style="margin-top:4px">'+escapeHtml(item.detail)+'</div></div>';
     }).join('');
@@ -56,6 +56,12 @@ export async function fireDrillPilotDashboard(): Promise<Response> {
     }finally{button.disabled=false}
   }
 `,
+  );
+
+  html = replaceRequired(
+    html,
+    "    renderEmergency(data);\n    document.getElementById('raw').textContent=JSON.stringify(data,null,2);",
+    "    renderEmergency(data);\n    renderPilotFireDrill(data.fireDrill);\n    document.getElementById('raw').textContent=JSON.stringify(data,null,2);",
   );
 
   return new Response(html, {

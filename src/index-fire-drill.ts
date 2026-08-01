@@ -5,6 +5,7 @@ import coreWorker, {
 } from "./index";
 import { fireDrillPilotDashboard } from "./pilot-dashboard-fire-drill";
 import { runPilotFireDrill } from "./pilot-fire-drill";
+import { enrichReadinessWithFireDrill } from "./pilot-fire-drill-readiness";
 import type { Env } from "./types";
 
 export { BotState, ResearchLabState, LiveExecutorState };
@@ -27,6 +28,13 @@ export default {
       return Response.json(await runPilotFireDrill(), {
         headers: { "Cache-Control": "no-store" },
       });
+    }
+
+    if (
+      (request.method === "GET" && url.pathname === "/api/pilot/readiness")
+      || (request.method === "POST" && url.pathname === "/api/pilot/refresh-kraken")
+    ) {
+      return enrichReadinessWithFireDrill(await coreWorker.fetch(request, env));
     }
 
     return coreWorker.fetch(request, env);
