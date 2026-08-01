@@ -18,7 +18,9 @@ afterEach(() => {
 });
 
 function environment(handler: (request: Request) => Promise<Response>): Env {
-  const stub = { fetch: vi.fn(handler) };
+  const stub = {
+    fetch: vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => handler(new Request(input, init))),
+  };
   const namespace = {
     idFromName: vi.fn(() => ({}) as DurableObjectId),
     get: vi.fn(() => stub as unknown as DurableObjectStub),
@@ -73,8 +75,8 @@ describe("Kraken private lease heartbeat", () => {
 
     await renewKrakenPrivateLease(env, "lease-2");
     expect(captured).not.toBeNull();
-    expect(new URL((captured as unknown as Request).url).pathname).toBe(KRAKEN_PRIVATE_LEASE_RENEW_PATH);
-    expect(await (captured as unknown as Request).clone().json()).toEqual({ leaseId: "lease-2" });
+    expect(new URL((captured as Request).url).pathname).toBe(KRAKEN_PRIVATE_LEASE_RENEW_PATH);
+    expect(await (captured as Request).clone().json()).toEqual({ leaseId: "lease-2" });
   });
 
   it("keeps heartbeat comfortably below the persisted lease TTL", () => {
@@ -93,6 +95,8 @@ describe("Kraken private lease heartbeat", () => {
     expect(coordinated).toContain("startKrakenPrivateLeaseHeartbeat");
     expect(coordinated).toContain("KRAKEN_PRIVATE_LEASE_RENEWAL_FAILED");
     expect(coordinated).toContain("reconciliationRequired: true");
-    expect(coordinated.indexOf("heartbeat.stop()" )).toBeLessThan(coordinated.indexOf("releaseKrakenPrivateLease"));
+    expect(coordinated.lastIndexOf("heartbeat.stop()")).toBeLessThan(
+      coordinated.lastIndexOf("releaseKrakenPrivateLease"),
+    );
   });
 });
