@@ -35,58 +35,22 @@ jobs:
           npm run typecheck:test
           npm test
 
-      - name: Check Cloudflare API token
+      - name: Resolve Cloudflare account
         id: credentials
-        continue-on-error: true
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: |
-          if [ -z "$CLOUDFLARE_API_TOKEN" ]; then
-            echo "missing=CLOUDFLARE_API_TOKEN" >> "$GITHUB_OUTPUT"
-            exit 1
-          fi
-          echo "missing=" >> "$GITHUB_OUTPUT"
-
-      - name: Detect Cloudflare account automatically
-        id: account
-        if: steps.credentials.outcome == 'success'
-        continue-on-error: true
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-        run: |
-          set -euo pipefail
-          response=$(curl --fail-with-body --silent --show-error \
-            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
-            -H "Content-Type: application/json" \
-            "https://api.cloudflare.com/client/v4/accounts?per_page=50")
-
-          success=$(printf '%s' "$response" | jq -r '.success')
-          [ "$success" = "true" ] || {
-            printf '%s\n' "$response"
-            exit 1
-          }
-
-          count=$(printf '%s' "$response" | jq '.result | length')
-          [ "$count" -ge 1 ] || {
-            echo "El token no permite leer ninguna cuenta de Cloudflare"
-            exit 1
-          }
-
-          account_id=$(printf '%s' "$response" | jq -r '.result[0].id')
-          account_name=$(printf '%s' "$response" | jq -r '.result[0].name')
-          [ -n "$account_id" ] && [ "$account_id" != "null" ]
-
+          test -n "$CLOUDFLARE_API_TOKEN" || (echo "missing=CLOUDFLARE_API_TOKEN" >> "$GITHUB_OUTPUT"; exit 1)
+          response=$(curl -fsS -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" -H "Content-Type: application/json" "https://api.cloudflare.com/client/v4/accounts")
+          account_id=$(node -e 'const d=JSON.parse(process.argv[1]); const a=d.result?.[0]?.id; if(!d.success || !a) process.exit(1); process.stdout.write(a)' "$response")
           echo "account_id=$account_id" >> "$GITHUB_OUTPUT"
-          echo "account_name=$account_name" >> "$GITHUB_OUTPUT"
-          echo "CLOUDFLARE_ACCOUNT_ID=$account_id" >> "$GITHUB_ENV"
+          echo "missing=" >> "$GITHUB_OUTPUT"
 
       - name: Deploy PAPER DEMO
         id: deploy
-        if: steps.credentials.outcome == 'success' && steps.account.outcome == 'success'
-        continue-on-error: true
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ steps.account.outputs.account_id }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ steps.credentials.outputs.account_id }}
         run: |
           set -o pipefail
           npx wrangler deploy 2>&1 | tee deploy.log
@@ -95,12 +59,21 @@ jobs:
 
       - name: Confirm deployment metadata
         id: metadata
-        if: steps.deploy.outcome == 'success'
-        continue-on-error: true
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ steps.account.outputs.account_id }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ steps.credentials.outputs.account_id }}
         run: npx wrangler deployments list
+
+      - name: Smoke test DEMO
+        id: smoke
+        env:
+          DEPLOY_URL: ${{ steps.deploy.outputs.url }}
+        run: |
+          base="$DEPLOY_URL"
+          if [ -z "$base" ]; then base="https://auto-bolsa-ai.k8mwkbp68y.workers.dev"; fi
+          curl -fsS "$base/api/demo" > demo.json
+          node -e 'const d=require("./demo.json"); if(d.mode!=="paper" || d.liveTrading!==false || d.realOrdersEnabled!==false) process.exit(1)'
+          echo "url=$base" >> "$GITHUB_OUTPUT"
 
       - name: Publish deployment result
         if: always()
@@ -108,29 +81,25 @@ jobs:
         env:
           CREDENTIALS_OUTCOME: ${{ steps.credentials.outcome }}
           MISSING_SECRETS: ${{ steps.credentials.outputs.missing }}
-          ACCOUNT_OUTCOME: ${{ steps.account.outcome }}
-          ACCOUNT_NAME: ${{ steps.account.outputs.account_name }}
           DEPLOY_OUTCOME: ${{ steps.deploy.outcome }}
-          DEPLOY_URL: ${{ steps.deploy.outputs.url }}
+          DEPLOY_URL: ${{ steps.smoke.outputs.url || steps.deploy.outputs.url }}
           METADATA_OUTCOME: ${{ steps.metadata.outcome }}
+          SMOKE_OUTCOME: ${{ steps.smoke.outcome }}
         with:
           script: |
-            const success = process.env.CREDENTIALS_OUTCOME === 'success'
-              && process.env.ACCOUNT_OUTCOME === 'success'
-              && process.env.DEPLOY_OUTCOME === 'success';
+            const success = process.env.CREDENTIALS_OUTCOME === 'success' && process.env.DEPLOY_OUTCOME === 'success' && process.env.SMOKE_OUTCOME === 'success';
             const title = success
               ? `Cloudflare deploy OK · ${context.sha.slice(0, 7)}`
               : `Cloudflare deploy BLOCKED · ${context.sha.slice(0, 7)}`;
             const body = [
               `Commit: \`${context.sha}\``,
               `Workflow: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
-              `Token: **${process.env.CREDENTIALS_OUTCOME || 'unknown'}**`,
-              process.env.MISSING_SECRETS ? `Secreto ausente: \`${process.env.MISSING_SECRETS}\`` : null,
-              `Detección de cuenta: **${process.env.ACCOUNT_OUTCOME || 'skipped'}**`,
-              process.env.ACCOUNT_NAME ? `Cuenta detectada: ${process.env.ACCOUNT_NAME}` : null,
+              `Credenciales: **${process.env.CREDENTIALS_OUTCOME || 'unknown'}**`,
+              process.env.MISSING_SECRETS ? `Secretos ausentes: \`${process.env.MISSING_SECRETS}\`` : null,
               `Despliegue: **${process.env.DEPLOY_OUTCOME || 'skipped'}**`,
               process.env.DEPLOY_URL ? `URL pública: ${process.env.DEPLOY_URL}` : null,
               `Metadata: **${process.env.METADATA_OUTCOME || 'skipped'}**`,
+              `Smoke test /api/demo: **${process.env.SMOKE_OUTCOME || 'skipped'}**`,
               '',
               'Seguridad: PAPER activo; LIVE y órdenes reales permanecen desactivados.'
             ].filter(Boolean).join('\n');
@@ -142,5 +111,5 @@ jobs:
             });
 
       - name: Fail when deployment did not complete
-        if: always() && (steps.credentials.outcome != 'success' || steps.account.outcome != 'success' || steps.deploy.outcome != 'success')
+        if: always() && (steps.credentials.outcome != 'success' || steps.deploy.outcome != 'success' || steps.smoke.outcome != 'success')
         run: exit 1
