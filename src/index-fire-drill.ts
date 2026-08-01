@@ -1,8 +1,8 @@
 import coreWorker, {
   BotState,
-  LiveExecutorState,
   ResearchLabState,
 } from "./index";
+import { CoordinatedLiveExecutorState as LiveExecutorState } from "./live-executor-state-coordinated";
 import {
   auditPilotAccountCleanliness,
   enrichReadinessWithAccountCleanliness,
@@ -23,15 +23,11 @@ export default {
   async fetch(request: Request, env: Env, _ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
 
-    if (request.method === "GET" && url.pathname === "/pilot") {
-      return fireDrillPilotDashboard();
-    }
+    if (request.method === "GET" && url.pathname === "/pilot") return fireDrillPilotDashboard();
 
     if (request.method === "POST" && url.pathname === "/api/pilot/fire-drill") {
       if (!isAuthorized(request, env)) return new Response("Unauthorized", { status: 401 });
-      return Response.json(await runPilotFireDrill(), {
-        headers: { "Cache-Control": "no-store" },
-      });
+      return Response.json(await runPilotFireDrill(), { headers: { "Cache-Control": "no-store" } });
     }
 
     if (request.method === "POST" && url.pathname === "/api/pilot/audit-account") {
@@ -57,21 +53,13 @@ export default {
     ) {
       const base = await coreWorker.fetch(request, env);
       const withFireDrill = await enrichReadinessWithFireDrill(base);
-      return enrichReadinessWithAccountCleanliness(
-        withFireDrill,
-        env,
-        request.method === "POST",
-      );
+      return enrichReadinessWithAccountCleanliness(withFireDrill, env, request.method === "POST");
     }
 
     return coreWorker.fetch(request, env);
   },
 
-  async scheduled(
-    controller: ScheduledController,
-    env: Env,
-    ctx: ExecutionContext,
-  ): Promise<void> {
+  async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
     return coreWorker.scheduled(controller, env, ctx);
   },
 };
