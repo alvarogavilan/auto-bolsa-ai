@@ -36,12 +36,15 @@ describe("pilot runtime remains fail-closed", () => {
     expect(submitBlock).toBeGreaterThan(-1);
     expect(actionMap).toBeGreaterThan(submitBlock);
     expect(index).toContain("PILOT_SUBMISSION_NOT_ARMED");
-    expect(index).toContain("submissionEndpointAvailable: false");
 
     const actionMapSource = index.slice(actionMap, index.indexOf("const target", actionMap));
     expect(actionMapSource).not.toContain('"/api/pilot/submit"');
     expect(actionMapSource).toContain('"/api/pilot/preflight": "/preflight"');
     expect(actionMapSource).toContain('"/api/pilot/reconcile": "/reconcile"');
+
+    const runtime = runtimeSource();
+    expect(runtime).toContain("submissionEndpointAvailable: false");
+    expect(runtime).toContain("submissionArmed: false");
   });
 
   it("keeps all legacy /api/live routes hard-disabled", () => {
