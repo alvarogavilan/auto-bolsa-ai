@@ -26,6 +26,11 @@ import {
   type LivePreflightCertificatePersistence,
 } from "./live-preflight-certificate-store";
 import { fetchLivePairResolution, type LivePairResolution } from "./live-pair-metadata";
+import {
+  PersistedLiveSubmissionJournal,
+  type LiveSubmissionJournalEntry,
+  type LiveSubmissionJournalPersistence,
+} from "./live-submission-journal";
 import { reconcileWithVerifiedFillsTransactional } from "./live-transactional-reconciliation";
 import { FakeLiveOrderTransport, KrakenLiveOrderTransport, type LiveOrderTransport } from "./live-transport";
 import {
@@ -128,6 +133,16 @@ export class LiveExecutorState extends DurableObject<Env> {
     };
   }
 
+  /** Persistencia local del journal write-ahead, separada del snapshot. */
+  private journalPersistence(): LiveSubmissionJournalPersistence {
+    return {
+      get: async (key) => (await this.ctx.storage.get<LiveSubmissionJournalEntry>(key)) ?? null,
+      put: async (key, entry) => {
+        await this.ctx.storage.put(key, entry);
+      },
+    };
+  }
+
   /**
    * El bloqueo de concurrencia cubre solo get/check/put local. Se libera antes
    * de cualquier llamada de red, evitando que dos envíos consuman el mismo
@@ -140,6 +155,41 @@ export class LiveExecutorState extends DurableObject<Env> {
         run: <T>(operation: () => Promise<T>) => this.ctx.blockConcurrencyWhile(operation),
       },
     );
+  }
+
+  /** El journal usa la misma disciplina: sección crítica local, nunca red. */
+  private submissionJournal(): PersistedLiveSubmissionJournal {
+    return new PersistedLiveSubmissionJournal(
+      this.journalPersistence(),
+      {
+        run: <T>(operation: () => Promise<T>) => this.ctx.blockConcurrencyWhile(operation),
+      },
+    );
+  }
+
+  /**
+   * Tras una reconciliación completamente válida, resuelve únicamente los
+   * journals de órdenes no preparadas y no incluidas entre las no resueltas.
+   */
+  private async resolveVerifiedJournals(
+    state: LiveExecutorSnapshot,
+    reportOk: boolean,
+    unresolvedOrders: readonly string[],
+    now: number,
+  ): Promise<string[]> {
+    if (!reportOk) return [];
+    const unresolved = new Set(unresolvedOrders);
+    const journal = this.submissionJournal();
+    const resolved: string[] = [];
+
+    for (const order of Object.values(state.orders)) {
+      if (order.status === "prepared" || unresolved.has(order.clOrdId)) continue;
+      const decision = await journal.recoveryDecision(order.clOrdId);
+      if (decision.action !== "reconcile_only") continue;
+      await journal.markReconciled(order.clOrdId, now);
+      resolved.push(order.clOrdId);
+    }
+    return resolved;
   }
 
   /**
@@ -254,6 +304,18 @@ export class LiveExecutorState extends DurableObject<Env> {
         );
       }
 
+      const recovery = await this.submissionJournal().recoveryDecision(order.clOrdId);
+      if (recovery.action === "reconcile_only") {
+        return Response.json(
+          {
+            error: "Existe una intención de envío pendiente; se exige reconciliación y nunca un nuevo preflight",
+            blockers: recovery.blockers,
+            certificatePersisted: false,
+          },
+          { status: 409 },
+        );
+      }
+
       const pair = this.env.PAIR || "XBTEUR";
       if (order.request.pair !== pair) {
         return Response.json(
@@ -346,6 +408,7 @@ export class LiveExecutorState extends DurableObject<Env> {
         this.certificateStore(),
         body.clOrdId,
         now,
+        this.submissionJournal(),
       );
       await this.write(result.state);
       return Response.json(result, { status: result.ok ? 200 : 409 });
@@ -362,8 +425,17 @@ export class LiveExecutorState extends DurableObject<Env> {
         resolution,
         now,
       );
+      const reconciledJournals = await this.resolveVerifiedJournals(
+        state,
+        report.ok,
+        report.unresolvedOrders,
+        now,
+      );
       await this.write(state);
-      return Response.json({ state, verifiedReconciliation: report }, { status: report.ok ? 200 : 409 });
+      return Response.json(
+        { state, verifiedReconciliation: report, reconciledJournals },
+        { status: report.ok ? 200 : 409 },
+      );
     }
 
     if (request.method === "POST" && url.pathname === "/retry") {
@@ -381,9 +453,15 @@ export class LiveExecutorState extends DurableObject<Env> {
         resolution,
         now,
       );
+      const reconciledJournals = await this.resolveVerifiedJournals(
+        state,
+        report.ok,
+        report.unresolvedOrders,
+        now,
+      );
       await this.write(state);
       return Response.json(
-        { state, requestedClOrdId: body.clOrdId, verifiedReconciliation: report },
+        { state, requestedClOrdId: body.clOrdId, verifiedReconciliation: report, reconciledJournals },
         { status: report.ok ? 200 : 409 },
       );
     }
