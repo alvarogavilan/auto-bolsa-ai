@@ -14,22 +14,27 @@ describe("committee shadow isolation", () => {
     expect(enrichCall).toBeGreaterThan(baseCall);
   });
 
-  it("keeps the complete layer order PAPER → committee impact → frozen forward", () => {
+  it("keeps the complete layer order PAPER → impact/evidence → frozen forward", () => {
     const impact = readFileSync(join(ROOT, "src/research-lab-state-impact.ts"), "utf8");
     const forward = readFileSync(join(ROOT, "src/research-lab-state.ts"), "utf8");
 
     expect(impact).toContain('from "./research-lab-state-base"');
+    expect(impact).toContain("hydrateStrategiesWithEvidence");
     expect(forward).toContain('from "./research-lab-state-impact"');
     expect(forward).toContain("const response = await super.fetch(request)");
   });
 
-  it("fails open when committee storage cannot be read, persisted or reset", () => {
+  it("fails open when auxiliary storage cannot be read, persisted or reset", () => {
     const source = readFileSync(join(ROOT, "src/research-lab-state-impact.ts"), "utf8");
 
     expect(source).toContain("COMMITTEE_IMPACT_STORAGE_READ_FAILED");
     expect(source).toContain("COMMITTEE_IMPACT_PERSIST_FAILED");
+    expect(source).toContain("PAPER_EVIDENCE_STORAGE_READ_FAILED");
+    expect(source).toContain("PAPER_EVIDENCE_PERSIST_FAILED");
     expect(source).toContain("failOpenForPaper: true");
-    expect(source).toContain("Un fallo del ledger shadow no debe revertirlo");
+    expect(source).toContain("Promise.allSettled");
+    expect(source).toContain("this.auxiliaryStorage.delete(COMMITTEE_IMPACT_KEY)");
+    expect(source).toContain("this.auxiliaryStorage.delete(PAPER_EVIDENCE_KEY)");
     expect(source).toContain("changesTradingDecision: false");
   });
 
