@@ -5,6 +5,7 @@ import {
   sanitizeCommitteeShadowImpactState,
   type CommitteeShadowImpactState,
 } from "./committee-shadow-impact";
+import { buildCostSequenceStressReport } from "./cost-sequence-stress";
 import type { ResearchCommitteeReport } from "./decision-committee";
 import type { ResearchLabState as StoredResearchLabState } from "./research-lab";
 import { ResearchLabState as BaseResearchLabState } from "./research-lab-state-base";
@@ -95,9 +96,11 @@ export class ResearchLabState extends BaseResearchLabState {
       }
     }
 
-    const temporalValidation = payload.state && Array.isArray(payload.state.strategies)
-      ? buildTemporalValidationReport(payload.state.strategies)
-      : buildTemporalValidationReport([]);
+    const strategies = payload.state && Array.isArray(payload.state.strategies)
+      ? payload.state.strategies
+      : [];
+    const temporalValidation = buildTemporalValidationReport(strategies);
+    const costSequenceStress = buildCostSequenceStressReport(strategies);
 
     return Response.json({
       ...payload,
@@ -110,6 +113,7 @@ export class ResearchLabState extends BaseResearchLabState {
         liveTrading: false,
       },
       temporalValidation,
+      costSequenceStress,
       liveTrading: false,
     }, {
       status: response.status,
