@@ -117,15 +117,11 @@ describe("certified LIVE submission gate", () => {
     const store = new MemoryAtomicStore(null);
 
     const result = await submitOrderWithAtomicPreflightCertificate(
-      state,
-      transport,
-      config(),
-      store,
-      clOrdId,
-      NOW + 1_000,
+      state, transport, config(), store, clOrdId, NOW + 1_000,
     );
 
     expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected a blocked submission");
     expect(result.preflightCertificateConsumed).toBe(false);
     expect(result.blockers).toContain("Falta certificado de preflight");
     expect(transport.createCalls).toBe(0);
@@ -141,12 +137,7 @@ describe("certified LIVE submission gate", () => {
     const transport = new CountingTransport(events);
 
     const result = await submitOrderWithAtomicPreflightCertificate(
-      state,
-      transport,
-      config(),
-      store,
-      clOrdId,
-      NOW + 1_000,
+      state, transport, config(), store, clOrdId, NOW + 1_000,
     );
 
     expect(result.ok).toBe(true);
@@ -168,15 +159,11 @@ describe("certified LIVE submission gate", () => {
     const transport = new CountingTransport();
 
     const result = await submitOrderWithAtomicPreflightCertificate(
-      state,
-      transport,
-      config(),
-      store,
-      clOrdId,
-      NOW + 1_000,
+      state, transport, config(), store, clOrdId, NOW + 1_000,
     );
 
     expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected a storage failure");
     expect(result.preflightCertificateConsumed).toBe(false);
     expect(result.blockers.join(" ")).toMatch(/storage unavailable/);
     expect(transport.createCalls).toBe(0);
@@ -190,12 +177,7 @@ describe("certified LIVE submission gate", () => {
     transport.scriptScenario(clOrdId, { kind: "accept-but-report-timeout" });
 
     const first = await submitOrderWithAtomicPreflightCertificate(
-      state,
-      transport,
-      config(),
-      store,
-      clOrdId,
-      NOW + 1_000,
+      state, transport, config(), store, clOrdId, NOW + 1_000,
     );
     expect(first.ok).toBe(false);
     expect(first.preflightCertificateConsumed).toBe(true);
@@ -205,12 +187,7 @@ describe("certified LIVE submission gate", () => {
     const attemptsAfterTimeout = state.orders[clOrdId]?.attempts;
     for (let index = 0; index < 3; index += 1) {
       const repeated = await submitOrderWithAtomicPreflightCertificate(
-        state,
-        transport,
-        config(),
-        store,
-        clOrdId,
-        NOW + 2_000 + index,
+        state, transport, config(), store, clOrdId, NOW + 2_000 + index,
       );
       expect(repeated.ok).toBe(false);
       expect(repeated.preflightCertificateConsumed).toBe(false);
@@ -226,12 +203,7 @@ describe("certified LIVE submission gate", () => {
     const expiredStore = new MemoryAtomicStore(await certificateFor(expiredSetup.clOrdId));
     const expiredTransport = new CountingTransport();
     const expired = await submitOrderWithAtomicPreflightCertificate(
-      expiredSetup.state,
-      expiredTransport,
-      config(),
-      expiredStore,
-      expiredSetup.clOrdId,
-      NOW + 2 * 60_000,
+      expiredSetup.state, expiredTransport, config(), expiredStore, expiredSetup.clOrdId, NOW + 2 * 60_000,
     );
     expect(expired.ok).toBe(false);
     expect(expiredTransport.createCalls).toBe(0);
@@ -242,12 +214,7 @@ describe("certified LIVE submission gate", () => {
     mismatchSetup.state.orders[mismatchSetup.clOrdId]!.request.notionalEur = 5.0001;
     const mismatchTransport = new CountingTransport();
     const mismatch = await submitOrderWithAtomicPreflightCertificate(
-      mismatchSetup.state,
-      mismatchTransport,
-      config(),
-      mismatchStore,
-      mismatchSetup.clOrdId,
-      NOW + 1_000,
+      mismatchSetup.state, mismatchTransport, config(), mismatchStore, mismatchSetup.clOrdId, NOW + 1_000,
     );
     expect(mismatch.ok).toBe(false);
     expect(mismatchTransport.createCalls).toBe(0);
@@ -259,12 +226,7 @@ describe("certified LIVE submission gate", () => {
     const transport = new CountingTransport();
 
     const result = await submitOrderWithAtomicPreflightCertificate(
-      state,
-      transport,
-      config(false),
-      store,
-      clOrdId,
-      NOW + 1_000,
+      state, transport, config(false), store, clOrdId, NOW + 1_000,
     );
 
     expect(result.ok).toBe(false);
