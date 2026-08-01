@@ -76,17 +76,19 @@ describe("human DEMO dashboard", () => {
   });
 
   it("keeps technical JSON and admin controls on a separate route", () => {
-    const index = readFileSync(join(ROOT, "src/index.ts"), "utf8");
-    expect(index).toContain('url.pathname === "/" || url.pathname === "/demo"');
-    expect(index).toContain('url.pathname === "/technical"');
-    expect(index).toContain("return demoDashboard()");
-    expect(index).toContain("return technicalDashboard()");
+    const indexCore = readFileSync(join(ROOT, "src/index-core.ts"), "utf8");
+    expect(indexCore).toContain('url.pathname === "/" || url.pathname === "/demo"');
+    expect(indexCore).toContain('url.pathname === "/technical"');
+    expect(indexCore).toContain("return demoDashboard()");
+    expect(indexCore).toContain("return technicalDashboard()");
   });
 
   it("does not add or expose any LIVE route", () => {
-    const index = readFileSync(join(ROOT, "src/index.ts"), "utf8");
-    expect(index).toContain('url.pathname.startsWith("/api/live")');
-    expect(index).toContain("LIVE_TRADING_HARD_DISABLED");
-    expect(index).not.toContain('url.pathname === "/live"');
+    const indexCore = readFileSync(join(ROOT, "src/index-core.ts"), "utf8");
+    const wrapper = readFileSync(join(ROOT, "src/index.ts"), "utf8");
+    expect(indexCore).toContain('url.pathname.startsWith("/api/live")');
+    expect(indexCore).toContain("LIVE_TRADING_HARD_DISABLED");
+    expect(indexCore).not.toContain('url.pathname === "/live"');
+    expect(wrapper).not.toContain('url.pathname === "/live"');
   });
 });
