@@ -2,6 +2,7 @@ import { normalizeCredential, signKrakenRequest } from "./kraken";
 
 const TRADE_VOLUME_PATH = "/0/private/TradeVolume";
 const TRADE_VOLUME_URL = "https://api.kraken.com/0/private/TradeVolume";
+const KNOWN_QUOTES = ["USDT", "USDC", "EUR", "USD", "GBP", "CAD", "JPY", "AUD", "CHF"] as const;
 
 export interface KrakenEffectiveFeeRate {
   pair: string;
@@ -54,16 +55,39 @@ function finiteOrNull(value: unknown): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function compactPair(value: string): string {
+  return value.toUpperCase().replace(/[\s/_-]/g, "");
+}
+
+/**
+ * Convierte aliases habituales de Kraken a una forma comparable sin asumir
+ * que la primera tarifa devuelta pertenece al par solicitado.
+ * Ejemplo: XXBTZEUR, XBT/EUR y XBTEUR se comparan como XBTEUR.
+ */
+export function canonicalKrakenFeePair(value: string): string {
+  const compact = compactPair(value);
+  for (const quote of KNOWN_QUOTES) {
+    const quoteAliases = [`Z${quote}`, quote];
+    for (const quoteAlias of quoteAliases) {
+      if (!compact.endsWith(quoteAlias) || compact.length <= quoteAlias.length) continue;
+      let base = compact.slice(0, -quoteAlias.length);
+      if (base.length > 3 && (base.startsWith("X") || base.startsWith("Z"))) base = base.slice(1);
+      return `${base}${quote}`;
+    }
+  }
+  return compact;
+}
+
 function feeFromMap(
   map: Record<string, RawFee> | undefined,
   requestedPair: string,
 ): KrakenEffectiveFeeRate | null {
   if (!map || typeof map !== "object") return null;
-  const direct = map[requestedPair];
-  const [actualPair, raw] = direct
-    ? [requestedPair, direct] as const
-    : (Object.entries(map)[0] ?? [null, null]);
-  if (!actualPair || !raw || typeof raw !== "object") return null;
+  const requestedCanonical = canonicalKrakenFeePair(requestedPair);
+  const match = Object.entries(map).find(([pair]) => canonicalKrakenFeePair(pair) === requestedCanonical);
+  if (!match) return null;
+  const [actualPair, raw] = match;
+  if (!raw || typeof raw !== "object") return null;
   const percent = finiteOrNull(raw.fee);
   if (percent === null || percent < 0) return null;
   return {
