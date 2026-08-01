@@ -3,6 +3,7 @@ import {
   acquireKrakenPrivateLease,
   isLiveExecutorPrivatePath,
   releaseKrakenPrivateLease,
+  startKrakenPrivateLeaseHeartbeat,
 } from "./kraken-private-lease";
 
 export class CoordinatedLiveExecutorState extends BaseLiveExecutorState {
@@ -26,9 +27,25 @@ export class CoordinatedLiveExecutorState extends BaseLiveExecutorState {
       );
     }
 
+    const heartbeat = startKrakenPrivateLeaseHeartbeat(this.env, leaseId);
     try {
-      return await super.fetch(request);
+      const response = await super.fetch(request);
+      const renewalFailure = heartbeat.failure();
+      if (renewalFailure) {
+        return Response.json(
+          {
+            error: "KRAKEN_PRIVATE_LEASE_RENEWAL_FAILED",
+            message: renewalFailure.message,
+            originalStatus: response.status,
+            reconciliationRequired: true,
+            liveTrading: false,
+          },
+          { status: 503, headers: { "Cache-Control": "no-store" } },
+        );
+      }
+      return response;
     } finally {
+      heartbeat.stop();
       await releaseKrakenPrivateLease(this.env, leaseId).catch(() => undefined);
     }
   }

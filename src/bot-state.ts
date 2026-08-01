@@ -6,6 +6,7 @@ import {
 import {
   KRAKEN_PRIVATE_LEASE_ACQUIRE_PATH,
   KRAKEN_PRIVATE_LEASE_RELEASE_PATH,
+  KRAKEN_PRIVATE_LEASE_RENEW_PATH,
   KRAKEN_PRIVATE_LEASE_TTL_MS,
 } from "./kraken-private-lease";
 import type { Env } from "./types";
@@ -83,6 +84,19 @@ export class BotState extends BaseBotState {
     });
   }
 
+  private async renewPrivateLease(leaseId: string, now = Date.now()): Promise<KrakenPrivateLease | null> {
+    return this.feeContext.blockConcurrencyWhile(async () => {
+      const active = await this.feeContext.storage.get<KrakenPrivateLease>(KRAKEN_PRIVATE_LEASE_KEY);
+      if (!active || active.leaseId !== leaseId || active.expiresAt <= now) return null;
+      const renewed: KrakenPrivateLease = {
+        ...active,
+        expiresAt: now + KRAKEN_PRIVATE_LEASE_TTL_MS,
+      };
+      await this.feeContext.storage.put(KRAKEN_PRIVATE_LEASE_KEY, renewed);
+      return renewed;
+    });
+  }
+
   private async releasePrivateLease(leaseId: string): Promise<boolean> {
     return this.feeContext.blockConcurrencyWhile(async () => {
       const active = await this.feeContext.storage.get<KrakenPrivateLease>(KRAKEN_PRIVATE_LEASE_KEY);
@@ -110,6 +124,22 @@ export class BotState extends BaseBotState {
     return Response.json(
       { acquired: true, leaseId: result.lease.leaseId, expiresAt: result.lease.expiresAt },
       { headers: { "Cache-Control": "no-store" } },
+    );
+  }
+
+  private async privateLeaseRenewResponse(request: Request): Promise<Response> {
+    const body = await requestObject(request);
+    const leaseId = typeof body.leaseId === "string" ? body.leaseId.trim() : "";
+    if (!leaseId) return Response.json({ error: "Falta leaseId" }, { status: 400 });
+    const renewed = await this.renewPrivateLease(leaseId);
+    return Response.json(
+      renewed
+        ? { renewed: true, leaseId: renewed.leaseId, expiresAt: renewed.expiresAt }
+        : { renewed: false, message: "La concesión no existe, cambió o ya caducó" },
+      {
+        status: renewed ? 200 : 409,
+        headers: { "Cache-Control": "no-store" },
+      },
     );
   }
 
@@ -221,6 +251,9 @@ export class BotState extends BaseBotState {
     const url = new URL(request.url);
     if (request.method === "POST" && url.pathname === KRAKEN_PRIVATE_LEASE_ACQUIRE_PATH) {
       return this.privateLeaseAcquireResponse(request);
+    }
+    if (request.method === "POST" && url.pathname === KRAKEN_PRIVATE_LEASE_RENEW_PATH) {
+      return this.privateLeaseRenewResponse(request);
     }
     if (request.method === "POST" && url.pathname === KRAKEN_PRIVATE_LEASE_RELEASE_PATH) {
       return this.privateLeaseReleaseResponse(request);
