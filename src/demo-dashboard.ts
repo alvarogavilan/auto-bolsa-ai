@@ -1,5 +1,5 @@
-import { terminalV2DemoDashboard } from "./demo-dashboard-terminal-v2";
+import { terminalV4DemoDashboard } from "./demo-dashboard-terminal-v4";
 
 export function demoDashboard(): Promise<Response> {
-  return terminalV2DemoDashboard();
+  return terminalV4DemoDashboard();
 }
