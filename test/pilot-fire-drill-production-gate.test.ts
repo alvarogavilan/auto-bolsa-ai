@@ -7,7 +7,7 @@ const ROOT = process.cwd();
 const read = (path: string): string => readFileSync(join(ROOT, path), "utf8");
 
 describe("production fire-drill gate", () => {
-  it("deploys the adapter while preserving the original Worker as the core", () => {
+  it("deploys the composed adapter while preserving the original Worker as the core", () => {
     const wrangler = read("wrangler.jsonc");
     const adapter = read("src/index-fire-drill.ts");
     const core = read("src/index.ts");
@@ -16,7 +16,10 @@ describe("production fire-drill gate", () => {
     expect(adapter).toContain('from "./index"');
     expect(adapter).toContain('url.pathname === "/api/pilot/readiness"');
     expect(adapter).toContain('url.pathname === "/api/pilot/refresh-kraken"');
-    expect(adapter).toContain("enrichReadinessWithFireDrill(await coreWorker.fetch(request, env))");
+    expect(adapter).toContain("const base = await coreWorker.fetch(request, env)");
+    expect(adapter).toContain("const withFireDrill = await enrichReadinessWithFireDrill(base)");
+    expect(adapter).toContain("return enrichReadinessWithAccountCleanliness(");
+    expect(adapter).toContain("CoordinatedLiveExecutorState as LiveExecutorState");
 
     expect(core).toContain('url.pathname === "/api/pilot/submit"');
     expect(core).toContain("PILOT_SUBMISSION_NOT_ARMED");
