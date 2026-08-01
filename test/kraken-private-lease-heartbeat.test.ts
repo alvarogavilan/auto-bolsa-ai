@@ -67,16 +67,18 @@ describe("Kraken private lease heartbeat", () => {
   });
 
   it("sends only the lease id to the internal renewal endpoint", async () => {
-    let captured: Request | null = null;
+    const captured: Request[] = [];
     const env = environment(async (request) => {
-      captured = request;
+      captured.push(request);
       return Response.json({ renewed: true, leaseId: "lease-2", expiresAt: Date.now() + 120_000 });
     });
 
     await renewKrakenPrivateLease(env, "lease-2");
-    expect(captured).not.toBeNull();
-    expect(new URL((captured as Request).url).pathname).toBe(KRAKEN_PRIVATE_LEASE_RENEW_PATH);
-    expect(await (captured as Request).clone().json()).toEqual({ leaseId: "lease-2" });
+    expect(captured).toHaveLength(1);
+    const request = captured[0];
+    expect(request).toBeDefined();
+    expect(new URL(request!.url).pathname).toBe(KRAKEN_PRIVATE_LEASE_RENEW_PATH);
+    expect(await request!.clone().json()).toEqual({ leaseId: "lease-2" });
   });
 
   it("keeps heartbeat comfortably below the persisted lease TTL", () => {
