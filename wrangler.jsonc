@@ -1,7 +1,7 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "auto-bolsa-ai",
-  "main": "src/index-fire-drill.ts",
+  "main": "src/index-api-demo.ts",
   "compatibility_date": "2026-07-31",
   "vars": {
     "TRADING_MODE": "paper",
