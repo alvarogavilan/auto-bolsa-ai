@@ -8,6 +8,10 @@ import {
   type LiveOrderRequest,
 } from "./live-executor";
 import {
+  calibratePristineValidationBaseline,
+  prepareValidationOrder,
+} from "./live-validation-order";
+import {
   submitOrderWithAtomicPreflightCertificate,
   type AtomicLivePreflightCertificateStore,
 } from "./live-certified-submission";
@@ -17,6 +21,7 @@ import {
   runLiveOrderPreflight,
 } from "./live-order-preflight";
 import {
+  checkLivePreflightCertificate,
   createLivePreflightCertificate,
   type LivePreflightCertificate,
 } from "./live-preflight-certificate";
@@ -44,6 +49,7 @@ import { BOT_STATE_SINGLETON_NAME, type Env } from "./types";
 const STORAGE_KEY = "live-executor-snapshot";
 const PAIR_METADATA_CACHE_KEY = "live-pair-resolution-cache-v2";
 const PAIR_METADATA_TTL_MS = 60 * 60_000;
+const JOURNAL_STORAGE_PREFIX = "live-submission-journal-v1:";
 
 interface StoredPairResolution {
   schemaVersion: "live-pair-resolution-cache-v2";
@@ -58,15 +64,6 @@ interface LiveReconciliationContext {
   config: LiveGuardrailConfig;
 }
 
-/**
- * Durable Object que persistiría el estado del ejecutor LIVE.
- *
- * IMPORTANTE: esta clase NO está enlazada en `wrangler.jsonc` (no hay binding
- * ni migración) ni exportada desde `index.ts`, así que Cloudflare no la
- * instancia ni la despliega: no existe como recurso real en la cuenta. Solo
- * vive como código fuente, comprobado por `tsc --noEmit` y ejercitado
- * indirectamente a través de las funciones puras del ejecutor.
- */
 export class LiveExecutorState extends DurableObject<Env> {
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -82,7 +79,6 @@ export class LiveExecutorState extends DurableObject<Env> {
     await this.ctx.storage.put(STORAGE_KEY, state);
   }
 
-  /** El nonce procede siempre de la única autoridad persistente BotState. */
   private async nextNonce(): Promise<string> {
     const botState = this.env.BOT_STATE.get(this.env.BOT_STATE.idFromName(BOT_STATE_SINGLETON_NAME));
     const response = await botState.fetch("https://bot/kraken/next-nonce", { method: "POST" });
@@ -91,10 +87,6 @@ export class LiveExecutorState extends DurableObject<Env> {
     return nonce;
   }
 
-  /**
-   * El transporte real solo se construye si `LIVE_TRADING_ENABLED === "true"`
-   * y hay credenciales. Hoy la variable está ausente y siempre se usa el mock.
-   */
   private transport(): LiveOrderTransport {
     const enabled = liveTradingEnabledFromEnv(this.env.LIVE_TRADING_ENABLED);
     if (enabled && this.env.KRAKEN_API_KEY && this.env.KRAKEN_API_SECRET) {
@@ -107,10 +99,6 @@ export class LiveExecutorState extends DurableObject<Env> {
     return new FakeLiveOrderTransport();
   }
 
-  /**
-   * La fuente real de fills solo puede construirse bajo activación explícita.
-   * Cualquier otra composición falla cerrada.
-   */
   private fillEvidenceSource(): LiveFillEvidenceSource {
     const enabled = liveTradingEnabledFromEnv(this.env.LIVE_TRADING_ENABLED);
     if (enabled && this.env.KRAKEN_API_KEY && this.env.KRAKEN_API_SECRET) {
@@ -123,7 +111,6 @@ export class LiveExecutorState extends DurableObject<Env> {
     return new UnavailableLiveFillEvidenceSource();
   }
 
-  /** Persistencia local de certificados, separada del snapshot del ejecutor. */
   private certificatePersistence(): LivePreflightCertificatePersistence {
     return {
       get: async (key) => (await this.ctx.storage.get<LivePreflightCertificate>(key)) ?? null,
@@ -133,7 +120,6 @@ export class LiveExecutorState extends DurableObject<Env> {
     };
   }
 
-  /** Persistencia local del journal write-ahead, separada del snapshot. */
   private journalPersistence(): LiveSubmissionJournalPersistence {
     return {
       get: async (key) => (await this.ctx.storage.get<LiveSubmissionJournalEntry>(key)) ?? null,
@@ -143,11 +129,6 @@ export class LiveExecutorState extends DurableObject<Env> {
     };
   }
 
-  /**
-   * El bloqueo de concurrencia cubre solo get/check/put local. Se libera antes
-   * de cualquier llamada de red, evitando que dos envíos consuman el mismo
-   * certificado sin mantener un lock durante Kraken.
-   */
   private certificateStore(): AtomicLivePreflightCertificateStore {
     return new PersistedAtomicLivePreflightCertificateStore(
       this.certificatePersistence(),
@@ -157,7 +138,6 @@ export class LiveExecutorState extends DurableObject<Env> {
     );
   }
 
-  /** El journal usa la misma disciplina: sección crítica local, nunca red. */
   private submissionJournal(): PersistedLiveSubmissionJournal {
     return new PersistedLiveSubmissionJournal(
       this.journalPersistence(),
@@ -167,10 +147,81 @@ export class LiveExecutorState extends DurableObject<Env> {
     );
   }
 
-  /**
-   * Tras una reconciliación completamente válida, resuelve únicamente los
-   * journals de órdenes no preparadas y no incluidas entre las no resueltas.
-   */
+  private async hasPendingSubmissionJournal(): Promise<boolean> {
+    const entries = await this.ctx.storage.list<LiveSubmissionJournalEntry>({ prefix: JOURNAL_STORAGE_PREFIX });
+    return [...entries.values()].some((entry) => entry.phase !== "reconciled");
+  }
+
+  private async validationReadinessDetails(state: LiveExecutorSnapshot, now: number): Promise<Record<string, unknown>> {
+    const order = state.activeClOrdId && state.orders[state.activeClOrdId]
+      ? state.orders[state.activeClOrdId]!
+      : Object.values(state.orders).sort((left, right) => right.updatedAt - left.updatedAt)[0] ?? null;
+    if (!order) {
+      return {
+        order: null,
+        preflightCertificate: { status: "absent" },
+        submissionJournal: { phase: "none" },
+        reconciliation: {
+          everRun: state.lastBalanceCheckStatus !== null,
+          ok: state.lastBalanceCheckStatus === "consistent",
+          balanceStatus: state.lastBalanceCheckStatus,
+          unresolvedOrderCount: 0,
+        },
+      };
+    }
+
+    const certificate = await this.ctx.storage.get<LivePreflightCertificate>(
+      livePreflightCertificateStorageKey(order.clOrdId),
+    );
+    let certificateStatus: "absent" | "valid" | "expired" | "consumed" | "invalid" = "absent";
+    if (certificate) {
+      if (certificate.consumedAt !== null) certificateStatus = "consumed";
+      else if (now >= certificate.expiresAt) certificateStatus = "expired";
+      else {
+        const check = await checkLivePreflightCertificate(certificate, order.clOrdId, order.request, now);
+        certificateStatus = check.allowed ? "valid" : "invalid";
+      }
+    }
+
+    const journal = await this.ctx.storage.get<LiveSubmissionJournalEntry>(`${JOURNAL_STORAGE_PREFIX}${order.clOrdId}`);
+    const unresolvedOrderCount = Object.values(state.orders).filter(
+      (candidate) => candidate.status === "reconciliation_required",
+    ).length;
+    return {
+      order: {
+        clOrdId: order.clOrdId,
+        status: order.status,
+        pair: order.request.pair,
+        side: order.request.side,
+        volumeBase: order.request.volumeBase,
+        limitPrice: order.request.limitPrice,
+        notionalEur: order.request.notionalEur,
+        createdAt: order.createdAt,
+        updatedAt: order.updatedAt,
+      },
+      preflightCertificate: {
+        status: certificateStatus,
+        issuedAt: certificate?.issuedAt ?? null,
+        expiresAt: certificate?.expiresAt ?? null,
+        consumedAt: certificate?.consumedAt ?? null,
+        validateFlagForced: certificate?.proof.validateFlagForced ?? null,
+        realOrderCreated: certificate?.proof.realOrderCreated ?? null,
+      },
+      submissionJournal: {
+        phase: journal?.phase ?? "none",
+        createdAt: journal?.createdAt ?? null,
+        updatedAt: journal?.updatedAt ?? null,
+        reconciledAt: journal?.reconciledAt ?? null,
+      },
+      reconciliation: {
+        everRun: state.lastBalanceCheckStatus !== null,
+        ok: state.lastBalanceCheckStatus === "consistent" && unresolvedOrderCount === 0,
+        balanceStatus: state.lastBalanceCheckStatus,
+        unresolvedOrderCount,
+      },
+    };
+  }
+
   private async resolveVerifiedJournals(
     state: LiveExecutorSnapshot,
     reportOk: boolean,
@@ -192,11 +243,6 @@ export class LiveExecutorState extends DurableObject<Env> {
     return resolved;
   }
 
-  /**
-   * Obtiene mínimos, precisiones y aliases desde AssetPairs y los conserva en
-   * storage. Preparar/enviar exige información fresca. Reconciliar o cancelar
-   * en emergencia puede usar la última copia conocida si la API pública cae.
-   */
   private async pairResolution(
     pair: string,
     now: number,
@@ -245,12 +291,41 @@ export class LiveExecutorState extends DurableObject<Env> {
       return Response.json(await this.read());
     }
 
+    if (request.method === "GET" && url.pathname === "/readiness-details") {
+      const state = await this.read();
+      return Response.json(await this.validationReadinessDetails(state, now));
+    }
+
     if (request.method === "POST" && url.pathname === "/observe-market") {
       const body = (await request.json()) as { equityEur: number };
       const state = await this.read();
       observeMarket(state, body.equityEur, now);
       await this.write(state);
       return Response.json(state);
+    }
+
+    if (request.method === "POST" && url.pathname === "/prepare-validation") {
+      let body: { eurBalance: number; request: LiveOrderRequest };
+      try {
+        body = (await request.json()) as { eurBalance: number; request: LiveOrderRequest };
+      } catch {
+        return Response.json({ error: "Cuerpo interno de preparación validate-only inválido" }, { status: 400 });
+      }
+      const state = await this.read();
+      const calibration = calibratePristineValidationBaseline(
+        state,
+        body.eurBalance,
+        await this.hasPendingSubmissionJournal(),
+        now,
+      );
+      if (!calibration.ok) {
+        await this.write(calibration.state);
+        return Response.json(calibration, { status: 409 });
+      }
+      const { config } = await this.reconciliationContext(now);
+      const result = prepareValidationOrder(state, config, body.request, now);
+      await this.write(result.state);
+      return Response.json(result, { status: result.ok ? 200 : 409 });
     }
 
     if (request.method === "POST" && url.pathname === "/preflight") {
@@ -325,8 +400,6 @@ export class LiveExecutorState extends DurableObject<Env> {
       }
 
       const certificateKey = livePreflightCertificateStorageKey(order.clOrdId);
-      // Un nuevo intento de preflight invalida cualquier certificado anterior,
-      // incluso si Kraken devuelve rechazo, timeout o error de autenticación.
       await this.ctx.storage.delete(certificateKey);
 
       const resolution = await this.pairResolution(pair, now, false);
