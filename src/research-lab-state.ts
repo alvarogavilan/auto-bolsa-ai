@@ -1,6 +1,7 @@
 import {
   applyCommitteeTradeSnapshot,
   buildCommitteeShadowImpactReport,
+  emptyCommitteeShadowImpactState,
   sanitizeCommitteeShadowImpactState,
   type CommitteeShadowImpactState,
 } from "./committee-shadow-impact";
@@ -16,6 +17,11 @@ interface LabResponsePayload {
   state?: StoredResearchLabState;
   committee?: ResearchCommitteeReport;
   [key: string]: unknown;
+}
+
+interface SafeImpactRead {
+  impact: CommitteeShadowImpactState;
+  error: string | null;
 }
 
 function validCommittee(value: unknown): value is ResearchCommitteeReport {
@@ -35,11 +41,21 @@ export class ResearchLabState extends BaseResearchLabState {
     this.impactStorage = ctx.storage;
   }
 
-  private async readImpact(now = Date.now()): Promise<CommitteeShadowImpactState> {
-    return sanitizeCommitteeShadowImpactState(
-      await this.impactStorage.get<unknown>(COMMITTEE_IMPACT_KEY),
-      now,
-    );
+  private async readImpact(now = Date.now()): Promise<SafeImpactRead> {
+    try {
+      return {
+        impact: sanitizeCommitteeShadowImpactState(
+          await this.impactStorage.get<unknown>(COMMITTEE_IMPACT_KEY),
+          now,
+        ),
+        error: null,
+      };
+    } catch {
+      return {
+        impact: emptyCommitteeShadowImpactState(now),
+        error: "COMMITTEE_IMPACT_STORAGE_READ_FAILED",
+      };
+    }
   }
 
   private async enrichLabResponse(
@@ -56,25 +72,38 @@ export class ResearchLabState extends BaseResearchLabState {
       return response;
     }
 
-    let impact = await this.readImpact(now);
+    const safeRead = await this.readImpact(now);
+    let impact = safeRead.impact;
+    let impactError = safeRead.error;
     if (
       shouldPersistSnapshot
       && payload.initialized === true
       && payload.state
       && Array.isArray(payload.state.strategies)
     ) {
-      impact = applyCommitteeTradeSnapshot(
-        impact,
-        payload.state.strategies,
-        validCommittee(payload.committee) ? payload.committee : null,
-        now,
-      );
-      await this.impactStorage.put(COMMITTEE_IMPACT_KEY, impact);
+      try {
+        impact = applyCommitteeTradeSnapshot(
+          impact,
+          payload.state.strategies,
+          validCommittee(payload.committee) ? payload.committee : null,
+          now,
+        );
+        await this.impactStorage.put(COMMITTEE_IMPACT_KEY, impact);
+      } catch {
+        impactError = "COMMITTEE_IMPACT_PERSIST_FAILED";
+      }
     }
 
     return Response.json({
       ...payload,
       committeeImpact: buildCommitteeShadowImpactReport(impact, now),
+      committeeImpactStatus: {
+        available: impactError === null,
+        error: impactError,
+        failOpenForPaper: true,
+        changesTradingDecision: false,
+        liveTrading: false,
+      },
       liveTrading: false,
     }, {
       status: response.status,
@@ -87,7 +116,11 @@ export class ResearchLabState extends BaseResearchLabState {
     const response = await super.fetch(request);
 
     if (request.method === "POST" && url.pathname === "/reset") {
-      await this.impactStorage.delete(COMMITTEE_IMPACT_KEY);
+      try {
+        await this.impactStorage.delete(COMMITTEE_IMPACT_KEY);
+      } catch {
+        // El reset PAPER base ya terminó. Un fallo del ledger shadow no debe revertirlo.
+      }
       return response;
     }
 
