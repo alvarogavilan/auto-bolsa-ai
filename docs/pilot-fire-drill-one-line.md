@@ -1,0 +1,1 @@
+El simulacro local prueba fallos cerrados; nunca habilita dinero real.
