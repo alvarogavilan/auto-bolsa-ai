@@ -38,12 +38,12 @@ describe("temporal validation in the DEMO app", () => {
   it("publishes temporal evidence before the frozen forward layer", () => {
     const impact = readFileSync(join(ROOT, "src/research-lab-state-impact.ts"), "utf8");
     const forward = readFileSync(join(ROOT, "src/research-lab-state.ts"), "utf8");
-    const index = readFileSync(join(ROOT, "src/index.ts"), "utf8");
+    const indexCore = readFileSync(join(ROOT, "src/index-core.ts"), "utf8");
 
     expect(impact).toContain("buildTemporalValidationReport");
     expect(impact).toContain("temporalValidation");
     expect(forward).toContain('from "./research-lab-state-impact"');
-    expect(index).toContain("LIVE_TRADING_HARD_DISABLED");
-    expect(index).toContain('url.pathname.startsWith("/api/live")');
+    expect(indexCore).toContain("LIVE_TRADING_HARD_DISABLED");
+    expect(indexCore).toContain('url.pathname.startsWith("/api/live")');
   });
 });
