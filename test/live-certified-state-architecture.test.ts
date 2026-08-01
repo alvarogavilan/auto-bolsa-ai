@@ -65,25 +65,27 @@ describe("inactive LIVE state certified submission architecture", () => {
 
   it("deploys persistent pilot state while keeping public submission impossible", () => {
     const wrangler = read("wrangler.jsonc");
-    const index = read("src/index.ts");
+    const wrapper = read("src/index.ts");
+    const indexCore = read("src/index-core.ts");
 
     expect(wrangler).toContain('"name": "LIVE_EXECUTOR"');
     expect(wrangler).toContain('"class_name": "LiveExecutorState"');
     expect(wrangler).toContain('"tag": "v3"');
     expect(wrangler).not.toContain("LIVE_TRADING_ENABLED");
 
-    expect(index).toContain('from "./live-executor-state"');
-    expect(index).toMatch(/export\s*\{[^}]*LiveExecutorState/s);
-    expect(index).toContain('url.pathname === "/api/pilot/submit"');
-    expect(index).toContain("PILOT_SUBMISSION_NOT_ARMED");
+    expect(indexCore).toContain('from "./live-executor-state"');
+    expect(wrapper).toMatch(/export\s*\{[^}]*LiveExecutorState/s);
+    expect(indexCore).toContain('url.pathname === "/api/pilot/submit"');
+    expect(indexCore).toContain("PILOT_SUBMISSION_NOT_ARMED");
 
-    const actionMapStart = index.indexOf("const pilotActions");
-    const actionMapEnd = index.indexOf("const target", actionMapStart);
-    const actionMap = index.slice(actionMapStart, actionMapEnd);
+    const actionMapStart = indexCore.indexOf("const pilotActions");
+    const actionMapEnd = indexCore.indexOf("const target", actionMapStart);
+    const actionMap = indexCore.slice(actionMapStart, actionMapEnd);
     expect(actionMap).not.toContain('"/api/pilot/submit"');
 
-    const scheduled = index.slice(index.indexOf("async scheduled"));
+    const scheduled = indexCore.slice(indexCore.indexOf("async scheduled"));
     expect(scheduled).not.toContain("liveExecutorState(");
     expect(scheduled).not.toContain("/api/pilot");
+    expect(wrapper).toContain("return coreWorker.scheduled(controller, env, ctx)");
   });
 });
