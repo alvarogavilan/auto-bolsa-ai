@@ -35,12 +35,14 @@ describe("temporal validation in the DEMO app", () => {
     expect(html).not.toContain("Autorizar LIVE por validación");
   });
 
-  it("publishes the report through the lab response without changing the executor", () => {
-    const state = readFileSync(join(ROOT, "src/research-lab-state.ts"), "utf8");
+  it("publishes temporal evidence before the frozen forward layer", () => {
+    const impact = readFileSync(join(ROOT, "src/research-lab-state-impact.ts"), "utf8");
+    const forward = readFileSync(join(ROOT, "src/research-lab-state.ts"), "utf8");
     const index = readFileSync(join(ROOT, "src/index.ts"), "utf8");
 
-    expect(state).toContain("buildTemporalValidationReport");
-    expect(state).toContain("temporalValidation");
+    expect(impact).toContain("buildTemporalValidationReport");
+    expect(impact).toContain("temporalValidation");
+    expect(forward).toContain('from "./research-lab-state-impact"');
     expect(index).toContain("LIVE_TRADING_HARD_DISABLED");
     expect(index).toContain('url.pathname.startsWith("/api/live")');
   });
