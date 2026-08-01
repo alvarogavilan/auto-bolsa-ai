@@ -18,6 +18,15 @@ describe("temporal validation in the DEMO app", () => {
     expect(html).toContain("renderTemporalValidation");
   });
 
+  it("emits syntactically valid browser JavaScript", async () => {
+    const html = await (await demoDashboard()).text();
+    const match = html.match(/<script>([\s\S]*?)<\/script>/);
+
+    expect(match).not.toBeNull();
+    expect(() => new Function(match?.[1] ?? "")).not.toThrow();
+    expect(match?.[1]).not.toMatch(/^\+/m);
+  });
+
   it("keeps temporal evidence informational and excludes live controls", async () => {
     const html = await (await demoDashboard()).text();
 
