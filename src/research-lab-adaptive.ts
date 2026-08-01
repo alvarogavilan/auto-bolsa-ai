@@ -66,6 +66,23 @@ export function initializeResearchLab(universe: MarketUniverse, now = Date.now()
   return initializeBaseResearchLab(withTokenizedGold(universe), now);
 }
 
+export function reconcileResearchLab(
+  state: ResearchLabState,
+  universe: MarketUniverse,
+  now = Date.now(),
+): ResearchLabState {
+  const desired = initializeResearchLab(universe, now);
+  const goldStrategies = desired.strategies.filter((strategy) => strategy.base.toUpperCase() === "XAUT");
+  const known = new Set(state.strategies.map((strategy) => strategy.id));
+  for (const strategy of goldStrategies) {
+    if (!known.has(strategy.id)) {
+      state.strategies.push(strategy);
+      known.add(strategy.id);
+    }
+  }
+  return state;
+}
+
 function laneMaximumAllocation(lane: ResearchLaneId): number {
   if (lane === "fast") return 0.08;
   if (lane === "intraday") return 0.14;
