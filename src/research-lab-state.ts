@@ -8,6 +8,7 @@ import {
 import type { ResearchCommitteeReport } from "./decision-committee";
 import type { ResearchLabState as StoredResearchLabState } from "./research-lab";
 import { ResearchLabState as BaseResearchLabState } from "./research-lab-state-base";
+import { buildTemporalValidationReport } from "./temporal-validation";
 import type { Env } from "./types";
 
 const COMMITTEE_IMPACT_KEY = "committee-shadow-impact-v1";
@@ -94,6 +95,10 @@ export class ResearchLabState extends BaseResearchLabState {
       }
     }
 
+    const temporalValidation = payload.state && Array.isArray(payload.state.strategies)
+      ? buildTemporalValidationReport(payload.state.strategies)
+      : buildTemporalValidationReport([]);
+
     return Response.json({
       ...payload,
       committeeImpact: buildCommitteeShadowImpactReport(impact, now),
@@ -104,6 +109,7 @@ export class ResearchLabState extends BaseResearchLabState {
         changesTradingDecision: false,
         liveTrading: false,
       },
+      temporalValidation,
       liveTrading: false,
     }, {
       status: response.status,
