@@ -4,6 +4,8 @@ import type { KrakenAssetPair, KrakenTicker } from "../src/kraken-markets";
 import type { ValidateOnlyOrderGateway } from "../src/live-order-preflight";
 import { runAdminKrakenValidateOnlyPreflight } from "../src/admin-kraken-preflight";
 
+const CL_ORD_ID = "00000000-0000-4000-8000-000000000001";
+
 const pair: KrakenAssetPair = {
   key: "XXBTZEUR",
   altname: "XBTEUR",
@@ -31,14 +33,16 @@ const ticker: KrakenTicker = {
 };
 
 describe("isolated admin Kraken preflight service", () => {
-  it("builds the plan from public data and validates without creating an order", async () => {
+  it("uses the prepared clOrdId and emits a one-use certificate after validation", async () => {
     let nonceCalls = 0;
     let gatewayCalls = 0;
     let receivedValidate: boolean | undefined;
+    let receivedClOrdId: string | undefined;
     const gateway: ValidateOnlyOrderGateway = {
       validate: async (request) => {
         gatewayCalls += 1;
         receivedValidate = request.validate;
+        receivedClOrdId = request.clOrdId;
         return { txid: [], descr: { order: "validated only" } };
       },
     };
@@ -48,6 +52,7 @@ describe("isolated admin Kraken preflight service", () => {
         apiKey: "key",
         apiSecret: "secret",
         pair: "XBTEUR",
+        clOrdId: CL_ORD_ID,
         nextNonce: async () => String(++nonceCalls),
         now: 1_800_000_000_000,
       },
@@ -66,18 +71,26 @@ describe("isolated admin Kraken preflight service", () => {
     expect(gatewayCalls).toBe(1);
     expect(nonceCalls).toBe(1);
     expect(receivedValidate).toBe(true);
+    expect(receivedClOrdId).toBe(CL_ORD_ID);
+    expect(report.schemaVersion).toBe("admin-kraken-preflight-v2");
     expect(report.result.status).toBe("validated");
+    expect(report.result.clOrdId).toBe(CL_ORD_ID);
     expect(report.orderCreated).toBe(false);
     expect(report.plan.intent.notionalEur).toBeLessThanOrEqual(5);
     expect(report.liveTrading).toBe(false);
+    expect(report.certificate).not.toBeNull();
+    expect(report.certificate?.clOrdId).toBe(CL_ORD_ID);
+    expect(report.certificate?.intent).toEqual(report.plan.intent);
+    expect(report.certificate?.consumedAt).toBeNull();
   });
 
-  it("reports an explicit Kraken EOrder rejection as completed without order creation", async () => {
+  it("reports an explicit Kraken EOrder rejection without issuing a certificate", async () => {
     const report = await runAdminKrakenValidateOnlyPreflight(
       {
         apiKey: "key",
         apiSecret: "secret",
         pair: "XBTEUR",
+        clOrdId: CL_ORD_ID,
         nextNonce: async () => "1",
       },
       {
@@ -93,14 +106,16 @@ describe("isolated admin Kraken preflight service", () => {
     expect(report.result.blockers).toEqual(["EOrder:Insufficient funds"]);
     expect(report.preflightComplete).toBe(true);
     expect(report.orderCreated).toBe(false);
+    expect(report.certificate).toBeNull();
   });
 
-  it("keeps a generic transport or authentication failure ambiguous", async () => {
+  it("keeps a generic transport or authentication failure ambiguous and uncertified", async () => {
     const report = await runAdminKrakenValidateOnlyPreflight(
       {
         apiKey: "key",
         apiSecret: "secret",
         pair: "XBTEUR",
+        clOrdId: CL_ORD_ID,
         nextNonce: async () => "1",
       },
       {
@@ -115,6 +130,7 @@ describe("isolated admin Kraken preflight service", () => {
     expect(report.result.status).toBe("unknown");
     expect(report.preflightComplete).toBe(false);
     expect(report.orderCreated).toBeNull();
+    expect(report.certificate).toBeNull();
   });
 
   it("never requests a nonce when public data cannot build a safe plan", async () => {
@@ -126,6 +142,7 @@ describe("isolated admin Kraken preflight service", () => {
         apiKey: "key",
         apiSecret: "secret",
         pair: "XBTEUR",
+        clOrdId: CL_ORD_ID,
         nextNonce: async () => String(++nonceCalls),
       },
       {
@@ -147,6 +164,7 @@ describe("isolated admin Kraken preflight service", () => {
       apiKey: "key",
       apiSecret: "secret",
       pair: "XBTEUR",
+      clOrdId: CL_ORD_ID,
       nextNonce: async () => "1",
     };
 
@@ -164,5 +182,25 @@ describe("isolated admin Kraken preflight service", () => {
       fetchPairs: async () => [pair],
       fetchTickers: async () => ({}),
     })).rejects.toThrow(/Ticker no contiene/);
+  });
+
+  it("rejects a missing prepared clOrdId before any network dependency is used", async () => {
+    let dependencyCalled = false;
+    await expect(runAdminKrakenValidateOnlyPreflight(
+      {
+        apiKey: "key",
+        apiSecret: "secret",
+        pair: "XBTEUR",
+        clOrdId: "   ",
+        nextNonce: async () => "1",
+      },
+      {
+        fetchPairs: async () => {
+          dependencyCalled = true;
+          return [pair];
+        },
+      },
+    )).rejects.toThrow(/Falta el clOrdId preparado/);
+    expect(dependencyCalled).toBe(false);
   });
 });
