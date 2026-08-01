@@ -1,5 +1,5 @@
-import { stressDemoDashboard } from "./demo-dashboard-stress";
+import { forwardDemoDashboard } from "./demo-dashboard-forward";
 
 export function demoDashboard(): Promise<Response> {
-  return stressDemoDashboard();
+  return forwardDemoDashboard();
 }

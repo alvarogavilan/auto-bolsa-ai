@@ -35,12 +35,14 @@ describe("cost and sequence stress in the DEMO app", () => {
     expect(html).not.toContain("Autorizar orden real");
   });
 
-  it("publishes the stress report without modifying live routes", () => {
-    const state = readFileSync(join(ROOT, "src/research-lab-state.ts"), "utf8");
+  it("publishes stress before the frozen forward observer without modifying live routes", () => {
+    const impact = readFileSync(join(ROOT, "src/research-lab-state-impact.ts"), "utf8");
+    const forward = readFileSync(join(ROOT, "src/research-lab-state.ts"), "utf8");
     const index = readFileSync(join(ROOT, "src/index.ts"), "utf8");
 
-    expect(state).toContain("buildCostSequenceStressReport");
-    expect(state).toContain("costSequenceStress");
+    expect(impact).toContain("buildCostSequenceStressReport");
+    expect(impact).toContain("costSequenceStress");
+    expect(forward).toContain('from "./research-lab-state-impact"');
     expect(index).toContain("LIVE_TRADING_HARD_DISABLED");
     expect(index).toContain('url.pathname.startsWith("/api/live")');
   });

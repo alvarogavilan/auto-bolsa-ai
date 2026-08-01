@@ -1,124 +1,134 @@
+import type { StrategyBenchmarkSuite } from "./benchmark-suite";
 import {
-  applyCommitteeTradeSnapshot,
-  buildCommitteeShadowImpactReport,
-  emptyCommitteeShadowImpactState,
-  sanitizeCommitteeShadowImpactState,
-  type CommitteeShadowImpactState,
-} from "./committee-shadow-impact";
-import { buildCostSequenceStressReport } from "./cost-sequence-stress";
-import type { ResearchCommitteeReport } from "./decision-committee";
+  advanceFrozenForwardExperiment,
+  buildFrozenForwardReport,
+  frozenManifestHash,
+  sanitizeFrozenForwardExperiment,
+  type FrozenForwardExperimentState,
+} from "./frozen-forward-experiment";
 import type { ResearchLabState as StoredResearchLabState } from "./research-lab";
-import { ResearchLabState as BaseResearchLabState } from "./research-lab-state-base";
-import { buildTemporalValidationReport } from "./temporal-validation";
+import { ResearchLabState as ImpactResearchLabState } from "./research-lab-state-impact";
 import type { Env } from "./types";
 
-const COMMITTEE_IMPACT_KEY = "committee-shadow-impact-v1";
+const FROZEN_FORWARD_KEY = "frozen-forward-experiment-v1";
 
-interface LabResponsePayload {
+interface LabPayload {
   initialized?: boolean;
   state?: StoredResearchLabState;
-  committee?: ResearchCommitteeReport;
+  benchmarkSuite?: StrategyBenchmarkSuite;
   [key: string]: unknown;
 }
 
-interface SafeImpactRead {
-  impact: CommitteeShadowImpactState;
+interface FrozenStateRead {
+  state: FrozenForwardExperimentState | null;
   error: string | null;
 }
 
-function validCommittee(value: unknown): value is ResearchCommitteeReport {
+function validSuite(value: unknown): value is StrategyBenchmarkSuite {
   return Boolean(
     value
     && typeof value === "object"
-    && (value as ResearchCommitteeReport).schemaVersion === "paper-research-committee-v1"
-    && Array.isArray((value as ResearchCommitteeReport).reports),
+    && (value as StrategyBenchmarkSuite).schemaVersion === "paper-benchmark-suite-v1"
+    && Array.isArray((value as StrategyBenchmarkSuite).entries),
   );
 }
 
-export class ResearchLabState extends BaseResearchLabState {
-  private readonly impactStorage: DurableObjectStorage;
+export class ResearchLabState extends ImpactResearchLabState {
+  private readonly forwardStorage: DurableObjectStorage;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
-    this.impactStorage = ctx.storage;
+    this.forwardStorage = ctx.storage;
   }
 
-  private async readImpact(now = Date.now()): Promise<SafeImpactRead> {
+  private async readFrozenState(): Promise<FrozenStateRead> {
     try {
-      return {
-        impact: sanitizeCommitteeShadowImpactState(
-          await this.impactStorage.get<unknown>(COMMITTEE_IMPACT_KEY),
-          now,
-        ),
-        error: null,
-      };
+      const raw = await this.forwardStorage.get<unknown>(FROZEN_FORWARD_KEY);
+      if (raw === undefined) return { state: null, error: null };
+      const state = sanitizeFrozenForwardExperiment(raw);
+      return state
+        ? { state, error: null }
+        : { state: null, error: "FROZEN_FORWARD_STATE_INVALID" };
     } catch {
-      return {
-        impact: emptyCommitteeShadowImpactState(now),
-        error: "COMMITTEE_IMPACT_STORAGE_READ_FAILED",
-      };
+      return { state: null, error: "FROZEN_FORWARD_STORAGE_READ_FAILED" };
     }
   }
 
-  private async enrichLabResponse(
+  private async enrichForward(
     response: Response,
-    shouldPersistSnapshot: boolean,
+    shouldAdvance: boolean,
     now = Date.now(),
   ): Promise<Response> {
-    let payload: LabResponsePayload;
+    let payload: LabPayload;
     try {
       const value = await response.clone().json();
       if (!value || typeof value !== "object" || Array.isArray(value)) return response;
-      payload = value as LabResponsePayload;
+      payload = value as LabPayload;
     } catch {
       return response;
     }
 
-    const safeRead = await this.readImpact(now);
-    let impact = safeRead.impact;
-    let impactError = safeRead.error;
-    if (
-      shouldPersistSnapshot
-      && payload.initialized === true
-      && payload.state
-      && Array.isArray(payload.state.strategies)
-    ) {
+    const strategies = payload.state?.strategies;
+    if (payload.initialized !== true || !Array.isArray(strategies)) {
+      return Response.json({
+        ...payload,
+        frozenForwardExperiment: null,
+        frozenForwardStatus: {
+          initialized: false,
+          available: true,
+          error: null,
+          startsOnNextValidCycle: true,
+          failOpenForPaper: true,
+          changesTradingDecision: false,
+          liveTrading: false,
+        },
+        liveTrading: false,
+      }, { status: response.status, headers: { "Cache-Control": "no-store" } });
+    }
+
+    const suite = validSuite(payload.benchmarkSuite) ? payload.benchmarkSuite : null;
+    const read = await this.readFrozenState();
+    let state = read.state;
+    let report = null;
+    let error = read.error;
+
+    if (error === null) {
       try {
-        impact = applyCommitteeTradeSnapshot(
-          impact,
-          payload.state.strategies,
-          validCommittee(payload.committee) ? payload.committee : null,
-          now,
-        );
-        await this.impactStorage.put(COMMITTEE_IMPACT_KEY, impact);
+        if (shouldAdvance) {
+          const advanced = await advanceFrozenForwardExperiment(state, strategies, suite, now);
+          state = advanced.state;
+          report = advanced.report;
+          await this.forwardStorage.put(FROZEN_FORWARD_KEY, state);
+        } else if (state) {
+          report = buildFrozenForwardReport(
+            state,
+            strategies,
+            suite,
+            await frozenManifestHash(strategies),
+            now,
+          );
+        }
       } catch {
-        impactError = "COMMITTEE_IMPACT_PERSIST_FAILED";
+        error = shouldAdvance
+          ? "FROZEN_FORWARD_ADVANCE_OR_PERSIST_FAILED"
+          : "FROZEN_FORWARD_REPORT_FAILED";
       }
     }
 
-    const strategies = payload.state && Array.isArray(payload.state.strategies)
-      ? payload.state.strategies
-      : [];
-    const temporalValidation = buildTemporalValidationReport(strategies);
-    const costSequenceStress = buildCostSequenceStressReport(strategies);
-
     return Response.json({
       ...payload,
-      committeeImpact: buildCommitteeShadowImpactReport(impact, now),
-      committeeImpactStatus: {
-        available: impactError === null,
-        error: impactError,
+      frozenForwardExperiment: report,
+      frozenForwardStatus: {
+        initialized: state !== null,
+        available: error === null,
+        error,
+        startsOnNextValidCycle: state === null && error === null,
         failOpenForPaper: true,
         changesTradingDecision: false,
         liveTrading: false,
       },
-      temporalValidation,
-      costSequenceStress,
       liveTrading: false,
-    }, {
-      status: response.status,
-      headers: { "Cache-Control": "no-store" },
-    });
+    }, { status: response.status, headers: { "Cache-Control": "no-store" } });
   }
 
   async fetch(request: Request): Promise<Response> {
@@ -127,19 +137,19 @@ export class ResearchLabState extends BaseResearchLabState {
 
     if (request.method === "POST" && url.pathname === "/reset") {
       try {
-        await this.impactStorage.delete(COMMITTEE_IMPACT_KEY);
+        await this.forwardStorage.delete(FROZEN_FORWARD_KEY);
       } catch {
-        // El reset PAPER base ya terminó. Un fallo del ledger shadow no debe revertirlo.
+        // El reset base ya finalizó; el expediente forward no puede revertirlo.
       }
       return response;
     }
 
     if (!response.ok) return response;
     if (request.method === "POST" && url.pathname === "/tick") {
-      return this.enrichLabResponse(response, true);
+      return this.enrichForward(response, true);
     }
     if (request.method === "GET" && url.pathname === "/status") {
-      return this.enrichLabResponse(response, false);
+      return this.enrichForward(response, false);
     }
     return response;
   }
