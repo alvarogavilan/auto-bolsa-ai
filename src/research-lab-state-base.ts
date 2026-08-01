@@ -7,6 +7,7 @@ import {
   applyResearchCandles,
   initializeResearchLab,
   isStrategyDue,
+  reconcileResearchLab,
   recordResearchError,
   summarizeResearchLab,
   type FastEntryGate,
@@ -157,7 +158,11 @@ export class ResearchLabState extends DurableObject<Env> {
   private async tick(payload: ResearchLabTickPayload): Promise<Response> {
     const now = Date.now();
     let state = await this.read();
-    if (!state) state = initializeResearchLab(payload.universe, now);
+    if (!state) {
+      state = initializeResearchLab(payload.universe, now);
+    } else {
+      state = reconcileResearchLab(state, payload.universe, now);
+    }
 
     const benchmarks = await this.readBenchmarks();
     const due = state.strategies.filter((strategy) => isStrategyDue(strategy, now));
