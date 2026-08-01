@@ -39,7 +39,7 @@ describe("persistent PAPER evidence in the DEMO app", () => {
   it("uses independent fail-open storage and feeds temporal and stress reports", () => {
     const impact = readFileSync(join(ROOT, "src/research-lab-state-impact.ts"), "utf8");
     const forward = readFileSync(join(ROOT, "src/research-lab-state.ts"), "utf8");
-    const index = readFileSync(join(ROOT, "src/index.ts"), "utf8");
+    const indexCore = readFileSync(join(ROOT, "src/index-core.ts"), "utf8");
 
     expect(impact).toContain('const PAPER_EVIDENCE_KEY = "paper-trade-evidence-v1"');
     expect(impact).toContain("hydrateStrategiesWithEvidence");
@@ -47,8 +47,8 @@ describe("persistent PAPER evidence in the DEMO app", () => {
     expect(impact).toContain("PAPER_EVIDENCE_PERSIST_FAILED");
     expect(impact).toContain("failOpenForPaper: true");
     expect(forward).toContain('from "./research-lab-state-impact"');
-    expect(index).toContain("LIVE_TRADING_HARD_DISABLED");
-    expect(index).toContain('url.pathname.startsWith("/api/live")');
+    expect(indexCore).toContain("LIVE_TRADING_HARD_DISABLED");
+    expect(indexCore).toContain('url.pathname.startsWith("/api/live")');
   });
 
   it("deletes both impact and evidence on PAPER reset without changing the base reset", () => {
