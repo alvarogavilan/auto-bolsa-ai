@@ -2,20 +2,16 @@ import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
-// Sin __dirname (el repo es ESM): se resuelve relativo al directorio de
-// trabajo, que en este repositorio es siempre la raíz al ejecutar `npm test`.
 const SRC_DIR = join(process.cwd(), "src");
 
-// Autoridad única del nonce: solo bot-state.ts puede construir un nonce (a
-// través de computeNextNonce). Cualquier otro fichero que lo haga directamente
-// arriesga desordenar la clave y disparar el bloqueo temporal de Kraken.
-const NONCE_AUTHORITY_FILE = "bot-state.ts";
+// El núcleo original sigue siendo la única autoridad persistente. bot-state.ts
+// es únicamente una capa que solicita el nonce por el endpoint interno del
+// núcleo y nunca calcula uno por su cuenta.
+const NONCE_AUTHORITY_FILE = "bot-state-base.ts";
+const NONCE_CONSUMER_FILE = "bot-state.ts";
 const NONCE_PURE_FUNCTION_FILE = "kraken-nonce.ts";
-// Funciones que firman/envían una llamada privada a Kraken. Los únicos puntos
-// autorizados son la autoridad existente, el transporte LIVE encapsulado y el
-// preflight validate-only aislado. Ninguno calcula el nonce por su cuenta.
 const PRIVATE_KRAKEN_CALL_SITES = new Set([
-  "bot-state.ts",
+  NONCE_AUTHORITY_FILE,
   "live-transport.ts",
   "live-order-preflight.ts",
 ]);
@@ -46,15 +42,23 @@ describe("Kraken single nonce authority (architectural)", () => {
   });
 
   it("only the single authority calls computeNextNonce", () => {
-    const callers = srcFiles().filter((file) => file !== NONCE_PURE_FUNCTION_FILE && /computeNextNonce\s*\(/.test(read(file)));
+    const callers = srcFiles().filter((file) =>
+      file !== NONCE_PURE_FUNCTION_FILE && /computeNextNonce\s*\(/.test(read(file))
+    );
     expect(callers).toEqual([NONCE_AUTHORITY_FILE]);
   });
 
-  it("never imports a private Kraken function outside the authorized call sites", () => {
-    // Se comprueba el import literal desde "./kraken", no el nombre de la
-    // llamada: otros módulos tienen sus propios métodos homónimos (p. ej.
-    // `LiveOrderTransport.cancelOrder`) que no deben confundirse con la
-    // función real de kraken.ts.
+  it("makes the fee layer consume the internal authority instead of generating a nonce", () => {
+    const consumer = read(NONCE_CONSUMER_FILE);
+    const feeModule = read("kraken-fees.ts");
+
+    expect(consumer).toContain('super.fetch(new Request("https://bot/kraken/next-nonce"');
+    expect(consumer).not.toContain("computeNextNonce");
+    expect(feeModule).not.toContain("computeNextNonce");
+    expect(feeModule).toMatch(/nonce:\s*string/);
+  });
+
+  it("never imports a core private Kraken function outside the authorized call sites", () => {
     const offenders: string[] = [];
     for (const file of srcFiles()) {
       if (PRIVATE_KRAKEN_CALL_SITES.has(file) || file === "kraken.ts") continue;
@@ -67,6 +71,14 @@ describe("Kraken single nonce authority (architectural)", () => {
       }
     }
     expect(offenders).toEqual([]);
+  });
+
+  it("allows exactly one caller of the TradeVolume audit", () => {
+    const callers = srcFiles().filter((file) => {
+      const content = read(file);
+      return /import\s*\{[^}]*fetchKrakenEffectiveFees[^}]*\}\s*from\s*["']\.\/kraken-fees["']/.test(content);
+    });
+    expect(callers).toEqual([NONCE_CONSUMER_FILE]);
   });
 
   it("keeps the extra addOrder call site strictly validate-only", () => {
