@@ -17,6 +17,19 @@ jobs:
         with:
           node-version: 22
       - run: npm install --ignore-scripts
-      - run: npm run typecheck:worker
-      - run: npm run typecheck:test
-      - run: npm test
+      - name: Verify Worker
+        shell: bash
+        run: |
+          set -o pipefail
+          {
+            npm run typecheck:worker
+            npm run typecheck:test
+            npm test
+          } 2>&1 | tee verify-worker.log
+      - name: Upload verification log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verify-worker-log
+          path: verify-worker.log
+          if-no-files-found: warn
