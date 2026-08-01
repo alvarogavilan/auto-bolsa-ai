@@ -12,13 +12,11 @@ import {
   krakenSafetySummary,
   liveExecutorState,
 } from "./pilot-runtime";
+import { buildPilotValidationProposalFromKraken } from "./pilot-validation-proposal";
 import { type FastEntryGate } from "./research-lab";
 import { ResearchLabState } from "./research-lab-state";
 import { BOT_STATE_SINGLETON_NAME, type Env } from "./types";
 
-// El ejecutor queda desplegado únicamente como estado persistente para un
-// futuro piloto manual. Ninguna ruta pública puede invocar /submit y el
-// interruptor LIVE permanece ausente/false.
 export { BotState, ResearchLabState, LiveExecutorState };
 
 const jsonHeaders = { "Content-Type": "application/json; charset=utf-8" };
@@ -237,6 +235,85 @@ async function forwardPilotRequest(request: Request, env: Env, targetPath: strin
   });
 }
 
+async function preparePilotValidation(env: Env): Promise<Response> {
+  let proposal;
+  try {
+    proposal = await buildPilotValidationProposalFromKraken(env);
+  } catch (error) {
+    return Response.json(
+      {
+        ok: false,
+        error: "PILOT_VALIDATION_PROPOSAL_BLOCKED",
+        message: error instanceof Error ? error.message : "No se pudo construir una propuesta segura",
+        validateOnly: true,
+        realOrderCreated: false,
+        liveTrading: false,
+      },
+      { status: 409 },
+    );
+  }
+
+  const preparedResponse = await liveExecutorState(env).fetch("https://live/prepare-validation", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ eurBalance: proposal.eurBalance, request: proposal.request }),
+  });
+  const prepared = await preparedResponse.json<Record<string, unknown>>().catch(() => ({}));
+  if (!preparedResponse.ok || prepared.ok !== true) {
+    return Response.json(
+      {
+        ok: false,
+        error: "PILOT_VALIDATION_PREPARE_BLOCKED",
+        blockers: prepared.blockers ?? ["El ejecutor rechazó la preparación validate-only"],
+        validateOnly: true,
+        realOrderCreated: false,
+        liveTrading: false,
+      },
+      { status: preparedResponse.status >= 400 ? preparedResponse.status : 409 },
+    );
+  }
+
+  const order = prepared.order as Record<string, unknown> | undefined;
+  return Response.json({
+    ok: true,
+    schemaVersion: "pilot-validation-preparation-v1",
+    proposal: {
+      generatedAt: proposal.generatedAt,
+      pair: proposal.pair,
+      canonicalPair: proposal.canonicalPair,
+      ask: proposal.ask,
+      bid: proposal.bid,
+      spreadPct: proposal.spreadPct,
+      orderMinBase: proposal.orderMinBase,
+      lotDecimals: proposal.lotDecimals,
+      priceDecimals: proposal.priceDecimals,
+      eurBalance: proposal.eurBalance,
+      grossBudgetEur: proposal.grossBudgetEur,
+      feeReservePct: proposal.feeReservePct,
+      volumeBase: proposal.request.volumeBase,
+      limitPrice: proposal.request.limitPrice,
+      notionalEur: proposal.request.notionalEur,
+    },
+    order: order
+      ? {
+          clOrdId: order.clOrdId,
+          status: order.status,
+          pair: (order.request as Record<string, unknown> | undefined)?.pair,
+          side: (order.request as Record<string, unknown> | undefined)?.side,
+          volumeBase: (order.request as Record<string, unknown> | undefined)?.volumeBase,
+          limitPrice: (order.request as Record<string, unknown> | undefined)?.limitPrice,
+          notionalEur: (order.request as Record<string, unknown> | undefined)?.notionalEur,
+        }
+      : null,
+    clOrdId: typeof order?.clOrdId === "string" ? order.clOrdId : null,
+    validateOnly: true,
+    contactedKrakenPrivateApi: false,
+    realOrderCreated: false,
+    submissionArmed: false,
+    liveTrading: false,
+  });
+}
+
 function technicalDashboard(): Response {
   const html = `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Auto Bolsa AI · Técnico</title><style>:root{color-scheme:dark}body{font-family:-apple-system,BlinkMacSystemFont,sans-serif;background:#0b1020;color:#fff;margin:0;padding:20px}main{max-width:820px;margin:auto}.card{background:#151c32;border:1px solid #2b3659;border-radius:18px;padding:17px;margin:13px 0}.ok{color:#5ee6a8}.muted{color:#aeb8d4}pre{white-space:pre-wrap;word-break:break-word;font-size:12px;max-height:420px;overflow:auto}button,input,a{font:inherit;border-radius:12px}button,a{display:inline-block;padding:11px 13px;border:0;font-weight:700;margin:5px 5px 5px 0;background:#eef2ff;color:#10172c;text-decoration:none}input{width:100%;padding:12px;background:#0e1529;color:#fff;border:1px solid #405078;margin:7px 0;box-sizing:border-box}.grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}@media(max-width:560px){.grid{grid-template-columns:1fr}}</style></head><body><main><a href="/demo">← Volver al DEMO visual</a><a href="/pilot">Abrir consola del piloto</a><h1>Panel técnico</h1><p class="ok">PAPER obligatorio · envío LIVE bloqueado</p><div class="card"><h2>Estados internos</h2><div class="grid"><button onclick="show('/api/lab')">Laboratorio</button><button onclick="show('/api/readiness')">Readiness</button><button onclick="show('/api/status')">Motor principal</button><button onclick="show('/api/execution')">Ejecución rápida</button></div><pre id="output">Pulsa una sección para ver el JSON.</pre></div><div class="card"><h2>Control privado</h2><p class="muted">El token solo permanece en esta pestaña.</p><input id="token" type="password" autocomplete="off" placeholder="ADMIN_TOKEN"><div class="grid"><button onclick="admin('/api/tick','POST')">Ciclo principal</button><button onclick="admin('/api/lab/run','POST')">Ciclo laboratorio</button><button onclick="admin('/api/execution/refresh','POST')">Actualizar ejecución</button><button onclick="admin('/api/markets/refresh','POST')">Actualizar mercados</button><button onclick="admin('/api/pilot/readiness','GET')">Preparación piloto</button><button onclick="admin('/api/pilot/refresh-kraken','POST')">Revalidar Kraken</button><button onclick="admin('/api/kraken/connection','GET')">Conexión Kraken</button><button onclick="admin('/api/kraken/permissions','GET')">Permisos Kraken</button><button onclick="admin('/api/pause','POST')">Pausar</button><button onclick="admin('/api/resume','POST')">Reanudar</button></div><pre id="adminResult">Sin acciones.</pre></div><script>async function show(path){const out=document.getElementById('output');out.textContent='Cargando…';try{const r=await fetch(path,{cache:'no-store'});out.textContent=JSON.stringify(await r.json(),null,2)}catch(e){out.textContent='Error de conexión'}}async function admin(path,method){const token=document.getElementById('token').value;const out=document.getElementById('adminResult');if(!token){out.textContent='Introduce primero el ADMIN_TOKEN.';return}out.textContent='Comprobando…';try{const r=await fetch(path,{method:method,headers:{Authorization:'Bearer '+token}});const text=await r.text();try{out.textContent=JSON.stringify(JSON.parse(text),null,2)}catch(e){out.textContent=text}}catch(e){out.textContent='Error de conexión'}}</script></main></body></html>`;
   return new Response(html, { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
@@ -251,7 +328,7 @@ export default {
     if (request.method === "GET" && url.pathname === "/technical") return technicalDashboard();
     if (request.method === "GET" && url.pathname === "/health") {
       return new Response(
-        JSON.stringify({ ok: true, service: "auto-bolsa-ai", version: "0.19.0", mode: "paper", liveTrading: false, pilotExecutorBound: true, pilotSubmissionArmed: false }),
+        JSON.stringify({ ok: true, service: "auto-bolsa-ai", version: "0.20.0", mode: "paper", liveTrading: false, pilotExecutorBound: true, pilotSubmissionArmed: false }),
         { headers: jsonHeaders },
       );
     }
@@ -280,6 +357,9 @@ export default {
       if (request.method === "POST" && url.pathname === "/api/pilot/refresh-kraken") {
         await krakenSafetySummary(env, true);
         return Response.json(await buildPilotRuntimeReadiness(env));
+      }
+      if (request.method === "POST" && url.pathname === "/api/pilot/prepare-validation") {
+        return preparePilotValidation(env);
       }
       if (request.method === "GET" && url.pathname === "/api/pilot/status") {
         return forwardPilotRequest(request, env, "/status");
