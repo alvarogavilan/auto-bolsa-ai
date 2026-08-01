@@ -35,29 +35,58 @@ jobs:
           npm run typecheck:test
           npm test
 
-      - name: Check Cloudflare credentials
+      - name: Check Cloudflare API token
         id: credentials
         continue-on-error: true
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
-          missing=""
-          test -n "$CLOUDFLARE_API_TOKEN" || missing="${missing} CLOUDFLARE_API_TOKEN"
-          test -n "$CLOUDFLARE_ACCOUNT_ID" || missing="${missing} CLOUDFLARE_ACCOUNT_ID"
-          if [ -n "$missing" ]; then
-            echo "missing=${missing# }" >> "$GITHUB_OUTPUT"
+          if [ -z "$CLOUDFLARE_API_TOKEN" ]; then
+            echo "missing=CLOUDFLARE_API_TOKEN" >> "$GITHUB_OUTPUT"
             exit 1
           fi
           echo "missing=" >> "$GITHUB_OUTPUT"
 
-      - name: Deploy PAPER DEMO
-        id: deploy
+      - name: Detect Cloudflare account automatically
+        id: account
         if: steps.credentials.outcome == 'success'
         continue-on-error: true
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          response=$(curl --fail-with-body --silent --show-error \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            -H "Content-Type: application/json" \
+            "https://api.cloudflare.com/client/v4/accounts?per_page=50")
+
+          success=$(printf '%s' "$response" | jq -r '.success')
+          [ "$success" = "true" ] || {
+            printf '%s\n' "$response"
+            exit 1
+          }
+
+          count=$(printf '%s' "$response" | jq '.result | length')
+          [ "$count" -ge 1 ] || {
+            echo "El token no permite leer ninguna cuenta de Cloudflare"
+            exit 1
+          }
+
+          account_id=$(printf '%s' "$response" | jq -r '.result[0].id')
+          account_name=$(printf '%s' "$response" | jq -r '.result[0].name')
+          [ -n "$account_id" ] && [ "$account_id" != "null" ]
+
+          echo "account_id=$account_id" >> "$GITHUB_OUTPUT"
+          echo "account_name=$account_name" >> "$GITHUB_OUTPUT"
+          echo "CLOUDFLARE_ACCOUNT_ID=$account_id" >> "$GITHUB_ENV"
+
+      - name: Deploy PAPER DEMO
+        id: deploy
+        if: steps.credentials.outcome == 'success' && steps.account.outcome == 'success'
+        continue-on-error: true
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ steps.account.outputs.account_id }}
         run: |
           set -o pipefail
           npx wrangler deploy 2>&1 | tee deploy.log
@@ -70,7 +99,7 @@ jobs:
         continue-on-error: true
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ steps.account.outputs.account_id }}
         run: npx wrangler deployments list
 
       - name: Publish deployment result
@@ -79,20 +108,26 @@ jobs:
         env:
           CREDENTIALS_OUTCOME: ${{ steps.credentials.outcome }}
           MISSING_SECRETS: ${{ steps.credentials.outputs.missing }}
+          ACCOUNT_OUTCOME: ${{ steps.account.outcome }}
+          ACCOUNT_NAME: ${{ steps.account.outputs.account_name }}
           DEPLOY_OUTCOME: ${{ steps.deploy.outcome }}
           DEPLOY_URL: ${{ steps.deploy.outputs.url }}
           METADATA_OUTCOME: ${{ steps.metadata.outcome }}
         with:
           script: |
-            const success = process.env.CREDENTIALS_OUTCOME === 'success' && process.env.DEPLOY_OUTCOME === 'success';
+            const success = process.env.CREDENTIALS_OUTCOME === 'success'
+              && process.env.ACCOUNT_OUTCOME === 'success'
+              && process.env.DEPLOY_OUTCOME === 'success';
             const title = success
               ? `Cloudflare deploy OK · ${context.sha.slice(0, 7)}`
               : `Cloudflare deploy BLOCKED · ${context.sha.slice(0, 7)}`;
             const body = [
               `Commit: \`${context.sha}\``,
               `Workflow: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
-              `Credenciales: **${process.env.CREDENTIALS_OUTCOME || 'unknown'}**`,
-              process.env.MISSING_SECRETS ? `Secretos ausentes: \`${process.env.MISSING_SECRETS}\`` : null,
+              `Token: **${process.env.CREDENTIALS_OUTCOME || 'unknown'}**`,
+              process.env.MISSING_SECRETS ? `Secreto ausente: \`${process.env.MISSING_SECRETS}\`` : null,
+              `Detección de cuenta: **${process.env.ACCOUNT_OUTCOME || 'skipped'}**`,
+              process.env.ACCOUNT_NAME ? `Cuenta detectada: ${process.env.ACCOUNT_NAME}` : null,
               `Despliegue: **${process.env.DEPLOY_OUTCOME || 'skipped'}**`,
               process.env.DEPLOY_URL ? `URL pública: ${process.env.DEPLOY_URL}` : null,
               `Metadata: **${process.env.METADATA_OUTCOME || 'skipped'}**`,
@@ -107,5 +142,5 @@ jobs:
             });
 
       - name: Fail when deployment did not complete
-        if: always() && (steps.credentials.outcome != 'success' || steps.deploy.outcome != 'success')
+        if: always() && (steps.credentials.outcome != 'success' || steps.account.outcome != 'success' || steps.deploy.outcome != 'success')
         run: exit 1
