@@ -1,4 +1,5 @@
 import type { LiveExecutorSnapshot, LiveOrder } from "./live-executor";
+import { fetchLivePairResolution } from "./live-pair-metadata";
 import type { PaperReadiness } from "./paper-readiness";
 import {
   BOT_STATE_SINGLETON_NAME,
@@ -80,9 +81,6 @@ async function queryKrakenSafety(env: Env): Promise<KrakenSafetySummary> {
   const stub = botState(env);
   const connectionResponse = await stub.fetch("https://bot/kraken/connection");
   const connectionBody = await responseJson(connectionResponse);
-
-  // Secuencial a propósito: ambas peticiones privadas comparten la única
-  // autoridad persistente de nonce en BotState.
   const permissionsResponse = await stub.fetch("https://bot/kraken/permissions");
   const permissionsBody = await responseJson(permissionsResponse);
   const now = Date.now();
@@ -173,16 +171,21 @@ export async function buildPilotRuntimeReadiness(
   env: Env,
   forceKrakenRefresh = false,
 ): Promise<Record<string, unknown>> {
-  const [paperResponse, labResponse, liveResponse, kraken] = await Promise.all([
+  const pair = env.PAIR || "XBTEUR";
+  const executor = liveExecutorState(env);
+  const [paperResponse, labResponse, liveResponse, detailsResponse, kraken, pairResolution] = await Promise.all([
     botState(env).fetch("https://bot/readiness"),
     researchLabState(env).fetch("https://lab/status"),
-    liveExecutorState(env).fetch("https://live/status"),
+    executor.fetch("https://live/status"),
+    executor.fetch("https://live/readiness-details"),
     krakenSafetySummary(env, forceKrakenRefresh),
+    fetchLivePairResolution(pair).catch(() => null),
   ]);
 
   const paper = await paperResponse.json<PaperReadiness>();
   const lab = await responseJson(labResponse);
   const live = await liveResponse.json<LiveExecutorSnapshot>();
+  const details = await responseJson(detailsResponse);
   const demo = demoSummary(lab);
   const order = latestRelevantOrder(live);
   const blockers: string[] = [];
@@ -205,6 +208,9 @@ export async function buildPilotRuntimeReadiness(
     blockers.push("La auditoría de permisos Kraken no está completa o no es segura");
   }
 
+  if (pairResolution) passedChecks.push(`Metadatos públicos Kraken verificados para ${pair}`);
+  else blockers.push(`No se pudieron verificar los metadatos públicos de ${pair}`);
+
   if (live.emergencyStopActive) blockers.push("La parada de emergencia del ejecutor está activa");
   else passedChecks.push("Sin parada de emergencia activa");
 
@@ -215,6 +221,11 @@ export async function buildPilotRuntimeReadiness(
   if (order?.status === "prepared") passedChecks.push("Existe una orden preparada para validate=true");
   else blockers.push("No existe una orden preparada para el preflight validate=true");
 
+  const certificate = details.preflightCertificate as Record<string, unknown> | undefined;
+  if (certificate?.status === "valid") passedChecks.push("Certificado validate=true vigente");
+  else if (certificate?.status === "expired") warnings.push("El certificado validate=true ha caducado");
+  else if (certificate?.status === "invalid") blockers.push("El certificado validate=true es inválido");
+
   if (env.LIVE_TRADING_ENABLED === "true") {
     warnings.push("LIVE_TRADING_ENABLED aparece activo, pero la ruta pública de envío sigue bloqueada");
   } else {
@@ -222,7 +233,7 @@ export async function buildPilotRuntimeReadiness(
   }
 
   return {
-    schemaVersion: "pilot-runtime-readiness-v1",
+    schemaVersion: "pilot-runtime-readiness-v2",
     generatedAt: Date.now(),
     liveTrading: false,
     executorBound: true,
@@ -232,6 +243,17 @@ export async function buildPilotRuntimeReadiness(
     paper,
     demo,
     kraken,
+    market: pairResolution
+      ? {
+          pair,
+          canonicalPair: pairResolution.canonicalPair,
+          acceptedPairCodes: pairResolution.acceptedPairCodes,
+          orderMinBase: pairResolution.metadata.orderMinBase,
+          lotDecimals: pairResolution.metadata.lotDecimals,
+          priceDecimals: pairResolution.metadata.priceDecimals,
+          checkedAt: Date.now(),
+        }
+      : { pair, available: false },
     executor: {
       createdAt: live.createdAt,
       updatedAt: live.updatedAt,
@@ -244,6 +266,14 @@ export async function buildPilotRuntimeReadiness(
       emergencyStopActive: live.emergencyStopActive,
       emergencyStopRequiresManualLiquidation: live.emergencyStopRequiresManualLiquidation,
       consecutiveTransportErrors: live.consecutiveTransportErrors,
+    },
+    preflightCertificate: details.preflightCertificate ?? { status: "absent" },
+    submissionJournal: details.submissionJournal ?? { phase: "none" },
+    reconciliation: details.reconciliation ?? {
+      everRun: live.lastBalanceCheckStatus !== null,
+      ok: live.lastBalanceCheckStatus === "consistent",
+      balanceStatus: live.lastBalanceCheckStatus,
+      unresolvedOrderCount: 0,
     },
     blockers,
     warnings,
