@@ -72,7 +72,7 @@ describe("human DEMO dashboard", () => {
     expect(html).toContain("Comparación exigente");
     expect(html).toContain("Mejor alternativa pasiva");
     expect(html).toContain("renderBenchmarkSuite");
-    expect(html).toContain("changesTradingDecision").toBe(false);
+    expect(html).toContain("Modo shadow: no altera ninguna compra o venta");
   });
 
   it("keeps technical JSON and admin controls on a separate route", () => {
