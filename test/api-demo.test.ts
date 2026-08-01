@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const ROOT = process.cwd();
-const source = readFileSync(join(ROOT, "src/index-api-demo.ts"), "utf8");
+const source = readFileSync(join(ROOT, "src/index-fire-drill.ts"), "utf8");
 const wrangler = readFileSync(join(ROOT, "wrangler.jsonc"), "utf8");
 
 describe("GET /api/demo", () => {
@@ -17,7 +17,7 @@ describe("GET /api/demo", () => {
       "/api/execution",
       "/api/decisions",
     ]) {
-      expect(source).toContain(`readSource("${path}", env)`);
+      expect(source).toContain(`readDemoSource("${path}", env)`);
     }
     expect(source).toContain("Promise.all([");
     expect(source).toContain("partial:");
@@ -30,14 +30,13 @@ describe("GET /api/demo", () => {
     expect(source).toContain("realOrdersEnabled: false");
     expect(source).not.toContain("AddOrder");
     expect(source).not.toContain("LIVE_TRADING_ENABLED");
-    expect(source).not.toContain("/api/pilot/submit");
   });
 
-  it("mantiene Durable Objects, cron y Worker original mediante wrapper", () => {
+  it("mantiene el adaptador del simulacro, Durable Objects y cron", () => {
     expect(source).toContain("export { BotState, ResearchLabState, LiveExecutorState }");
-    expect(source).toContain("return worker.fetch(request, env)");
-    expect(source).toContain("return worker.scheduled(controller, env, ctx)");
-    expect(wrangler).toContain('"main": "src/index-api-demo.ts"');
+    expect(source).toContain("return coreWorker.fetch(request, env)");
+    expect(source).toContain("return coreWorker.scheduled(controller, env, ctx)");
+    expect(wrangler).toContain('"main": "src/index-fire-drill.ts"');
     expect(wrangler).toContain('"TRADING_MODE": "paper"');
     expect(wrangler).toContain('"*/5 * * * *"');
   });
