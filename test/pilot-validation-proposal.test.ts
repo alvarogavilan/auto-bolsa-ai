@@ -89,6 +89,43 @@ describe("server-built validation proposal", () => {
     expect(proposal.request.notionalEur).toBeLessThanOrEqual(1.98 + 1e-6);
   });
 
+  it("requires a clean EUR-only account baseline", () => {
+    expect(() => buildPilotValidationProposal({
+      safety: {
+        ...safety(10),
+        connection: { ...safety(10).connection, nonZeroAssetCount: 2 },
+      },
+      resolution,
+      tickers: { XXBTZEUR: ticker },
+      pair: "XBTEUR",
+      now: NOW,
+      idempotencyKey: "existing-assets",
+    })).toThrow(/activos adicionales|inventario/i);
+
+    expect(() => buildPilotValidationProposal({
+      safety: {
+        ...safety(10),
+        connection: { ...safety(10).connection, nonZeroAssetCount: null },
+      },
+      resolution,
+      tickers: { XXBTZEUR: ticker },
+      pair: "XBTEUR",
+      now: NOW,
+      idempotencyKey: "unknown-assets",
+    })).toThrow(/inventario no es verificable/i);
+  });
+
+  it("blocks an abnormally wide public spread", () => {
+    expect(() => buildPilotValidationProposal({
+      safety: safety(10),
+      resolution,
+      tickers: { XXBTZEUR: { ...ticker, ask: 110, bid: 90 } },
+      pair: "XBTEUR",
+      now: NOW,
+      idempotencyKey: "wide-spread",
+    })).toThrow(/spread.*amplio/i);
+  });
+
   it("fails closed for unsafe permissions, missing ticker or insufficient minimum", () => {
     expect(() => buildPilotValidationProposal({
       safety: { ...safety(10), permissions: { ...safety(10).permissions, safePermissions: false } },
