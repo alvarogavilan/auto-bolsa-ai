@@ -1,6 +1,8 @@
 import { fetchAllTickers, type KrakenTicker } from "./kraken-markets";
 import { fetchLivePairResolution, type LivePairResolution } from "./live-pair-metadata";
 import type { LiveOrderRequest } from "./live-executor";
+import type { KrakenAccountCleanlinessAudit } from "./live-order-preflight";
+import { auditPilotAccountCleanliness } from "./pilot-account-cleanliness";
 import { krakenSafetySummary } from "./pilot-runtime";
 import type { Env } from "./types";
 
@@ -63,6 +65,7 @@ export interface PilotValidationProposal {
 
 export interface PilotValidationProposalDependencies {
   safety: Awaited<ReturnType<typeof krakenSafetySummary>>;
+  accountAudit: KrakenAccountCleanlinessAudit;
   resolution: LivePairResolution;
   tickers: Record<string, KrakenTicker>;
   pair: string;
@@ -74,15 +77,31 @@ export interface PilotValidationProposalDependencies {
 export function buildPilotValidationProposal(
   dependencies: PilotValidationProposalDependencies,
 ): PilotValidationProposal {
-  const { safety, resolution, tickers, pair, now, idempotencyKey } = dependencies;
+  const { safety, accountAudit, resolution, tickers, pair, now, idempotencyKey } = dependencies;
   if (!safety.connection.connected) throw new Error("Kraken no está autenticado");
   if (!safety.permissions.auditComplete || !safety.permissions.safePermissions) {
     throw new Error("Los permisos Kraken no están auditados como seguros");
   }
-  const eurBalance = safety.connection.eurBalance;
-  if (!Number.isFinite(eurBalance) || (eurBalance ?? 0) <= 0) throw new Error("Saldo EUR no disponible o no positivo");
-  if (safety.connection.nonZeroAssetCount !== 1) {
-    throw new Error("La cuenta Kraken no está limpia para calibrar: existen activos adicionales o el inventario no es verificable");
+
+  const eurBalance = accountAudit.eurBalance;
+  if (!Number.isFinite(eurBalance) || (eurBalance ?? 0) <= 0) {
+    throw new Error("Saldo EUR no disponible o no positivo");
+  }
+  if (accountAudit.nonEurAssetCount !== 0) {
+    throw new Error("La cuenta Kraken contiene activos adicionales o inventario no conciliado");
+  }
+  if (!Number.isFinite(accountAudit.openOrderCount)) {
+    throw new Error("No se pudo verificar si existen órdenes abiertas previas en Kraken");
+  }
+  if (accountAudit.openOrderCount !== 0) {
+    throw new Error("La cuenta Kraken contiene órdenes abiertas previas");
+  }
+  if (accountAudit.accountCleanForBaseline !== true) {
+    throw new Error(
+      accountAudit.blockers.length > 0
+        ? `La cuenta Kraken no está limpia: ${accountAudit.blockers.join("; ")}`
+        : "La cuenta Kraken no está limpia para calibrar el piloto",
+    );
   }
   if (!idempotencyKey.trim()) throw new Error("Falta idempotencyKey del servidor");
 
@@ -143,19 +162,26 @@ export function buildPilotValidationProposal(
   };
 }
 
-/** Construye la propuesta exclusivamente con saldo privado y mercado público obtenidos por el servidor. */
+/** Construye la propuesta exclusivamente con cuenta privada y mercado público obtenidos por el servidor. */
 export async function buildPilotValidationProposalFromKraken(
   env: Env,
   now = Date.now(),
 ): Promise<PilotValidationProposal> {
   const pair = env.PAIR || "XBTEUR";
-  const [safety, resolution, tickers] = await Promise.all([
-    krakenSafetySummary(env, true),
+
+  // Las lecturas privadas son deliberadamente secuenciales. Cada capa obtiene
+  // sus nonces de BotState y termina antes de iniciar la siguiente, evitando
+  // que una respuesta con nonce superior llegue a Kraken antes que otra.
+  const safety = await krakenSafetySummary(env, true);
+  const accountAudit = await auditPilotAccountCleanliness(env, true);
+  const [resolution, tickers] = await Promise.all([
     fetchLivePairResolution(pair),
     fetchAllTickers(),
   ]);
+
   return buildPilotValidationProposal({
     safety,
+    accountAudit,
     resolution,
     tickers,
     pair,

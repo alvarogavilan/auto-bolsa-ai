@@ -23,13 +23,13 @@ const ticker = {
   open24h: 49_500,
 };
 
-function safety(balance: number) {
+function safety() {
   return {
     connection: {
       checkedAt: NOW,
       configured: true,
       connected: true,
-      eurBalance: balance,
+      eurBalance: 10,
       nonZeroAssetCount: 1,
       error: null,
     },
@@ -45,11 +45,30 @@ function safety(balance: number) {
   };
 }
 
+function accountAudit(balance: number) {
+  return {
+    schemaVersion: "kraken-account-cleanliness-v1" as const,
+    checkedAt: NOW,
+    eurBalance: balance,
+    nonZeroAssetCount: balance > 0 ? 1 : 0,
+    nonEurAssetCount: 0,
+    openOrderCount: 0,
+    accountCleanForBaseline: true,
+    blockers: [],
+    nonceRequests: 2 as const,
+    networkCallsToKraken: 2 as const,
+    readOnly: true as const,
+    realOrderCreated: false as const,
+    liveTrading: false as const,
+  };
+}
+
 function dependencies(
   overrides: Partial<PilotValidationProposalDependencies> = {},
 ): PilotValidationProposalDependencies {
   return {
-    safety: safety(10),
+    safety: safety(),
+    accountAudit: accountAudit(10),
     resolution,
     tickers: { XXBTZEUR: ticker },
     pair: "XBTEUR",
@@ -73,7 +92,7 @@ describe("server-built validation proposal", () => {
 
   it("reserves commission margin and quantizes price up and volume down", () => {
     const proposal = buildPilotValidationProposal(dependencies({
-      safety: safety(20),
+      accountAudit: accountAudit(20),
       idempotencyKey: "server-key-2",
     }));
     expect(proposal.request.limitPrice).toBe(50_000.1);
@@ -84,7 +103,7 @@ describe("server-built validation proposal", () => {
 
   it("uses 50% of smaller balances before the fee reserve", () => {
     const proposal = buildPilotValidationProposal(dependencies({
-      safety: safety(4),
+      accountAudit: accountAudit(4),
       tickers: { XXBTZEUR: { ...ticker, ask: 1_000, bid: 999 } },
       idempotencyKey: "small-balance",
     }));
@@ -94,20 +113,27 @@ describe("server-built validation proposal", () => {
 
   it("requires a clean EUR-only account baseline", () => {
     expect(() => buildPilotValidationProposal(dependencies({
-      safety: {
-        ...safety(10),
-        connection: { ...safety(10).connection, nonZeroAssetCount: 2 },
+      accountAudit: {
+        ...accountAudit(10),
+        nonZeroAssetCount: 2,
+        nonEurAssetCount: 1,
+        accountCleanForBaseline: false,
+        blockers: ["La cuenta contiene activos no EUR antes del baseline"],
       },
       idempotencyKey: "existing-assets",
     }))).toThrow(/activos adicionales|inventario/i);
+  });
 
+  it("blocks prior open orders", () => {
     expect(() => buildPilotValidationProposal(dependencies({
-      safety: {
-        ...safety(10),
-        connection: { ...safety(10).connection, nonZeroAssetCount: null },
+      accountAudit: {
+        ...accountAudit(10),
+        openOrderCount: 1,
+        accountCleanForBaseline: false,
+        blockers: ["La cuenta contiene órdenes abiertas antes del baseline"],
       },
-      idempotencyKey: "unknown-assets",
-    }))).toThrow(/inventario no es verificable/i);
+      idempotencyKey: "existing-open-order",
+    }))).toThrow(/órdenes abiertas previas|órdenes abiertas/i);
   });
 
   it("blocks an abnormally wide public spread", () => {
@@ -119,7 +145,7 @@ describe("server-built validation proposal", () => {
 
   it("fails closed for unsafe permissions, missing ticker or insufficient minimum", () => {
     expect(() => buildPilotValidationProposal(dependencies({
-      safety: { ...safety(10), permissions: { ...safety(10).permissions, safePermissions: false } },
+      safety: { ...safety(), permissions: { ...safety().permissions, safePermissions: false } },
       idempotencyKey: "unsafe",
     }))).toThrow(/permisos/i);
 
@@ -129,7 +155,7 @@ describe("server-built validation proposal", () => {
     }))).toThrow(/ticker/i);
 
     expect(() => buildPilotValidationProposal(dependencies({
-      safety: safety(1),
+      accountAudit: accountAudit(1),
       resolution: { ...resolution, metadata: { ...resolution.metadata, orderMinBase: 1 } },
       idempotencyKey: "minimum",
     }))).toThrow(/mínimo/i);
