@@ -166,6 +166,17 @@ describe("deterministic shadow committee", () => {
     expect(report.votes.find((vote) => vote.id === "execution")?.hardVeto).toBe(true);
   });
 
+  it("does not approve a losing strategy merely because buy-and-hold lost more", () => {
+    const item = strategy({ equityEur: 49.5, cashEur: 49.5, peakEquityEur: 50 });
+    const report = buildStrategyCommittee(item, {}, benchmarks(-2), NOW);
+    const vote = report.votes.find((member) => member.id === "benchmark");
+
+    expect(vote?.vote).toBe("veto");
+    expect(vote?.reason).toContain("efectivo");
+    expect(report.verdict).toBe("observe");
+    expect(report.approvals).toBeLessThan(6);
+  });
+
   it("summarizes the cohort without enabling live trading", () => {
     const item = strategy();
     const report = buildResearchCommitteeReport(state(item), {}, benchmarks(1), NOW);
