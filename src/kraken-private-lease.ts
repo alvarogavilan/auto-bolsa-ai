@@ -1,4 +1,4 @@
-import type { Env } from "./types";
+import { BOT_STATE_SINGLETON_NAME, type Env } from "./types";
 
 export const KRAKEN_PRIVATE_LEASE_ACQUIRE_PATH = "/kraken/private-lease/acquire";
 export const KRAKEN_PRIVATE_LEASE_RELEASE_PATH = "/kraken/private-lease/release";
@@ -12,7 +12,7 @@ interface LeaseResponse {
 }
 
 function botState(env: Env): DurableObjectStub {
-  return env.BOT_STATE.get(env.BOT_STATE.idFromName("auto-bolsa-ai-singleton"));
+  return env.BOT_STATE.get(env.BOT_STATE.idFromName(BOT_STATE_SINGLETON_NAME));
 }
 
 async function wait(milliseconds: number): Promise<void> {
