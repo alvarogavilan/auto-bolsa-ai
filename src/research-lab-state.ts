@@ -1,4 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
+import { buildBenchmarkSuite } from "./benchmark-suite";
+import { buildResearchCommitteeReport } from "./decision-committee";
 import { fetchOhlc } from "./kraken";
 import type { MarketUniverse } from "./market-universe";
 import {
@@ -57,7 +59,6 @@ function sanitizeGates(value: unknown): FastExecutionGates {
 }
 
 function parseTickPayload(value: unknown): ResearchLabTickPayload | null {
-  // Backwards compatibility for an already queued v0.15 cron request.
   if (validUniverse(value)) return { universe: value, executionGates: {} };
   if (!value || typeof value !== "object") return null;
   const candidate = value as { universe?: unknown; executionGates?: unknown };
@@ -137,6 +138,22 @@ export class ResearchLabState extends DurableObject<Env> {
     };
   }
 
+  private buildAnalysis(
+    state: StoredResearchLabState,
+    gates: FastExecutionGates,
+    benchmarks: PaperBenchmarkMap,
+    now: number,
+  ): Record<string, unknown> {
+    return {
+      summary: summarizeResearchLab(state, now),
+      shadowLiveDemo: buildShadowLiveDemo(state, gates, benchmarks, now),
+      fastExecutionGates: this.executionGateSummary(state, gates, now),
+      benchmarkComparison: buildBenchmarkComparison(state.strategies, benchmarks),
+      benchmarkSuite: buildBenchmarkSuite(state.strategies, benchmarks),
+      committee: buildResearchCommitteeReport(state, gates, benchmarks, now),
+    };
+  }
+
   private async tick(payload: ResearchLabTickPayload): Promise<Response> {
     const now = Date.now();
     let state = await this.read();
@@ -176,16 +193,11 @@ export class ResearchLabState extends DurableObject<Env> {
       this.ctx.storage.put(BENCHMARKS_KEY, benchmarks),
     ]);
 
-    const fastExecutionGates = this.executionGateSummary(state, payload.executionGates, now);
-    const benchmarkComparison = buildBenchmarkComparison(state.strategies, benchmarks);
     return Response.json({
       initialized: true,
       dueStrategiesProcessed: due.length,
       state,
-      summary: summarizeResearchLab(state, now),
-      shadowLiveDemo: buildShadowLiveDemo(state, payload.executionGates, benchmarks, now),
-      fastExecutionGates,
-      benchmarkComparison,
+      ...this.buildAnalysis(state, payload.executionGates, benchmarks, now),
       liveTrading: false,
     });
   }
@@ -215,6 +227,25 @@ export class ResearchLabState extends DurableObject<Env> {
             eligibleForLiveReview: false,
             liveTrading: false,
           },
+          benchmarkSuite: {
+            schemaVersion: "paper-benchmark-suite-v1",
+            strategyCount: 0,
+            entries: [],
+            leaderboard: [],
+            eligibleForLiveReview: false,
+            liveTrading: false,
+          },
+          committee: {
+            schemaVersion: "paper-research-committee-v1",
+            strategyCount: 0,
+            candidates: 0,
+            observing: 0,
+            vetoed: 0,
+            reports: [],
+            changesTradingDecision: false,
+            eligibleForLiveReview: false,
+            liveTrading: false,
+          },
           message: "El laboratorio se inicializará con el próximo mapa de mercados válido.",
           eligibleForLiveReview: false,
           liveTrading: false,
@@ -222,15 +253,10 @@ export class ResearchLabState extends DurableObject<Env> {
       }
 
       const now = Date.now();
-      const fastExecutionGates = this.executionGateSummary(state, executionGates, now);
-      const benchmarkComparison = buildBenchmarkComparison(state.strategies, benchmarks);
       return Response.json({
         initialized: true,
         state,
-        summary: summarizeResearchLab(state, now),
-        shadowLiveDemo: buildShadowLiveDemo(state, executionGates, benchmarks, now),
-        fastExecutionGates,
-        benchmarkComparison,
+        ...this.buildAnalysis(state, executionGates, benchmarks, now),
         liveTrading: false,
       });
     }

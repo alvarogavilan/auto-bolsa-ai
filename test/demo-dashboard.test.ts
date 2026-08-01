@@ -7,7 +7,7 @@ const ROOT = process.cwd();
 
 describe("human DEMO dashboard", () => {
   it("renders a human-readable mobile dashboard instead of raw JSON", async () => {
-    const response = demoDashboard();
+    const response = await demoDashboard();
     expect(response.headers.get("Content-Type")).toContain("text/html");
     expect(response.headers.get("Cache-Control")).toBe("no-store");
     const html = await response.text();
@@ -21,7 +21,7 @@ describe("human DEMO dashboard", () => {
   });
 
   it("shows position, PnL, fees and trade reasons from the public lab response", async () => {
-    const html = await demoDashboard().text();
+    const html = await (await demoDashboard()).text();
     expect(html).toContain("strategy.positionOpen");
     expect(html).toContain("p.entryPrice");
     expect(html).toContain("strategy.currentReferencePrice");
@@ -33,7 +33,7 @@ describe("human DEMO dashboard", () => {
   });
 
   it("makes the complete Kraken EUR market universe visible", async () => {
-    const html = await demoDashboard().text();
+    const html = await (await demoDashboard()).text();
     expect(html).toContain("Universo de mercados");
     expect(html).toContain("Todo el mercado EUR de Kraken");
     expect(html).toContain("marketsDiscovered");
@@ -46,12 +46,33 @@ describe("human DEMO dashboard", () => {
   });
 
   it("translates Kraken tickers into human market names", async () => {
-    const html = await demoDashboard().text();
+    const html = await (await demoDashboard()).text();
     expect(html).toContain("XBT:'Bitcoin'");
     expect(html).toContain("ETH:'Ethereum'");
     expect(html).toContain("SOL:'Solana'");
     expect(html).toContain("function humanMarket");
     expect(html).toContain("XBT es Bitcoin");
+  });
+
+  it("shows activity even when no new trade is executed", async () => {
+    const html = await (await demoDashboard()).text();
+    expect(html).toContain("Actividad en tiempo real");
+    expect(html).toContain("Qué está haciendo el sistema");
+    expect(html).toContain("renderSystemActivity");
+    expect(html).toContain("Sin ciclo reciente");
+    expect(html).toContain("lastDecision");
+    expect(html).toContain("lastSuccessfulAt");
+  });
+
+  it("shows the shadow committee and demanding benchmark suite", async () => {
+    const html = await (await demoDashboard()).text();
+    expect(html).toContain("Comité interno · shadow");
+    expect(html).toContain("Decisión auditada por seis funciones");
+    expect(html).toContain("renderCommittee");
+    expect(html).toContain("Comparación exigente");
+    expect(html).toContain("Mejor alternativa pasiva");
+    expect(html).toContain("renderBenchmarkSuite");
+    expect(html).toContain("Modo shadow: no altera ninguna compra o venta");
   });
 
   it("keeps technical JSON and admin controls on a separate route", () => {
