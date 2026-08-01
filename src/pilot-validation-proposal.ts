@@ -7,6 +7,7 @@ import type { Env } from "./types";
 const FEE_RESERVE_PCT = 0.01;
 const MAX_VALIDATION_NOTIONAL_EUR = 5;
 const MAX_BALANCE_ALLOCATION_PCT = 0.5;
+const MAX_VALIDATION_SPREAD_PCT = 0.01;
 
 function normalizePair(value: string): string {
   return value.toUpperCase().replaceAll("/", "").replaceAll("-", "").trim();
@@ -80,6 +81,9 @@ export function buildPilotValidationProposal(
   }
   const eurBalance = safety.connection.eurBalance;
   if (!Number.isFinite(eurBalance) || (eurBalance ?? 0) <= 0) throw new Error("Saldo EUR no disponible o no positivo");
+  if (safety.connection.nonZeroAssetCount !== 1) {
+    throw new Error("La cuenta Kraken no está limpia para calibrar: existen activos adicionales o el inventario no es verificable");
+  }
   if (!idempotencyKey.trim()) throw new Error("Falta idempotencyKey del servidor");
 
   const match = findTicker(tickers, resolution);
@@ -87,6 +91,13 @@ export function buildPilotValidationProposal(
   const { ticker } = match;
   if (!Number.isFinite(ticker.ask) || ticker.ask <= 0 || !Number.isFinite(ticker.bid) || ticker.bid <= 0) {
     throw new Error("Ticker público sin bid/ask válidos");
+  }
+
+  const middle = (ticker.ask + ticker.bid) / 2;
+  const spreadPct = middle > 0 ? (ticker.ask - ticker.bid) / middle : Number.POSITIVE_INFINITY;
+  if (!Number.isFinite(spreadPct) || spreadPct < 0) throw new Error("Spread público inválido");
+  if (spreadPct > MAX_VALIDATION_SPREAD_PCT) {
+    throw new Error(`Spread público demasiado amplio para validar (${spreadPct})`);
   }
 
   const limitPrice = ceilToDecimals(ticker.ask, resolution.metadata.priceDecimals);
@@ -102,9 +113,6 @@ export function buildPilotValidationProposal(
   if (notionalEur <= 0 || notionalEur > grossBudgetEur + 1e-9 || notionalEur > MAX_VALIDATION_NOTIONAL_EUR + 1e-9) {
     throw new Error("La propuesta excede el presupuesto validate-only");
   }
-  const middle = (ticker.ask + ticker.bid) / 2;
-  const spreadPct = middle > 0 ? (ticker.ask - ticker.bid) / middle : Number.POSITIVE_INFINITY;
-  if (!Number.isFinite(spreadPct) || spreadPct < 0) throw new Error("Spread público inválido");
 
   return {
     schemaVersion: "pilot-validation-proposal-v1",
