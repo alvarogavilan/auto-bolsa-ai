@@ -2,12 +2,12 @@ import { describe, expect, it } from "vitest";
 import { pilotDashboard } from "../src/pilot-dashboard";
 
 async function html(): Promise<string> {
-  return pilotDashboard().text();
+  return (await pilotDashboard()).text();
 }
 
 describe("pilot dashboard (read-only)", () => {
   it("returns mobile-first HTML with Cache-Control: no-store", async () => {
-    const response = pilotDashboard();
+    const response = await pilotDashboard();
     expect(response.headers.get("Cache-Control")).toBe("no-store");
     expect(response.headers.get("Content-Type")).toContain("text/html");
 
@@ -31,6 +31,7 @@ describe("pilot dashboard (read-only)", () => {
       "Comprobaciones superadas",
       "Evidencia PAPER",
       "Conexión Kraken",
+      "Comisiones efectivas Kraken",
       "Mercado seleccionado",
       "Orden preparada",
       "Certificado de preflight",
@@ -38,9 +39,7 @@ describe("pilot dashboard (read-only)", () => {
       "Reconciliación",
       "Emergencia y liquidación manual",
     ];
-    for (const section of requiredSections) {
-      expect(body).toContain(section);
-    }
+    for (const section of requiredSections) expect(body).toContain(section);
   });
 
   it("covers every PAPER metric required by the issue", async () => {
@@ -54,11 +53,15 @@ describe("pilot dashboard (read-only)", () => {
     expect(body).toContain("Tasa de error");
   });
 
-  it("covers Kraken connection, safe permissions and EUR balance without exposing sensitive fields", async () => {
+  it("covers Kraken connection, fees, safe permissions and EUR balance without exposing sensitive fields", async () => {
     const body = await html();
     expect(body).toContain("krakenConnection");
     expect(body).toContain("krakenPermissions");
     expect(body).toContain("Saldo EUR");
+    expect(body).toContain("Maker efectivo");
+    expect(body).toContain("Taker efectivo");
+    expect(body).toContain("Coste ida y vuelta sobre 5 €");
+    expect(body).toContain("renderKrakenFees");
     expect(body).not.toMatch(/apiKeyName/i);
     expect(body).not.toMatch(/api[_-]?secret/i);
     expect(body).not.toContain("withdrawalPermission");
@@ -118,6 +121,14 @@ describe("pilot dashboard (read-only)", () => {
     const body = await html();
     expect(body).toMatch(/nunca envía órdenes/i);
     expect(body).toMatch(/nunca activa el trading real/i);
+    expect(body).toContain("No crea órdenes");
+    expect(body).toContain("no cambia automáticamente los parámetros");
+  });
+
+  it("emits syntactically valid browser JavaScript", async () => {
+    const body = await html();
+    const script = body.match(/<script>([\s\S]*?)<\/script>/)?.[1] ?? "";
+    expect(() => new Function(script)).not.toThrow();
   });
 
   it("never promises profit or guaranteed results", async () => {
@@ -156,8 +167,6 @@ describe("pilot dashboard (read-only)", () => {
 
   it("never crashes rendering: every accessor is defensive against a missing or evolving schema", async () => {
     const body = await html();
-    // Ninguna sección exige un único nombre de campo: usa `pick` con varias
-    // rutas candidatas para tolerar que /api/pilot/readiness cambie de forma.
     expect(body).toContain("function pick(");
     expect(body).toContain("No disponible");
   });
