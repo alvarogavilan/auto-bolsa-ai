@@ -1,7 +1,6 @@
 import {
   applyCommitteeTradeSnapshot,
   buildCommitteeShadowImpactReport,
-  emptyCommitteeShadowImpactState,
   sanitizeCommitteeShadowImpactState,
   type CommitteeShadowImpactState,
 } from "./committee-shadow-impact";
@@ -50,7 +49,7 @@ export class ResearchLabState extends BaseResearchLabState {
   ): Promise<Response> {
     let payload: LabResponsePayload;
     try {
-      const value = await response.json();
+      const value = await response.clone().json();
       if (!value || typeof value !== "object" || Array.isArray(value)) return response;
       payload = value as LabResponsePayload;
     } catch {
