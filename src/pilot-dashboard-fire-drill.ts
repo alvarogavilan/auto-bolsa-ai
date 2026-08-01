@@ -97,7 +97,7 @@ export async function fireDrillPilotDashboard(): Promise<Response> {
 
   html = replaceRequired(
     html,
-    "    renderEmergency(data);\n    renderPilotFireDrill(data.fireDrill);\n    document.getElementById('raw').textContent=JSON.stringify(data,null,2);",
+    "    renderEmergency(data);\n    document.getElementById('raw').textContent=JSON.stringify(data,null,2);",
     "    renderEmergency(data);\n    renderPilotAccountCleanliness(data.accountCleanliness);\n    renderPilotFireDrill(data.fireDrill);\n    document.getElementById('raw').textContent=JSON.stringify(data,null,2);",
   );
 
