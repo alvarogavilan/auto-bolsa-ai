@@ -16,6 +16,10 @@ La ruta `/pilot` es una consola administrativa para preparar y validar técnicam
 
 Los bloqueos PAPER pueden impedir un piloto con dinero real, pero no bloquean esta validación técnica sin envío.
 
+## Comprobación de despliegue
+
+Todo cambio de la consola debe superar typecheck del Worker, typecheck de tests, suite completa y build de Cloudflare antes de considerarse operativo.
+
 ## Bloqueos permanentes
 
 - `/api/pilot/submit` responde siempre `403 PILOT_SUBMISSION_NOT_ARMED`.
