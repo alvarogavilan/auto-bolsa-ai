@@ -1,7 +1,10 @@
 import { fetchAllTickers, type KrakenTicker } from "./kraken-markets";
 import { fetchLivePairResolution, type LivePairResolution } from "./live-pair-metadata";
 import type { LiveOrderRequest } from "./live-executor";
-import { krakenSafetySummary } from "./pilot-runtime";
+import {
+  fetchPilotAccountSafety,
+  type PilotAccountSafety,
+} from "./pilot-account-safety";
 import type { Env } from "./types";
 
 const FEE_RESERVE_PCT = 0.01;
@@ -62,7 +65,7 @@ export interface PilotValidationProposal {
 }
 
 export interface PilotValidationProposalDependencies {
-  safety: Awaited<ReturnType<typeof krakenSafetySummary>>;
+  safety: PilotAccountSafety;
   resolution: LivePairResolution;
   tickers: Record<string, KrakenTicker>;
   pair: string;
@@ -82,7 +85,13 @@ export function buildPilotValidationProposal(
   const eurBalance = safety.connection.eurBalance;
   if (!Number.isFinite(eurBalance) || (eurBalance ?? 0) <= 0) throw new Error("Saldo EUR no disponible o no positivo");
   if (safety.connection.nonZeroAssetCount !== 1) {
-    throw new Error("La cuenta Kraken no está limpia para calibrar: existen activos adicionales o el inventario no es verificable");
+    throw new Error("La cuenta Kraken contiene activos adicionales o el inventario no es verificable");
+  }
+  if (safety.connection.openOrderCount === null) {
+    throw new Error("No se pudo verificar si existen órdenes abiertas previas en Kraken");
+  }
+  if (safety.connection.openOrderCount !== 0 || safety.connection.accountClean !== true) {
+    throw new Error("La cuenta Kraken no está limpia: existen órdenes abiertas previas o inventario no conciliado");
   }
   if (!idempotencyKey.trim()) throw new Error("Falta idempotencyKey del servidor");
 
@@ -143,14 +152,14 @@ export function buildPilotValidationProposal(
   };
 }
 
-/** Construye la propuesta exclusivamente con saldo privado y mercado público obtenidos por el servidor. */
+/** Construye la propuesta exclusivamente con cuenta privada y mercado público obtenidos por el servidor. */
 export async function buildPilotValidationProposalFromKraken(
   env: Env,
   now = Date.now(),
 ): Promise<PilotValidationProposal> {
   const pair = env.PAIR || "XBTEUR";
   const [safety, resolution, tickers] = await Promise.all([
-    krakenSafetySummary(env, true),
+    fetchPilotAccountSafety(env),
     fetchLivePairResolution(pair),
     fetchAllTickers(),
   ]);
