@@ -5,7 +5,8 @@ export interface PaperReadiness {
   evidenceMethod: "closed-15m-candles-v1";
   evidenceStartedAt: number;
   daysObserved: number;
-  tickAttempts: number;
+  /** Solo ticks sin error; sumar `errorsObserved` para el total de intentos. */
+  successfulTickAttempts: number;
   uniqueClosedCandlesObserved: number;
   duplicateCandleSkips: number;
   errorsObserved: number;
@@ -92,7 +93,7 @@ export function calculatePaperReadiness(snapshot: BotSnapshot, now = Date.now())
     evidenceMethod: snapshot.evidenceMethod,
     evidenceStartedAt: snapshot.evidenceStartedAt,
     daysObserved,
-    tickAttempts: snapshot.ticksObserved,
+    successfulTickAttempts: snapshot.ticksObserved,
     uniqueClosedCandlesObserved: snapshot.uniqueClosedCandlesObserved,
     duplicateCandleSkips: snapshot.duplicateCandleSkips,
     errorsObserved: snapshot.errorsObserved,
