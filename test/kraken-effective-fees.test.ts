@@ -10,9 +10,16 @@ afterEach(() => {
 
 describe("Kraken effective fee audit", () => {
   it("parses maker and taker percentages into decimal rates", async () => {
-    let request: Request | null = null;
+    let requestUrl = "";
+    let requestMethod = "";
+    let requestBody = "";
+    let requestApiKey: string | null = null;
     globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      request = new Request(input, init);
+      const request = new Request(input, init);
+      requestUrl = request.url;
+      requestMethod = request.method;
+      requestBody = await request.clone().text();
+      requestApiKey = request.headers.get("API-Key");
       return Response.json({
         error: [],
         result: {
@@ -64,14 +71,13 @@ describe("Kraken effective fee audit", () => {
     expect(audit.realOrderCreated).toBe(false);
     expect(audit.liveTrading).toBe(false);
 
-    expect(request?.url).toBe("https://api.kraken.com/0/private/TradeVolume");
-    expect(request?.method).toBe("POST");
-    const body = await request!.text();
-    expect(body).toContain("nonce=1800000000001");
-    expect(body).toContain("pair=XBTEUR");
-    expect(body).toContain("fee-info=true");
-    expect(body).toContain("fee_schedule=true");
-    expect(request?.headers.get("API-Key")).toBe("api-key");
+    expect(requestUrl).toBe("https://api.kraken.com/0/private/TradeVolume");
+    expect(requestMethod).toBe("POST");
+    expect(requestBody).toContain("nonce=1800000000001");
+    expect(requestBody).toContain("pair=XBTEUR");
+    expect(requestBody).toContain("fee-info=true");
+    expect(requestBody).toContain("fee_schedule=true");
+    expect(requestApiKey).toBe("api-key");
   });
 
   it("reports when the static PAPER fee differs from the account taker fee", async () => {
