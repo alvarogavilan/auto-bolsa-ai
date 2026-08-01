@@ -24,6 +24,11 @@ export async function demoDashboard(): Promise<Response> {
       "las pérdidas y comisiones cerradas permanecen contabilizadas",
     )
     .replace("el patrón sin ganadoras", "el patrón 0 ganadoras")
+    .replace(
+      "a.closed+=n(p.closedTrades);a.wins+=n(p.winningTrades);a.losses+=n(p.losingTrades);",
+      "const closed=(Array.isArray(s.trades)?s.trades:[]).filter(t=>t.side==='sell'&&Number.isFinite(Number(t.pnlEur)));a.closed+=closed.length;a.wins+=closed.filter(t=>n(t.pnlEur)>0).length;a.losses+=closed.filter(t=>n(t.pnlEur)<0).length;",
+    )
+    .replace("Cerradas · G/P", "Cerradas · G/P netas")
     .replace("JSON.stringify", "String");
 
   const headers = new Headers(response.headers);
