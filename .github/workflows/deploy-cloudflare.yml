@@ -113,3 +113,5 @@ jobs:
       - name: Fail when deployment did not complete
         if: always() && (steps.credentials.outcome != 'success' || steps.deploy.outcome != 'success' || steps.smoke.outcome != 'success')
         run: exit 1
+
+# Triggered after repository secret creation.
