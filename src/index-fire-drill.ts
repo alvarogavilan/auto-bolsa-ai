@@ -1,8 +1,8 @@
 import coreWorker, {
   BotState,
-  LiveExecutorState,
   ResearchLabState,
 } from "./index";
+import { CoordinatedLiveExecutorState as LiveExecutorState } from "./live-executor-state-coordinated";
 import { fireDrillPilotDashboard } from "./pilot-dashboard-fire-drill";
 import { runPilotFireDrill } from "./pilot-fire-drill";
 import { enrichReadinessWithFireDrill } from "./pilot-fire-drill-readiness";
