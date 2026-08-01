@@ -1,4 +1,4 @@
-import { demoDashboard } from "./demo-dashboard";
+import { demoDashboard as baseDemoDashboard } from "./demo-dashboard-base";
 
 function replaceRequired(source: string, search: string, replacement: string): string {
   if (!source.includes(search)) {
@@ -8,7 +8,7 @@ function replaceRequired(source: string, search: string, replacement: string): s
 }
 
 export async function enhancedDemoDashboard(): Promise<Response> {
-  const base = demoDashboard();
+  const base = baseDemoDashboard();
   let html = await base.text();
 
   html = replaceRequired(
