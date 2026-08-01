@@ -241,15 +241,28 @@ export function checkLiveGuardrails(
   return evaluateLiveGuardrails(config, guardrailContext(state, request, excludeClOrdId), now);
 }
 
-/**
- * Crea (o recupera de forma idempotente) una orden `prepared`. Nunca contacta con el
- * transporte: solo reserva el hueco estructural y genera el `cl_ord_id`.
- */
-export function prepareOrder(
+interface PrepareOrderInternalOptions {
+  /**
+   * Solo `prepareValidationOrder()` fija esto a `true`, y únicamente para la
+   * evaluación de guardrails: el interruptor real de `config` nunca se
+   * modifica ni se propaga a `submitOrder()`, que sigue leyendo
+   * `config.liveTradingEnabled` sin alterar. Todas las demás puertas (par,
+   * mínimo, precisión, máximo 5 €, datos frescos, pérdidas, drawdown,
+   * emergencia, inventario, orden única) se evalúan exactamente igual en
+   * ambos caminos porque comparten la misma llamada a `checkLiveGuardrails`.
+   */
+  ignoreLiveTradingSwitch: boolean;
+  createdEvent: string;
+  blockedEvent: string;
+  createdReason: string;
+}
+
+function prepareOrderInternal(
   state: LiveExecutorSnapshot,
   config: LiveGuardrailConfig,
   request: LiveOrderRequest,
-  now = Date.now(),
+  now: number,
+  options: PrepareOrderInternalOptions,
 ): PrepareOrderResult {
   const existingClOrdId = state.idempotencyIndex[request.idempotencyKey];
   if (existingClOrdId) {
@@ -274,9 +287,10 @@ export function prepareOrder(
     }
   }
 
-  const result = checkLiveGuardrails(state, config, request, now);
+  const guardrailConfig = options.ignoreLiveTradingSwitch ? { ...config, liveTradingEnabled: true } : config;
+  const result = checkLiveGuardrails(state, guardrailConfig, request, now);
   if (!result.allowed) {
-    appendAudit(state, "order_prepare_blocked", result.blockers.join("; "), null, now);
+    appendAudit(state, options.blockedEvent, result.blockers.join("; "), null, now);
     return { ok: false, state, blockers: result.blockers };
   }
 
@@ -305,8 +319,54 @@ export function prepareOrder(
     // de una sola orden activa garantiza que solo hay una reserva a la vez.
     state.inventory.reservedQuantityBase = request.volumeBase;
   }
-  appendAudit(state, "order_prepared", `${request.side} ${request.notionalEur} EUR ${request.pair}`, clOrdId, now);
+  appendAudit(state, options.createdEvent, options.createdReason, clOrdId, now);
   return { ok: true, state, order, deduplicated: false };
+}
+
+/**
+ * Crea (o recupera de forma idempotente) una orden `prepared`. Nunca contacta con el
+ * transporte: solo reserva el hueco estructural y genera el `cl_ord_id`. Exige
+ * `config.liveTradingEnabled === true`, exactamente como antes: este camino
+ * de ejecución real permanece intacto.
+ */
+export function prepareOrder(
+  state: LiveExecutorSnapshot,
+  config: LiveGuardrailConfig,
+  request: LiveOrderRequest,
+  now = Date.now(),
+): PrepareOrderResult {
+  return prepareOrderInternal(state, config, request, now, {
+    ignoreLiveTradingSwitch: false,
+    createdEvent: "order_prepared",
+    blockedEvent: "order_prepare_blocked",
+    createdReason: `${request.side} ${request.notionalEur} EUR ${request.pair}`,
+  });
+}
+
+/**
+ * Camino SEPARADO de `prepareOrder()`, exclusivo para el flujo de validación
+ * previa a un piloto real: crea el mismo tipo de orden `prepared` local pero
+ * ignora únicamente el bloqueo del interruptor `LIVE_TRADING_ENABLED`
+ * (forzándolo a `true` solo dentro de esta evaluación de guardrails, nunca en
+ * `config` real). Todas las demás puertas siguen aplicándose sin cambios.
+ * Nunca recibe ni usa un transporte: como `prepareOrder()`, es puramente
+ * local. `submitOrder()` no se modifica y sigue exigiendo
+ * `config.liveTradingEnabled === true` (el valor real, no forzado) antes de
+ * enviar cualquier orden creada por este camino, exactamente igual que para
+ * una orden creada por `prepareOrder()`.
+ */
+export function prepareValidationOrder(
+  state: LiveExecutorSnapshot,
+  config: LiveGuardrailConfig,
+  request: LiveOrderRequest,
+  now = Date.now(),
+): PrepareOrderResult {
+  return prepareOrderInternal(state, config, request, now, {
+    ignoreLiveTradingSwitch: true,
+    createdEvent: "order_prepared_validation_only",
+    blockedEvent: "order_prepare_validation_only_blocked",
+    createdReason: `[validate-only, nunca enviada] ${request.side} ${request.notionalEur} EUR ${request.pair}: preparación exclusiva para preflight validate=true`,
+  });
 }
 
 function transition(
@@ -777,4 +837,76 @@ export function clearEmergencyStop(state: LiveExecutorSnapshot, reason: string, 
 
 export function defaultConfigForSnapshot(): LiveGuardrailConfig {
   return defaultLiveGuardrailConfig();
+}
+
+export interface BaselineCalibrationInput {
+  /** Saldo EUR consultado por el servidor a Kraken. Nunca un valor libre del navegador. */
+  eurBalance: number;
+}
+
+export type BaselineCalibrationResult =
+  | { ok: true; state: LiveExecutorSnapshot }
+  | { ok: false; state: LiveExecutorSnapshot; blockers: string[] };
+
+/**
+ * Calibra `dayStartEquityEur`, `currentEquityEur`, `peakEquityEur` y
+ * `lastMarketDataAt` al saldo EUR real consultado a Kraken. Solo puede
+ * ejecutarse con el estado exactamente prístino con el que se inicializa un
+ * `LiveExecutorSnapshot` nuevo: sin orden activa, sin ninguna orden registrada
+ * (lo que también implica que no puede existir ningún journal de envío
+ * pendiente, porque una entrada de journal solo se crea para una orden ya
+ * preparada y certificada — ver `live-submission-journal.ts`), sin
+ * inventario, sin parada de emergencia ni liquidación manual pendiente, y sin
+ * una reconciliación de balance previa. Cualquier otro estado falla cerrado:
+ * esta función nunca reescribe la equidad de un ejecutor que ya ha operado.
+ */
+export function calibrateLiveBaseline(
+  state: LiveExecutorSnapshot,
+  input: BaselineCalibrationInput,
+  now = Date.now(),
+): BaselineCalibrationResult {
+  const blockers: string[] = [];
+
+  if (!Number.isFinite(input.eurBalance) || input.eurBalance <= 0) {
+    blockers.push("El saldo EUR consultado a Kraken no es un número finito y positivo");
+  }
+  if (state.activeClOrdId !== null) {
+    blockers.push("Existe una orden activa: el estado no es prístino");
+  }
+  if (Object.keys(state.orders).length > 0) {
+    blockers.push("Ya existen órdenes registradas (o journals asociados): el estado no es prístino");
+  }
+  if (
+    state.inventory.quantityBase > EPSILON
+    || state.inventory.pair !== null
+    || state.inventory.reservedQuantityBase > EPSILON
+  ) {
+    blockers.push("Existe inventario registrado: el estado no es prístino");
+  }
+  if (state.emergencyStopActive || state.emergencyStopRequiresManualLiquidation) {
+    blockers.push("Existe una parada de emergencia activa o liquidación manual pendiente");
+  }
+  if (state.lastBalanceCheckStatus !== null) {
+    blockers.push("Ya existe una reconciliación de balance previa: el estado no es prístino");
+  }
+
+  if (blockers.length > 0) {
+    appendAudit(state, "baseline_calibration_blocked", blockers.join("; "), null, now);
+    return { ok: false, state, blockers };
+  }
+
+  state.dayKey = utcDay(now);
+  state.dayStartEquityEur = input.eurBalance;
+  state.currentEquityEur = input.eurBalance;
+  state.peakEquityEur = input.eurBalance;
+  state.lastMarketDataAt = now;
+  state.updatedAt = now;
+  appendAudit(
+    state,
+    "baseline_calibrated",
+    `Baseline fijado al saldo EUR real consultado a Kraken: ${input.eurBalance} EUR`,
+    null,
+    now,
+  );
+  return { ok: true, state };
 }

@@ -36,14 +36,53 @@ describe("authenticated pilot dashboard route", () => {
     expect(html).toContain("Olvidar token");
   });
 
-  it("keeps the pilot dashboard incapable of submitting or creating orders", async () => {
+  it("keeps the pilot dashboard incapable of submitting or creating a real order", async () => {
     const html = await (await authenticatedPilotDashboard()).text();
 
     expect(html).not.toContain("/api/pilot/submit");
-    expect(html).not.toContain("/api/pilot/prepare");
-    expect(html).not.toContain("/api/pilot/preflight");
+    // El único "prepare" permitido es el de validación; el endpoint real
+    // /api/pilot/prepare (sin "-validation") nunca debe aparecer aquí.
+    expect(html).not.toMatch(/\/api\/pilot\/prepare(?!-validation)/);
     expect(html).not.toContain("createOrder");
     expect(html).not.toContain("AddOrder");
+    expect(html).not.toContain("LIVE_TRADING_ENABLED");
+    expect(html).not.toMatch(/\/api\/live\b/);
+  });
+
+  it("adds exactly the two validation actions required by the pilot flow", async () => {
+    const html = await (await authenticatedPilotDashboard()).text();
+
+    expect(html).toContain("Preparar validación de hasta 5 €");
+    expect(html).toContain("Validar en Kraken — no enviar");
+    expect(html).toContain("pilotAuthorizedPost('/api/pilot/prepare-validation')");
+    expect(html).toContain("pilotAuthorizedPost('/api/pilot/preflight'");
+  });
+
+  it("confirms with the user before either validation action runs", async () => {
+    const html = await (await authenticatedPilotDashboard()).text();
+
+    expect(html).toMatch(/confirm\('[^']*'\)\)return;\s*setPilotValidationStatus\('Preparando/);
+    expect(html).toMatch(/confirm\('[^']*'\)\)return;\s*setPilotValidationStatus\('Validando/);
+  });
+
+  it("hides the validate button until a clOrdId has been prepared, and never accepts free-form economic input", async () => {
+    const html = await (await authenticatedPilotDashboard()).text();
+
+    expect(html).toContain('id="pilotValidateButton" class="small secondary" style="display:none"');
+    expect(html).toContain("pilotPreparedClOrdId=null");
+    expect(html).toMatch(/if\(!pilotPreparedClOrdId\)/);
+    // Ninguna de las dos acciones lee un input de texto: solo hay un botón por acción.
+    expect(html).not.toMatch(/<input[^>]*id="pilot(Pair|Volume|Price|Balance|Notional)/i);
+    expect((html.match(/onclick="(preparePilotValidation|validatePilotOrder)\(\)"/g) ?? []).length).toBe(2);
+  });
+
+  it("refreshes /api/pilot/readiness after each validation action", async () => {
+    const html = await (await authenticatedPilotDashboard()).text();
+    const prepareFn = html.slice(html.indexOf("async function preparePilotValidation"), html.indexOf("async function validatePilotOrder"));
+    const validateFn = html.slice(html.indexOf("async function validatePilotOrder"));
+
+    expect(prepareFn).toContain("loadPilot(true)");
+    expect(validateFn.slice(0, validateFn.indexOf("\n  }\n"))).toContain("loadPilot(true)");
   });
 
   it("connects only GET /pilot while preserving hard-disabled submission routes", () => {

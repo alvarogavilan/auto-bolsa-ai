@@ -1,10 +1,13 @@
 import { DurableObject } from "cloudflare:workers";
 import {
+  calibrateLiveBaseline,
   clearEmergencyStop,
   initializeLiveExecutor,
   observeMarket,
   prepareOrder,
+  prepareValidationOrder,
   type LiveExecutorSnapshot,
+  type LiveOrder,
   type LiveOrderRequest,
 } from "./live-executor";
 import {
@@ -28,6 +31,7 @@ import {
 import { fetchLivePairResolution, type LivePairResolution } from "./live-pair-metadata";
 import {
   PersistedLiveSubmissionJournal,
+  liveSubmissionJournalStorageKey,
   type LiveSubmissionJournalEntry,
   type LiveSubmissionJournalPersistence,
 } from "./live-submission-journal";
@@ -39,6 +43,7 @@ import {
   type LiveFillEvidenceSource,
 } from "./live-verified-reconciliation";
 import { emergencyCancelAllWithVerifiedFills } from "./live-verified-emergency";
+import { buildPilotValidationProposal, pilotValidationProposalToOrderRequest, preflightCertificateDisplayStatus } from "./pilot-validation";
 import { BOT_STATE_SINGLETON_NAME, type Env } from "./types";
 
 const STORAGE_KEY = "live-executor-snapshot";
@@ -237,12 +242,121 @@ export class LiveExecutorState extends DurableObject<Env> {
     };
   }
 
+  /** La orden activa si existe; si no, la más recientemente actualizada. */
+  private latestRelevantOrder(state: LiveExecutorSnapshot): LiveOrder | null {
+    if (state.activeClOrdId && state.orders[state.activeClOrdId]) return state.orders[state.activeClOrdId] ?? null;
+    return Object.values(state.orders).sort((left, right) => right.updatedAt - left.updatedAt)[0] ?? null;
+  }
+
+  /**
+   * Estado sanitizado del certificado y del journal para la orden relevante,
+   * usado tanto por `/status` como por el informe de preparación. Ninguno de
+   * los dos contiene secretos: son metadatos de la propia orden y del propio
+   * proceso de envío, no credenciales.
+   */
+  private async certificateAndJournalStatus(
+    state: LiveExecutorSnapshot,
+    now: number,
+  ): Promise<{ certificateStatus: string; journal: { phase: string } }> {
+    const order = this.latestRelevantOrder(state);
+    if (!order) return { certificateStatus: "absent", journal: { phase: "none" } };
+
+    const certificate = await this.certificatePersistence().get(livePreflightCertificateStorageKey(order.clOrdId));
+    const certificateStatus = await preflightCertificateDisplayStatus(certificate, order, now);
+
+    const journalEntry = await this.journalPersistence().get(liveSubmissionJournalStorageKey(order.clOrdId));
+    const journal = { phase: journalEntry?.phase ?? "none" };
+
+    return { certificateStatus, journal };
+  }
+
+  /**
+   * Metadatos públicos del par configurado (mínimo, decimales), o `null` si
+   * no se pudieron obtener ni siquiera de una copia cacheada. Nunca lanza:
+   * `/status` debe seguir respondiendo aunque la API pública de Kraken falle.
+   */
+  private async pairMetadataForDisplay(now: number): Promise<Record<string, unknown> | null> {
+    const pair = this.env.PAIR || "XBTEUR";
+    try {
+      const resolution = await this.pairResolution(pair, now, true);
+      return {
+        pair: resolution.canonicalPair,
+        orderMinBase: resolution.metadata.orderMinBase,
+        lotDecimals: resolution.metadata.lotDecimals,
+        priceDecimals: resolution.metadata.priceDecimals,
+        checkedAt: now,
+      };
+    } catch {
+      return null;
+    }
+  }
+
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
     const now = Date.now();
 
     if (request.method === "GET" && url.pathname === "/status") {
-      return Response.json(await this.read());
+      const state = await this.read();
+      const { certificateStatus, journal } = await this.certificateAndJournalStatus(state, now);
+      const pairMetadata = await this.pairMetadataForDisplay(now);
+      return Response.json({ ...state, certificateStatus, journal, pairMetadata });
+    }
+
+    if (request.method === "POST" && url.pathname === "/prepare-validation") {
+      const proposalResult = await buildPilotValidationProposal(this.env);
+      if (!proposalResult.ok) {
+        return Response.json(
+          {
+            ok: false,
+            error: "PILOT_VALIDATION_PROPOSAL_BLOCKED",
+            blockers: proposalResult.blockers,
+            liveTrading: false,
+          },
+          { status: 409 },
+        );
+      }
+      const { proposal } = proposalResult;
+
+      const state = await this.read();
+      // La calibración solo se aplica si el estado sigue prístino; en
+      // cualquier otro caso se omite en silencio (no es un bloqueo) y se
+      // conserva la equidad ya existente, solo refrescando la frescura de
+      // mercado con el precio público que se acaba de consultar.
+      const calibration = calibrateLiveBaseline(state, { eurBalance: proposal.eurBalance }, now);
+      if (!calibration.ok) {
+        state.lastMarketDataAt = now;
+        state.updatedAt = now;
+      }
+
+      const { config } = await this.reconciliationContext(now);
+      const configForPair = {
+        ...config,
+        pairMetadata: { ...config.pairMetadata, [proposal.pair]: proposal.resolution.metadata },
+      };
+      const result = prepareValidationOrder(
+        state,
+        configForPair,
+        pilotValidationProposalToOrderRequest(proposal),
+        now,
+      );
+      await this.write(result.state);
+      return Response.json(
+        {
+          ...result,
+          baselineCalibrated: calibration.ok,
+          proposal: {
+            pair: proposal.pair,
+            side: proposal.side,
+            volumeBase: proposal.volumeBase,
+            limitPrice: proposal.limitPrice,
+            notionalEur: proposal.notionalEur,
+            askPrice: proposal.askPrice,
+            spreadPct: proposal.spreadPct,
+            checkedAt: proposal.checkedAt,
+          },
+        },
+        { status: result.ok ? 200 : 409 },
+      );
     }
 
     if (request.method === "POST" && url.pathname === "/observe-market") {

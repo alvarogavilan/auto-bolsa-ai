@@ -137,6 +137,19 @@ function latestRelevantOrder(state: LiveExecutorSnapshot): LiveOrder | null {
   return Object.values(state.orders).sort((left, right) => right.updatedAt - left.updatedAt)[0] ?? null;
 }
 
+/** Forma extendida de `/status`: el snapshot más certificado/journal/mercado ya sanitizados por `LiveExecutorState`. */
+interface LiveExecutorStatusResponse extends LiveExecutorSnapshot {
+  certificateStatus?: string;
+  journal?: { phase: string };
+  pairMetadata?: {
+    pair: string;
+    orderMinBase: number;
+    lotDecimals: number;
+    priceDecimals: number;
+    checkedAt: number;
+  } | null;
+}
+
 function demoSummary(value: unknown): DemoStatusSummary {
   if (!value || typeof value !== "object") return { status: "unknown", message: null, updatedAt: null };
   const body = value as { shadowLiveDemo?: unknown };
@@ -182,9 +195,11 @@ export async function buildPilotRuntimeReadiness(
 
   const paper = await paperResponse.json<PaperReadiness>();
   const lab = await responseJson(labResponse);
-  const live = await liveResponse.json<LiveExecutorSnapshot>();
+  const live = await liveResponse.json<LiveExecutorStatusResponse>();
   const demo = demoSummary(lab);
   const order = latestRelevantOrder(live);
+  const certificateStatus = live.certificateStatus ?? "absent";
+  const journalPhase = live.journal?.phase ?? "none";
   const blockers: string[] = [];
   const warnings: string[] = [];
   const passedChecks: string[] = [];
@@ -215,6 +230,19 @@ export async function buildPilotRuntimeReadiness(
   if (order?.status === "prepared") passedChecks.push("Existe una orden preparada para validate=true");
   else blockers.push("No existe una orden preparada para el preflight validate=true");
 
+  // Informativo: certificado y journal documentan en qué punto del flujo
+  // validate-only está la orden preparada actual, pero no gatean por sí
+  // mismos `infrastructureEligibleForManualReview` — esa elegibilidad ya
+  // depende de que exista una orden `prepared`, y el paso de preflight es
+  // una acción manual explícita posterior desde la app.
+  if (certificateStatus === "valid") passedChecks.push("El certificado de preflight validate=true está vigente");
+  else if (certificateStatus === "consumed") passedChecks.push("El certificado de preflight ya fue consumido en un ciclo anterior");
+  else if (certificateStatus === "expired") warnings.push("El certificado de preflight ha caducado; repite el preflight para renovarlo");
+  else if (certificateStatus === "invalid") warnings.push("El certificado de preflight almacenado no supera la verificación exacta");
+
+  if (journalPhase === "reconciled") passedChecks.push("El journal de envío de la orden más reciente está reconciliado");
+  else if (journalPhase !== "none") warnings.push(`El journal de envío está en fase "${journalPhase}", pendiente de reconciliar`);
+
   if (env.LIVE_TRADING_ENABLED === "true") {
     warnings.push("LIVE_TRADING_ENABLED aparece activo, pero la ruta pública de envío sigue bloqueada");
   } else {
@@ -232,6 +260,9 @@ export async function buildPilotRuntimeReadiness(
     paper,
     demo,
     kraken,
+    market: live.pairMetadata ?? null,
+    preflightCertificate: { status: certificateStatus },
+    submissionJournal: { phase: journalPhase },
     executor: {
       createdAt: live.createdAt,
       updatedAt: live.updatedAt,

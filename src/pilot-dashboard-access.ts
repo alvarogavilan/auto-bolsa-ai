@@ -34,6 +34,15 @@ export async function authenticatedPilotDashboard(): Promise<Response> {
       <div id="authStatus" class="auth-status">El token no se incluye en la URL, el HTML ni el informe técnico.</div>
     </section>
 
+    <section id="pilotValidationCard" class="auth-card">
+      <div class="between"><div><strong>Validación sin envío (máx. 5 €)</strong><div class="auth-status">Preparar solo escribe estado local. Validar contacta con Kraken en modo validate=true y nunca envía ni crea una orden real.</div></div><span class="badge">Sin ejecución</span></div>
+      <div class="auth-actions">
+        <button class="small" onclick="preparePilotValidation()">Preparar validación de hasta 5 €</button>
+        <button id="pilotValidateButton" class="small secondary" style="display:none" onclick="validatePilotOrder()">Validar en Kraken — no enviar</button>
+      </div>
+      <div id="pilotValidationStatus" class="auth-status">Sin acciones todavía.</div>
+    </section>
+
     <div id="error" class="error"></div>`,
   );
 
@@ -62,6 +71,47 @@ export async function authenticatedPilotDashboard(): Promise<Response> {
     document.getElementById('pilotToken').value='';
     updateAuthStatus('Token eliminado de esta pestaña.');
     document.getElementById('updated').textContent='Acceso privado pendiente';
+  }
+  let pilotPreparedClOrdId=null;
+  function setPilotValidationStatus(message){document.getElementById('pilotValidationStatus').textContent=message}
+  async function pilotAuthorizedPost(path,payload){
+    const token=currentPilotToken();
+    if(!token){setPilotValidationStatus('Introduce primero el ADMIN_TOKEN en Acceso privado.');return null}
+    const options={method:'POST',headers:{Authorization:'Bearer '+token}};
+    if(payload!==undefined){options.headers['Content-Type']='application/json';options.body=JSON.stringify(payload)}
+    const response=await fetch(path,options);
+    const text=await response.text();
+    let body=null;try{body=JSON.parse(text)}catch(e){body=null}
+    return {response,body};
+  }
+  async function preparePilotValidation(){
+    if(!confirm('Esto solo prepara un estado local de hasta 5 €. No contacta con Kraken ni envía ninguna orden. ¿Continuar?'))return;
+    setPilotValidationStatus('Preparando…');
+    const result=await pilotAuthorizedPost('/api/pilot/prepare-validation');
+    if(!result)return;
+    const {response,body}=result;
+    const clOrdId=body&&body.order&&body.order.clOrdId?body.order.clOrdId:null;
+    if(!response.ok||!body||body.ok===false||!clOrdId){
+      pilotPreparedClOrdId=null;
+      document.getElementById('pilotValidateButton').style.display='none';
+      setPilotValidationStatus('No se pudo preparar: '+((body&&Array.isArray(body.blockers)&&body.blockers.length)?body.blockers.join('; '):((body&&(body.error||body.message))||'error desconocido')));
+      loadPilot(true);
+      return;
+    }
+    pilotPreparedClOrdId=clOrdId;
+    document.getElementById('pilotValidateButton').style.display='inline-block';
+    setPilotValidationStatus('Orden local preparada ('+clOrdId+'). Todavía no se ha contactado con Kraken.');
+    loadPilot(true);
+  }
+  async function validatePilotOrder(){
+    if(!pilotPreparedClOrdId){setPilotValidationStatus('Primero prepara una validación.');return}
+    if(!confirm('Esto contacta con Kraken en modo validate=true. Kraken no crea ninguna orden real ni la envía al mercado. ¿Continuar?'))return;
+    setPilotValidationStatus('Validando con Kraken (validate=true)…');
+    const result=await pilotAuthorizedPost('/api/pilot/preflight',{clOrdId:pilotPreparedClOrdId});
+    if(!result)return;
+    const {body}=result;
+    setPilotValidationStatus((body&&body.status==='validated')?'Kraken validó la orden en modo validate=true. No se ha enviado nada real.':('Resultado: '+((body&&body.status)?body.status:'desconocido')+((body&&body.message)?(' · '+body.message):'')));
+    loadPilot(true);
   }
 `,
   );

@@ -288,6 +288,7 @@ export default {
       const pilotActions: Record<string, string> = {
         "/api/pilot/observe-market": "/observe-market",
         "/api/pilot/prepare": "/prepare",
+        "/api/pilot/prepare-validation": "/prepare-validation",
         "/api/pilot/preflight": "/preflight",
         "/api/pilot/reconcile": "/reconcile",
         "/api/pilot/retry": "/retry",

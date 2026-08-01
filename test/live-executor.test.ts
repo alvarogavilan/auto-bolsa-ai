@@ -1,11 +1,13 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { defaultLiveGuardrailConfig, type LiveGuardrailConfig } from "../src/live-guardrails";
 import {
+  calibrateLiveBaseline,
   clearEmergencyStop,
   emergencyCancelAll,
   initializeLiveExecutor,
   observeMarket,
   prepareOrder,
+  prepareValidationOrder,
   reconcile,
   reconcileInventoryAgainstBalances,
   retryReconciliation,
@@ -721,5 +723,185 @@ describe("live executor: closing the single open position", () => {
 
     expect(state.inventory.quantityBase).toBe(0);
     expect(state.orders[sell.order.clOrdId]?.status).toBe("filled");
+  });
+});
+
+describe("live executor: prepareValidationOrder (separate validate-only path)", () => {
+  it("prepares an order even with LIVE_TRADING_ENABLED absent, unlike prepareOrder", () => {
+    const state = readyState();
+    const disabledConfig = defaultLiveGuardrailConfig();
+
+    // Pruebas obligatorias #1: prepareOrder() sigue bloqueado con LIVE apagado.
+    const viaPrepareOrder = prepareOrder(state, disabledConfig, buyRequest("still-blocked"), NOW);
+    expect(viaPrepareOrder.ok).toBe(false);
+    if (!viaPrepareOrder.ok) expect(viaPrepareOrder.blockers).toContain("LIVE_TRADING_ENABLED no está activado");
+
+    // Pruebas obligatorias #2: prepareValidationOrder() sí puede, con LIVE apagado.
+    const viaValidation = prepareValidationOrder(state, disabledConfig, buyRequest("validation-1"), NOW);
+    expect(viaValidation.ok).toBe(true);
+    if (viaValidation.ok) {
+      expect(viaValidation.order.status).toBe("prepared");
+      expect(state.activeClOrdId).toBe(viaValidation.order.clOrdId);
+    }
+  });
+
+  it("still enforces every other guardrail exactly like prepareOrder: 5 EUR cap, valid pair, coherent volume x price", () => {
+    const disabledConfig = defaultLiveGuardrailConfig();
+
+    const overBudget = prepareValidationOrder(
+      readyState(),
+      disabledConfig,
+      buyRequest("validation-over-budget", { notionalEur: 5.5, volumeBase: 0.00011 }),
+      NOW,
+    );
+    expect(overBudget.ok).toBe(false);
+
+    const badPair = prepareValidationOrder(
+      readyState(),
+      disabledConfig,
+      buyRequest("validation-bad-pair", { pair: "DOGEEUR", volumeBase: 50 }),
+      NOW,
+    );
+    expect(badPair.ok).toBe(false);
+
+    const incoherent = prepareValidationOrder(
+      readyState(),
+      disabledConfig,
+      buyRequest("validation-incoherent", { volumeBase: 1, limitPrice: 50_000, notionalEur: 5 }),
+      NOW,
+    );
+    expect(incoherent.ok).toBe(false);
+  });
+
+  it("still respects the single active order limit shared with prepareOrder", () => {
+    const state = readyState();
+    const disabledConfig = defaultLiveGuardrailConfig();
+    const first = prepareValidationOrder(state, disabledConfig, buyRequest("validation-single-1"), NOW);
+    expect(first.ok).toBe(true);
+    const second = prepareValidationOrder(state, disabledConfig, buyRequest("validation-single-2"), NOW);
+    expect(second.ok).toBe(false);
+    if (!second.ok) expect(second.blockers).toContain("Ya existe una orden activa (límite estructural de una sola orden)");
+  });
+
+  it("leaves an unambiguous validate-only audit trail, distinct from a real prepare", () => {
+    const state = readyState();
+    const disabledConfig = defaultLiveGuardrailConfig();
+    const result = prepareValidationOrder(state, disabledConfig, buyRequest("validation-audit"), NOW);
+    expect(result.ok).toBe(true);
+    const entry = state.auditLog.find((candidate) => candidate.event === "order_prepared_validation_only");
+    expect(entry).toBeDefined();
+    expect(entry?.detail).toMatch(/validate-only/);
+    expect(state.auditLog.some((candidate) => candidate.event === "order_prepared")).toBe(false);
+  });
+
+  it("Pruebas obligatorias #3: does not weaken submitOrder() — the resulting order still cannot be submitted while LIVE is off, and the transport is never contacted", async () => {
+    const state = readyState();
+    const disabledConfig = defaultLiveGuardrailConfig();
+    const prepared = prepareValidationOrder(state, disabledConfig, buyRequest("validation-submit-blocked"), NOW);
+    if (!prepared.ok) throw new Error("expected validation prepare to succeed");
+
+    const transport = new FakeLiveOrderTransport();
+    const result = await submitOrder(state, transport, disabledConfig, prepared.order.clOrdId, NOW);
+    expect(result.ok).toBe(false);
+    expect(result.order.status).toBe("prepared");
+    if (!result.ok) expect(result.blockers).toContain("LIVE_TRADING_ENABLED no está activado");
+
+    const open = await transport.listOpenOrders();
+    const closed = await transport.listClosedOrders();
+    expect(open.length + closed.length).toBe(0);
+  });
+
+  it("receives no special treatment from submitOrder(): once LIVE is genuinely enabled, an order created via prepareValidationOrder submits exactly like one from prepareOrder", async () => {
+    // Esta prueba usa submitOrder() en solitario (sin certificado) a
+    // propósito, porque esa puerta vive en
+    // submitOrderWithAtomicPreflightCertificate, no aquí. El objetivo es
+    // documentar que prepareValidationOrder no marca la orden de ninguna
+    // forma especial: submitOrder() la trata igual que a una preparada por
+    // prepareOrder().
+    const state = readyState();
+    const prepared = prepareValidationOrder(state, defaultLiveGuardrailConfig(), buyRequest("validation-vs-real"), NOW);
+    if (!prepared.ok) throw new Error("expected validation prepare to succeed");
+
+    const transport = new FakeLiveOrderTransport();
+    const result = await submitOrder(state, transport, enabledConfig(), prepared.order.clOrdId, NOW);
+    expect(result.ok).toBe(true);
+    expect(result.order.status).toBe("submitted");
+  });
+});
+
+describe("live executor: calibrateLiveBaseline (Pruebas obligatorias #4)", () => {
+  it("calibrates day/current/peak equity and lastMarketDataAt to the real EUR balance from a pristine state", () => {
+    const state = initializeLiveExecutor(50, NOW);
+    expect(state.lastMarketDataAt).toBeNull();
+
+    const result = calibrateLiveBaseline(state, { eurBalance: 11.37 }, NOW);
+    expect(result.ok).toBe(true);
+    expect(state.dayStartEquityEur).toBe(11.37);
+    expect(state.currentEquityEur).toBe(11.37);
+    expect(state.peakEquityEur).toBe(11.37);
+    expect(state.lastMarketDataAt).toBe(NOW);
+  });
+
+  it("never simulates an 80% crash: replaces the 50 EUR example baseline with the real ~10 EUR balance while still pristine", () => {
+    const state = initializeLiveExecutor(50, NOW);
+    const result = calibrateLiveBaseline(state, { eurBalance: 10 }, NOW);
+    expect(result.ok).toBe(true);
+    expect(state.dayStartEquityEur).toBe(10);
+    expect(state.peakEquityEur).toBe(10);
+    expect(state.currentEquityEur).toBe(10);
+  });
+
+  it("fails closed with a non-finite or non-positive balance", () => {
+    expect(calibrateLiveBaseline(initializeLiveExecutor(50, NOW), { eurBalance: 0 }, NOW).ok).toBe(false);
+    expect(calibrateLiveBaseline(initializeLiveExecutor(50, NOW), { eurBalance: -5 }, NOW).ok).toBe(false);
+    expect(calibrateLiveBaseline(initializeLiveExecutor(50, NOW), { eurBalance: Number.NaN }, NOW).ok).toBe(false);
+  });
+
+  it("fails closed when an order already exists (active or not)", () => {
+    const state = initializeLiveExecutor(50, NOW);
+    // Se observa mercado únicamente para que el guardrail de frescura no
+    // interfiera: lo que esta prueba aísla es el bloqueo por orden existente.
+    observeMarket(state, 50, NOW);
+    const prepared = prepareValidationOrder(state, defaultLiveGuardrailConfig(), buyRequest("calibration-order-exists"), NOW);
+    if (!prepared.ok) throw new Error("expected prepare to succeed");
+
+    const result = calibrateLiveBaseline(state, { eurBalance: 10 }, NOW + 1_000);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.blockers.join(" ")).toMatch(/órdenes registradas/);
+    // El baseline de ejemplo no se sobrescribe silenciosamente.
+    expect(state.dayStartEquityEur).toBe(50);
+  });
+
+  it("fails closed when there is inventory registered", () => {
+    const state = initializeLiveExecutor(50, NOW);
+    state.inventory = { pair: "XBTEUR", quantityBase: 0.001, averageCostEur: 50_000, reservedQuantityBase: 0 };
+    expect(calibrateLiveBaseline(state, { eurBalance: 10 }, NOW).ok).toBe(false);
+  });
+
+  it("fails closed when an emergency stop or a pending manual liquidation exists", () => {
+    const activeStop = initializeLiveExecutor(50, NOW);
+    activeStop.emergencyStopActive = true;
+    expect(calibrateLiveBaseline(activeStop, { eurBalance: 10 }, NOW).ok).toBe(false);
+
+    const manualLiquidation = initializeLiveExecutor(50, NOW);
+    manualLiquidation.emergencyStopRequiresManualLiquidation = true;
+    expect(calibrateLiveBaseline(manualLiquidation, { eurBalance: 10 }, NOW).ok).toBe(false);
+  });
+
+  it("fails closed when a previous balance reconciliation already ran (no longer pristine)", () => {
+    const state = initializeLiveExecutor(50, NOW);
+    state.lastBalanceCheckStatus = "consistent";
+    expect(calibrateLiveBaseline(state, { eurBalance: 10 }, NOW).ok).toBe(false);
+  });
+
+  it("audits both a successful and a blocked calibration attempt", () => {
+    const state = initializeLiveExecutor(50, NOW);
+    calibrateLiveBaseline(state, { eurBalance: 10 }, NOW);
+    expect(state.auditLog.some((entry) => entry.event === "baseline_calibrated")).toBe(true);
+
+    const notPristine = initializeLiveExecutor(50, NOW);
+    notPristine.emergencyStopActive = true;
+    calibrateLiveBaseline(notPristine, { eurBalance: 20 }, NOW + 1_000);
+    expect(notPristine.auditLog.some((entry) => entry.event === "baseline_calibration_blocked")).toBe(true);
   });
 });
