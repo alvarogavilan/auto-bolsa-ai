@@ -18,12 +18,8 @@ function mockKraken(balance: Record<string, string>, open: Record<string, unknow
   globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const request = new Request(input, init);
     requests.push(request);
-    if (request.url.endsWith("/Balance")) {
-      return Response.json({ error: [], result: balance });
-    }
-    if (request.url.endsWith("/OpenOrders")) {
-      return Response.json({ error: [], result: { open } });
-    }
+    if (request.url.endsWith("/Balance")) return Response.json({ error: [], result: balance });
+    if (request.url.endsWith("/OpenOrders")) return Response.json({ error: [], result: { open } });
     throw new Error(`Unexpected Kraken URL: ${request.url}`);
   }) as typeof fetch;
   return requests;
@@ -44,7 +40,6 @@ describe("Kraken account cleanliness", () => {
     );
 
     const audit = await gateway.audit(1_800_000_000_000);
-
     expect(audit.eurBalance).toBe(10);
     expect(audit.nonZeroAssetCount).toBe(1);
     expect(audit.nonEurAssetCount).toBe(0);
@@ -66,25 +61,11 @@ describe("Kraken account cleanliness", () => {
   it("blocks both prior inventory and an existing open order", async () => {
     mockKraken(
       { ZEUR: "8.0000", XETH: "0.0500" },
-      {
-        ORDER1: {
-          status: "open",
-          vol: "0.01",
-          vol_exec: "0",
-          opentm: "1800000000",
-          descr: {},
-        },
-      },
+      { ORDER1: { status: "open", vol: "0.01", vol_exec: "0", opentm: "1800000000", descr: {} } },
     );
     let nonce = 1_800_000_000_100;
-    const gateway = new KrakenReadOnlyAccountGateway(
-      "api-key",
-      "c2VjcmV0",
-      async () => String(++nonce),
-    );
-
+    const gateway = new KrakenReadOnlyAccountGateway("api-key", "c2VjcmV0", async () => String(++nonce));
     const audit = await gateway.audit();
-
     expect(audit.nonEurAssetCount).toBe(1);
     expect(audit.openOrderCount).toBe(1);
     expect(audit.accountCleanForBaseline).toBe(false);
@@ -114,26 +95,14 @@ describe("Kraken account cleanliness", () => {
         return String(1_800_000_001_000 + nonceIndex);
       },
     );
-
     await gateway.audit();
-
-    expect(events).toEqual([
-      "nonce-1",
-      "fetch-balance",
-      "nonce-2",
-      "fetch-open-orders",
-    ]);
+    expect(events).toEqual(["nonce-1", "fetch-balance", "nonce-2", "fetch-open-orders"]);
   });
 
   it("never calls an order-creation or mutation endpoint", async () => {
     const requests = mockKraken({ ZEUR: "10" }, {});
     let nonce = 1_800_000_002_000;
-    await new KrakenReadOnlyAccountGateway(
-      "api-key",
-      "c2VjcmV0",
-      async () => String(++nonce),
-    ).audit();
-
+    await new KrakenReadOnlyAccountGateway("api-key", "c2VjcmV0", async () => String(++nonce)).audit();
     const serialized = await Promise.all(requests.map(async (request) => `${request.url} ${await request.clone().text()}`));
     expect(serialized.join("\n")).not.toContain("AddOrder");
     expect(serialized.join("\n")).not.toContain("CancelOrder");
@@ -164,21 +133,9 @@ describe("Kraken account cleanliness", () => {
       blockers: ["La cuenta contiene activos no EUR antes del baseline"],
     };
 
-    const eligible = applyAccountCleanlinessToReadiness({
-      blockers: [],
-      passedChecks: [],
-      infrastructureEligibleForManualReview: true,
-    }, clean, null);
-    const previouslyBlocked = applyAccountCleanlinessToReadiness({
-      blockers: ["PAPER pendiente"],
-      passedChecks: [],
-      infrastructureEligibleForManualReview: false,
-    }, clean, null);
-    const newlyBlocked = applyAccountCleanlinessToReadiness({
-      blockers: [],
-      passedChecks: [],
-      infrastructureEligibleForManualReview: true,
-    }, dirty, null);
+    const eligible = applyAccountCleanlinessToReadiness({ blockers: [], passedChecks: [], infrastructureEligibleForManualReview: true }, clean, null);
+    const previouslyBlocked = applyAccountCleanlinessToReadiness({ blockers: ["PAPER pendiente"], passedChecks: [], infrastructureEligibleForManualReview: false }, clean, null);
+    const newlyBlocked = applyAccountCleanlinessToReadiness({ blockers: [], passedChecks: [], infrastructureEligibleForManualReview: true }, dirty, null);
 
     expect(eligible.infrastructureEligibleForManualReview).toBe(true);
     expect(previouslyBlocked.infrastructureEligibleForManualReview).toBe(false);
@@ -188,7 +145,6 @@ describe("Kraken account cleanliness", () => {
 
   it("shows the audit in the iPhone console without exposing assets or secrets", async () => {
     const html = await (await fireDrillPilotDashboard()).text();
-
     expect(html).toContain("Limpieza de la cuenta Kraken");
     expect(html).toContain("Activos no EUR");
     expect(html).toContain("Órdenes abiertas");
@@ -200,14 +156,32 @@ describe("Kraken account cleanliness", () => {
     expect(() => new Function(script)).not.toThrow();
   });
 
-  it("keeps all private Kraken calls inside an already authorized file", () => {
+  it("acquires the global private lease before the first nonce and releases it in finally", () => {
+    const audit = readFileSync(join(ROOT, "src/pilot-account-cleanliness.ts"), "utf8");
+    const cacheLookup = audit.indexOf("const cached = await cache.match(key)");
+    const acquire = audit.indexOf("const leaseId = await acquireKrakenPrivateLease");
+    const gateway = audit.indexOf("new KrakenReadOnlyAccountGateway");
+    const release = audit.indexOf("releaseKrakenPrivateLease(env, leaseId)");
+
+    expect(cacheLookup).toBeGreaterThan(-1);
+    expect(acquire).toBeGreaterThan(cacheLookup);
+    expect(gateway).toBeGreaterThan(acquire);
+    expect(release).toBeGreaterThan(gateway);
+    expect(audit).toContain("} finally {");
+    expect(audit).toContain("account-cleanliness:${crypto.randomUUID()}");
+  });
+
+  it("keeps private Kraken calls inside authorized and globally serialized files", () => {
     const gateway = readFileSync(join(ROOT, "src/live-order-preflight.ts"), "utf8");
+    const audit = readFileSync(join(ROOT, "src/pilot-account-cleanliness.ts"), "utf8");
     const adapter = readFileSync(join(ROOT, "src/index-fire-drill.ts"), "utf8");
 
     expect(gateway).toContain("class KrakenReadOnlyAccountGateway");
     expect(gateway).toContain("const balanceNonce = await this.nextNonce()");
     expect(gateway).toContain("const openOrdersNonce = await this.nextNonce()");
     expect(gateway).not.toContain("computeNextNonce");
+    expect(audit).toContain("acquireKrakenPrivateLease");
+    expect(audit).toContain("releaseKrakenPrivateLease");
     expect(adapter).toContain('url.pathname === "/api/pilot/audit-account"');
     expect(adapter).toContain("if (!isAuthorized(request, env))");
   });
