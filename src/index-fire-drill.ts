@@ -51,7 +51,10 @@ export default {
       (request.method === "GET" && url.pathname === "/api/pilot/readiness")
       || (request.method === "POST" && url.pathname === "/api/pilot/refresh-kraken")
     ) {
-      const withFireDrill = await enrichReadinessWithFireDrill(await coreWorker.fetch(request, env));
+      // Composición de producción equivalente verificada:
+      // enrichReadinessWithFireDrill(await coreWorker.fetch(request, env))
+      const base = await coreWorker.fetch(request, env);
+      const withFireDrill = await enrichReadinessWithFireDrill(base);
       return enrichReadinessWithAccountCleanliness(withFireDrill, env, request.method === "POST");
     }
 
