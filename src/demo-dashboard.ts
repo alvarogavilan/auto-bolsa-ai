@@ -11,7 +11,10 @@ export async function demoDashboard(): Promise<Response> {
       "Cuenta equivalente de 50 €; no suma ficticia de nueve carteras.",
     )
     .replace("NO APTO PARA REAL", "NO APTO LIVE")
-    .replace("Posiciones abiertas y cerradas", "Posiciones vigentes")
+    .replace(
+      "Posiciones abiertas y cerradas",
+      "Posiciones vigentes · Posiciones abiertas y cerradas",
+    )
     .replace(
       "Mismo estado contable de Resumen, sin bloques heredados.",
       "Estado exacto del mismo capital mostrado en Resumen.",
