@@ -30,18 +30,50 @@ los módulos LIVE existentes.
 | --- | --- | --- |
 | `paper` | Salida sin modificar de `calculatePaperReadiness` (`src/paper-readiness.ts`) | Único punto de verdad para la evidencia PAPER; el informe no reimplementa sus umbrales. |
 | `demo.status` | `ShadowLiveDemoStatus` de `buildShadowLiveDemo` (`src/shadow-live-demo.ts`) | Solo el estado; nunca cifras de la estrategia seleccionada. |
-| `guardrails` | Salida sin modificar de `evaluateLiveGuardrails` (`src/live-guardrails.ts`) para la orden preparada actual | El informe no reevalúa las puertas: solo agrega `allowed`/`blockers`. |
+| `guardrails.activationSwitchEnabled` | `config.liveTradingEnabled` (`LIVE_TRADING_ENABLED`) | Puramente informativo: **nunca** se exige `true` para declarar elegibilidad — exigirlo sería circular, ya que el informe existe precisamente para revisar la activación antes de encenderla. |
+| `guardrails.structuralResult` | `evaluateLiveGuardrails({ ...config, liveTradingEnabled: true }, context)` (`src/live-guardrails.ts`) | Se evalúa forzando el interruptor a `true` para aislar el resto de puertas estructurales (una orden activa, una posición, tamaño máximo, pérdida diaria, drawdown, frescura de mercado, errores de transporte, etc.) del propio interruptor; `structuralResult.blockers` nunca contiene el bloqueo del interruptor. |
 | `krakenPermissions.{auditComplete,safePermissions}` | Los dos booleanos de `BotState.krakenPermissions()` (`src/bot-state.ts`) | **Deliberadamente excluidos**: la lista completa de permisos, `apiKeyName`, `expiresAt`, `ipRestrictionEnabled`. |
 | `pairMetadata.{resolved,stale}` | Derivado de `LivePairResolution`/caché de `LiveExecutorState` | Sin exponer el contenido de `AssetPairs`, solo si está resuelto y si sigue fresco. |
 | `preparedOrder.exists` | `LiveExecutorSnapshot.activeClOrdId !== null` con `status === "prepared"` o superior | Confirma que existe una orden que ha atravesado el flujo, sin exponer sus datos económicos. |
 | `preflightCertificate.status` | Resultado ya evaluado de `checkLivePreflightCertificate` (`"valid" \| "expired" \| "consumed" \| "invalid" \| "absent"`) | El informe no recalcula huellas ni fechas; consume la conclusión. |
-| `submissionJournal.phase` | `"none"` o la fase de `LiveSubmissionJournalEntry` (`src/live-submission-journal.ts`) | `"none"` cuando no existe entrada para la orden preparada actual. |
+| `submissionJournal.phase` | `"none"` o la fase de `LiveSubmissionJournalEntry` (`src/live-submission-journal.ts`) | `"none"` cuando no existe entrada para la orden preparada actual. **Acoplado con `preflightCertificate.status`**: ver más abajo. |
 | `reconciliation.{everRun,ok,balanceStatus,unresolvedOrderCount}` | Resumen del último `LiveVerifiedReconciliationReport` (`src/live-verified-reconciliation.ts`) | `balanceStatus` añade `"never_checked"` para distinguir "nunca se ejecutó" de `"unknown"` (falló el chequeo). |
 | `emergency.{active,manualLiquidationPending}` | `LiveExecutorSnapshot.emergencyStopActive` / `emergencyStopRequiresManualLiquidation` | Igual que el resto, sin exponer el texto libre de `emergencyStopReason`. |
 
 Todos los campos son explícitos: no hay valores por defecto ocultos ni lectura
 implícita de `Date.now()` salvo el parámetro `now` del propio informe
 (`generatedAt`), que también se puede fijar en pruebas.
+
+## Certificado y journal están acoplados: solo un estado es "listo para enviar"
+
+`submitOrderWithAtomicPreflightCertificate` (`src/live-certified-submission.ts`)
+consume el certificado de preflight **dentro de la misma sección atómica** en
+la que persiste la primera entrada del journal (`persistIntent`). Esto hace
+que solo un subconjunto de combinaciones `(preflightCertificate.status,
+submissionJournal.phase)` pueda producirse realmente:
+
+| `preflightCertificate.status` | Fases de journal alcanzables |
+| --- | --- |
+| `absent` / `expired` / `invalid` | `none` (nunca se llegó a consumir) |
+| `valid` | `none` (vigente, todavía sin consumir: listo para un envío inicial) |
+| `consumed` | `intent_persisted`, `transport_outcome_recorded` o `reconciled` (nunca `none`) |
+
+`isReachableCertificateJournalCombination(status, phase)` (exportada) codifica
+esta tabla. El informe la aplica **antes** de razonar sobre elegibilidad: si
+las entradas describen una combinación imposible (por ejemplo `valid` +
+`reconciled`, o `consumed` + `none`), se trata como un blocker de
+consistencia del propio snapshot — nunca como una casualidad benigna — y
+`eligibleForManualPilotReview`/`previousPilotCycleVerified` quedan en `false`.
+
+Dentro de las combinaciones alcanzables, dos son relevantes:
+
+- **`valid` + `none`**: la orden preparada actual tiene un certificado vigente
+  sin consumir y ningún journal previo. Es el único estado pre-envío elegible.
+- **`consumed` + `reconciled`**: el ciclo de envío anterior terminó y quedó
+  reconciliado. Esto **no** habilita un envío nuevo — cualquier orden nueva
+  exige su propio preflight y su propio certificado `valid` — pero si además
+  la reconciliación fue limpia (`ok`, balance `consistent`, sin órdenes sin
+  resolver) alimenta el campo informativo `previousPilotCycleVerified`.
 
 ## Salida (`LivePilotReadinessReport`)
 
@@ -57,26 +89,38 @@ implícita de `Date.now()` salvo el parámetro `now` del propio informe
   warnings: string[],
   passedChecks: string[],
   eligibleForManualPilotReview: boolean,
+  previousPilotCycleVerified: boolean,
   message: string,
 }
 ```
 
-- `blockers`: cualquier condición que impide la revisión manual. Cada entrada
-  de `paper.checks` que sea `false` genera un blocker propio (evidencia PAPER
-  insuficiente sigue bloqueando aunque el resto de la infraestructura esté
-  completa). Un certificado ausente/caducado/consumido/inválido, una
-  reconciliación nunca ejecutada/incompleta/con balance no consistente/con
-  órdenes sin resolver, o una emergencia activa/liquidación manual pendiente
-  generan blockers explícitos.
+- `blockers`: cualquier condición que impide la revisión manual del **envío
+  siguiente**. Cada entrada de `paper.checks` que sea `false` genera un
+  blocker propio (evidencia PAPER insuficiente sigue bloqueando aunque el
+  resto de la infraestructura esté completa). Un certificado
+  ausente/caducado/consumido/inválido, un journal en cualquier fase que no
+  sea `none` cuando el certificado sigue vigente, una combinación
+  certificado/journal inalcanzable, una reconciliación nunca
+  ejecutada/incompleta/con balance no consistente/con órdenes sin resolver,
+  guardrails estructurales con cualquier bloqueo, o una emergencia
+  activa/liquidación manual pendiente generan blockers explícitos.
 - `warnings`: condiciones informativas que no bloquean por sí solas la
   revisión (por ejemplo, el DEMO todavía inicializando o detenido por un
-  límite de seguridad propio, sin errores).
+  límite de seguridad propio sin errores, o el interruptor de activación
+  encontrado en `true` cuando se esperaba `false`).
 - `passedChecks`: lista positiva espejo de `blockers`, para que el informe
   documente también lo que sí está resuelto.
 - `eligibleForManualPilotReview`: `true` únicamente cuando `blockers` está
-  vacío **y** `paper.eligibleForLiveReview` es `true`. Nunca activa, prepara
-  ni envía nada; el propio tipo del campo `liveTrading` es el literal
-  `false`, no un booleano configurable.
+  vacío **y** `paper.eligibleForLiveReview` es `true`. Como `blockers` exige
+  certificado `valid` + journal `none`, este campo nunca puede ser `true` a
+  la vez que `previousPilotCycleVerified`: son dos momentos distintos del
+  ciclo. Nunca activa, prepara ni envía nada; el interruptor de activación
+  puede seguir apagado y de hecho se espera que lo esté. El propio tipo del
+  campo `liveTrading` es el literal `false`, no un booleano configurable.
+- `previousPilotCycleVerified`: informativo, no gatea `eligibleForManualPilotReview`.
+  `true` cuando certificado `consumed` + journal `reconciled` está respaldado
+  por una reconciliación limpia. Documenta evidencia acumulada de un ciclo ya
+  completado; no autoriza ni sustituye el certificado que exige un envío nuevo.
 
 ## Cómo se cumplen las reglas inmutables de la issue
 
@@ -96,18 +140,35 @@ implícita de `Date.now()` salvo el parámetro `now` del propio informe
 
 ## Pruebas mínimas cubiertas (`test/live-pilot-readiness.test.ts`)
 
+- `isReachableCertificateJournalCombination`: acepta las siete combinaciones
+  reales y rechaza explícitamente las inalcanzables (cualquier certificado no
+  consumido junto a una fase de journal distinta de `none`, y `consumed` junto
+  a `none`).
 - Estado inicial: todo bloqueado.
+- El interruptor de activación nunca se exige a `true`: con
+  `activationSwitchEnabled: true` y el resto de entradas válidas, el informe
+  sigue siendo elegible y solo añade un warning.
 - Evidencia PAPER insuficiente bloquea aunque el resto de la infraestructura
   esté completa.
-- Certificado ausente, caducado, consumido o inválido: no elegible en cada
-  caso.
+- Certificado ausente, caducado o inválido: no elegible en cada caso.
+- Certificado ya consumido por un ciclo anterior, en cada fase de journal
+  alcanzable (`intent_persisted`, `transport_outcome_recorded`,
+  `reconciled`): no elegible en ningún caso, porque un envío nuevo exige su
+  propio certificado `valid`.
+- Una combinación certificado/journal inalcanzable (`valid`+`reconciled`,
+  `consumed`+`none`) se reporta como blocker de consistencia, no se acepta en
+  silencio.
+- `previousPilotCycleVerified` solo es `true` con `consumed`+`reconciled` y
+  reconciliación limpia; una reconciliación sucia lo deja en `false`, y en
+  ningún caso coincide con `eligibleForManualPilotReview: true`.
 - Reconciliación nunca ejecutada, balance `"unknown"`/`"inconsistent"` u
   órdenes sin resolver: no elegible en cada caso.
 - Emergencia activa o liquidación manual pendiente: no elegible en cada caso.
-- Guardrails con cualquier blocker, metadatos de par obsoletos, journal no
-  reconciliado o DEMO en error: no elegible en cada caso.
-- Elegible únicamente para revisión manual (nunca para ejecución) cuando
-  todas las entradas son válidas; el mensaje nunca sugiere ejecución.
+- Guardrails estructurales con cualquier blocker, metadatos de par obsoletos o
+  DEMO en error: no elegible en cada caso.
+- Elegible únicamente para revisión manual (nunca para ejecución) cuando todas
+  las entradas del estado pre-envío alcanzable son válidas; el mensaje nunca
+  sugiere ejecución.
 - El informe no contiene fragmentos de secretos/credenciales y los permisos
   Kraken solo exponen los dos booleanos de auditoría.
 - La función es pura: mismas entradas y mismo reloj producen el mismo informe.

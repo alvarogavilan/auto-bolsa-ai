@@ -31,6 +31,41 @@ export type LivePilotReadinessBalanceStatus =
   | "never_checked";
 
 /**
+ * Fases de journal alcanzables para cada estado de certificado, según el
+ * orden estricto de `submitOrderWithAtomicPreflightCertificate`: el
+ * certificado se consume justo antes de `persistIntent`, en la misma
+ * operación atómica. Por tanto un certificado `valid` (aún no consumido)
+ * nunca puede coexistir con una entrada de journal, y un certificado
+ * `consumed` nunca puede coexistir con la ausencia de journal (`none`).
+ * `absent`/`expired`/`invalid` tampoco se consumen nunca, así que solo
+ * admiten `none`.
+ */
+const REACHABLE_JOURNAL_PHASES_BY_CERTIFICATE: Record<
+  LivePilotReadinessCertificateStatus,
+  ReadonlySet<LivePilotReadinessJournalPhase>
+> = {
+  absent: new Set(["none"]),
+  expired: new Set(["none"]),
+  invalid: new Set(["none"]),
+  valid: new Set(["none"]),
+  consumed: new Set(["intent_persisted", "transport_outcome_recorded", "reconciled"]),
+};
+
+/**
+ * Verdadero si la combinación (certificado, journal) puede producirse
+ * realmente en el flujo de `submitOrderWithAtomicPreflightCertificate`. Una
+ * combinación inalcanzable (p. ej. `valid` + `reconciled`, o `consumed` +
+ * `none`) señala una inconsistencia en el snapshot de entrada, nunca un
+ * estado de negocio legítimo.
+ */
+export function isReachableCertificateJournalCombination(
+  certificateStatus: LivePilotReadinessCertificateStatus,
+  journalPhase: LivePilotReadinessJournalPhase,
+): boolean {
+  return REACHABLE_JOURNAL_PHASES_BY_CERTIFICATE[certificateStatus].has(journalPhase);
+}
+
+/**
  * Entradas explícitas del informe. Cada sección corresponde a la salida ya
  * calculada de un módulo puro existente (o a un resumen deliberadamente
  * reducido de esa salida, para no filtrar campos sensibles). Ningún campo
@@ -44,8 +79,24 @@ export interface LivePilotReadinessInputs {
   demo: {
     status: ShadowLiveDemoStatus;
   };
-  /** Salida sin modificar de `evaluateLiveGuardrails` para la orden preparada actual. */
-  guardrails: LiveGuardrailResult;
+  guardrails: {
+    /**
+     * Valor actual de `LIVE_TRADING_ENABLED`. Puramente informativo: el
+     * informe nunca exige que esté activo para declarar elegibilidad, porque
+     * eso volvería circular una revisión previa a la propia activación. Se
+     * espera que siga en `false` en todo momento anterior a un piloto real.
+     */
+    activationSwitchEnabled: boolean;
+    /**
+     * Resultado de `evaluateLiveGuardrails` calculado con el interruptor de
+     * activación forzado a `true`, para aislar el resto de puertas
+     * estructurales (una sola orden activa, una sola posición, tamaño
+     * máximo, pérdida diaria, drawdown, frescura de mercado, errores de
+     * transporte, etc.) del propio interruptor. `blockers` aquí nunca
+     * contiene el bloqueo del interruptor.
+     */
+    structuralResult: LiveGuardrailResult;
+  };
   /**
    * Únicamente los dos booleanos de auditoría de permisos Kraken. Nunca la
    * lista completa de permisos, el nombre de la API key ni su expiración.
@@ -63,7 +114,7 @@ export interface LivePilotReadinessInputs {
   preparedOrder: {
     exists: boolean;
   };
-  /** Estado ya evaluado del certificado de preflight validate-only. */
+  /** Estado ya evaluado del certificado de preflight validate-only para la orden preparada actual. */
   preflightCertificate: {
     status: LivePilotReadinessCertificateStatus;
   };
@@ -99,8 +150,9 @@ export interface LivePilotReadinessReport {
       status: ShadowLiveDemoStatus;
     };
     guardrails: {
-      allowed: boolean;
-      blockers: string[];
+      activationSwitchEnabled: boolean;
+      structuralAllowed: boolean;
+      structuralBlockers: string[];
     };
     krakenPermissions: {
       auditComplete: boolean;
@@ -133,7 +185,20 @@ export interface LivePilotReadinessReport {
   blockers: string[];
   warnings: string[];
   passedChecks: string[];
+  /**
+   * Elegible únicamente para una revisión manual humana de un futuro envío
+   * inicial (certificado `valid` todavía sin consumir, journal en `none`).
+   * Nunca activa, prepara ni envía nada.
+   */
   eligibleForManualPilotReview: boolean;
+  /**
+   * Informativo, no gatea `eligibleForManualPilotReview`: verdadero cuando el
+   * ciclo LIVE anterior (certificado consumido, journal reconciliado) quedó
+   * verificado de forma consistente contra orden, fills y balances. Sirve
+   * como evidencia acumulada, no como autorización para un nuevo envío: una
+   * orden nueva siempre exige su propio certificado `valid` y journal `none`.
+   */
+  previousPilotCycleVerified: boolean;
   message: string;
 }
 
@@ -179,15 +244,24 @@ function evaluateDemo(
 }
 
 function evaluateGuardrails(
-  guardrails: LiveGuardrailResult,
+  guardrails: LivePilotReadinessInputs["guardrails"],
   blockers: string[],
+  warnings: string[],
   passedChecks: string[],
 ): void {
-  if (guardrails.allowed) {
-    passedChecks.push("Guardrails LIVE: todas las puertas estructurales superadas");
+  if (guardrails.activationSwitchEnabled) {
+    warnings.push(
+      "Guardrails LIVE: LIVE_TRADING_ENABLED está activo; se esperaba que siguiera apagado antes de una revisión manual de piloto",
+    );
+  } else {
+    passedChecks.push("Guardrails LIVE: el interruptor de activación permanece apagado, como corresponde antes de una revisión manual");
+  }
+
+  if (guardrails.structuralResult.allowed) {
+    passedChecks.push("Guardrails LIVE: el resto de puertas estructurales (aparte del interruptor de activación) están superadas");
     return;
   }
-  for (const blocker of guardrails.blockers) {
+  for (const blocker of guardrails.structuralResult.blockers) {
     blockers.push(`Guardrails LIVE: ${blocker}`);
   }
 }
@@ -236,59 +310,70 @@ function evaluatePreparedOrder(
   passedChecks.push("Orden preparada: existe una orden preparada");
 }
 
-function evaluatePreflightCertificate(
+/**
+ * Certificado y journal se evalúan juntos porque están acoplados por diseño
+ * (ver `isReachableCertificateJournalCombination`). Devuelve si el ciclo
+ * anterior (certificado consumido + journal reconciliado) quedó verificado,
+ * sin que eso autorice ni sustituya el certificado `valid` que exige un
+ * envío nuevo.
+ */
+function evaluatePreflightAndJournal(
   certificate: LivePilotReadinessInputs["preflightCertificate"],
-  blockers: string[],
-  passedChecks: string[],
-): void {
-  switch (certificate.status) {
-    case "valid":
-      passedChecks.push("Certificado de preflight: vigente y validado por Kraken");
-      return;
-    case "absent":
-      blockers.push("Certificado de preflight: no existe ningún certificado emitido");
-      return;
-    case "expired":
-      blockers.push("Certificado de preflight: el certificado ha caducado");
-      return;
-    case "consumed":
-      blockers.push("Certificado de preflight: el certificado ya fue consumido");
-      return;
-    case "invalid":
-      blockers.push("Certificado de preflight: el certificado no supera la verificación exacta");
-      return;
-  }
-}
-
-function evaluateSubmissionJournal(
   journal: LivePilotReadinessInputs["submissionJournal"],
   blockers: string[],
   passedChecks: string[],
-): void {
-  switch (journal.phase) {
-    case "reconciled":
-      passedChecks.push("Journal de envío: la última entrada está reconciliada");
-      return;
-    case "none":
-      blockers.push("Journal de envío: no existe ninguna entrada de journal para la orden preparada");
-      return;
-    case "intent_persisted":
-      blockers.push("Journal de envío: la intención se persistió pero no hay desenlace de transporte durable");
-      return;
-    case "transport_outcome_recorded":
-      blockers.push("Journal de envío: existe un desenlace de transporte pendiente de reconciliación");
-      return;
+): { previousCycleCertificateAndJournalVerified: boolean } {
+  if (!isReachableCertificateJournalCombination(certificate.status, journal.phase)) {
+    blockers.push(
+      `Certificado/journal: combinación inalcanzable en el flujo real (certificado=${certificate.status}, journal=${journal.phase})`,
+    );
+    return { previousCycleCertificateAndJournalVerified: false };
   }
+
+  if (certificate.status === "valid" && journal.phase === "none") {
+    passedChecks.push("Certificado de preflight: vigente y aún sin consumir, listo para un envío inicial");
+    passedChecks.push("Journal de envío: sin entrada previa para la orden preparada actual");
+    return { previousCycleCertificateAndJournalVerified: false };
+  }
+
+  switch (certificate.status) {
+    case "absent":
+      blockers.push("Certificado de preflight: no existe ningún certificado emitido para la orden preparada");
+      break;
+    case "expired":
+      blockers.push("Certificado de preflight: el certificado ha caducado");
+      break;
+    case "invalid":
+      blockers.push("Certificado de preflight: el certificado no supera la verificación exacta");
+      break;
+    case "consumed":
+      if (journal.phase === "intent_persisted") {
+        blockers.push("Journal de envío: la intención se persistió pero no hay desenlace de transporte durable");
+      } else if (journal.phase === "transport_outcome_recorded") {
+        blockers.push("Journal de envío: existe un desenlace de transporte pendiente de reconciliación");
+      } else {
+        blockers.push(
+          "Certificado de preflight: ya fue consumido en un ciclo anterior; un envío nuevo exige repetir el preflight y emitir un certificado propio",
+        );
+      }
+      break;
+  }
+
+  const previousCycleCertificateAndJournalVerified = certificate.status === "consumed" && journal.phase === "reconciled";
+  if (previousCycleCertificateAndJournalVerified) {
+    passedChecks.push("Ciclo anterior: certificado consumido y journal reconciliado de forma verificable");
+  }
+  return { previousCycleCertificateAndJournalVerified };
 }
 
 function evaluateReconciliation(
   reconciliation: LivePilotReadinessInputs["reconciliation"],
   blockers: string[],
   passedChecks: string[],
-): void {
+): { reconciliationClean: boolean } {
   if (!reconciliation.everRun) {
     blockers.push("Reconciliación: nunca se ha ejecutado una reconciliación verificada");
-    return;
+    return { reconciliationClean: false };
   }
   if (!reconciliation.ok) {
     blockers.push("Reconciliación: la última reconciliación verificada no terminó en ok");
@@ -299,9 +384,13 @@ function evaluateReconciliation(
   if (reconciliation.unresolvedOrderCount > 0) {
     blockers.push(`Reconciliación: quedan ${reconciliation.unresolvedOrderCount} orden(es) sin resolver`);
   }
-  if (reconciliation.ok && reconciliation.balanceStatus === "consistent" && reconciliation.unresolvedOrderCount === 0) {
+  const reconciliationClean = reconciliation.ok
+    && reconciliation.balanceStatus === "consistent"
+    && reconciliation.unresolvedOrderCount === 0;
+  if (reconciliationClean) {
     passedChecks.push("Reconciliación: orden, fills y balances confirmados de forma consistente");
   }
+  return { reconciliationClean };
 }
 
 function evaluateEmergency(
@@ -325,8 +414,9 @@ function evaluateEmergency(
  * a partir de entradas explícitas. No lee secretos, no realiza llamadas de
  * red ni de almacenamiento, y `eligibleForManualPilotReview` nunca activa
  * trading por sí mismo; solo puede ser `true` cuando no queda ningún blocker
- * y se cumplen íntegramente los criterios de evidencia PAPER ya definidos en
- * `paper-readiness.ts`.
+ * técnico —incluyendo un certificado `valid` sin consumir y un journal en
+ * `none` para la orden preparada actual— y se cumplen íntegramente los
+ * criterios de evidencia PAPER ya definidos en `paper-readiness.ts`.
  */
 export function calculateLivePilotReadiness(
   inputs: LivePilotReadinessInputs,
@@ -338,16 +428,21 @@ export function calculateLivePilotReadiness(
 
   evaluatePaper(inputs.paper, blockers, passedChecks);
   evaluateDemo(inputs.demo, blockers, warnings, passedChecks);
-  evaluateGuardrails(inputs.guardrails, blockers, passedChecks);
+  evaluateGuardrails(inputs.guardrails, blockers, warnings, passedChecks);
   evaluateKrakenPermissions(inputs.krakenPermissions, blockers, passedChecks);
   evaluatePairMetadata(inputs.pairMetadata, blockers, passedChecks);
   evaluatePreparedOrder(inputs.preparedOrder, blockers, passedChecks);
-  evaluatePreflightCertificate(inputs.preflightCertificate, blockers, passedChecks);
-  evaluateSubmissionJournal(inputs.submissionJournal, blockers, passedChecks);
-  evaluateReconciliation(inputs.reconciliation, blockers, passedChecks);
+  const { previousCycleCertificateAndJournalVerified } = evaluatePreflightAndJournal(
+    inputs.preflightCertificate,
+    inputs.submissionJournal,
+    blockers,
+    passedChecks,
+  );
+  const { reconciliationClean } = evaluateReconciliation(inputs.reconciliation, blockers, passedChecks);
   evaluateEmergency(inputs.emergency, blockers, passedChecks);
 
   const eligibleForManualPilotReview = blockers.length === 0 && inputs.paper.eligibleForLiveReview;
+  const previousPilotCycleVerified = previousCycleCertificateAndJournalVerified && reconciliationClean;
 
   return {
     schemaVersion: LIVE_PILOT_READINESS_SCHEMA_VERSION,
@@ -362,8 +457,9 @@ export function calculateLivePilotReadiness(
         status: inputs.demo.status,
       },
       guardrails: {
-        allowed: inputs.guardrails.allowed,
-        blockers: inputs.guardrails.blockers,
+        activationSwitchEnabled: inputs.guardrails.activationSwitchEnabled,
+        structuralAllowed: inputs.guardrails.structuralResult.allowed,
+        structuralBlockers: inputs.guardrails.structuralResult.blockers,
       },
       krakenPermissions: inputs.krakenPermissions,
       pairMetadata: inputs.pairMetadata,
@@ -377,6 +473,7 @@ export function calculateLivePilotReadiness(
     warnings,
     passedChecks,
     eligibleForManualPilotReview,
+    previousPilotCycleVerified,
     message: eligibleForManualPilotReview
       ? "Todas las comprobaciones técnicas y de evidencia PAPER están superadas. Elegible únicamente para revisión manual humana; este informe no activa ni autoriza ningún envío."
       : `No elegible para revisión manual: ${blockers.length} bloqueo(s) pendiente(s).`,
