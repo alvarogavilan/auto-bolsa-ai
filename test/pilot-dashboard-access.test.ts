@@ -28,20 +28,31 @@ describe("authenticated pilot dashboard route", () => {
     expect(html).not.toContain("document.cookie");
   });
 
+  it("refreshes Kraken safety checks automatically after saving a token", async () => {
+    const html = await (await authenticatedPilotDashboard()).text();
+
+    expect(html).toContain("refreshPilotSafetyChecks");
+    expect(html).toContain("authenticatedPilotPost('/api/pilot/refresh-kraken')");
+    expect(html).toContain("Conexión, saldo y permisos de Kraken actualizados");
+    expect(html).toContain("PILOT_SAFE_REFRESH_KEY");
+    expect(html).toContain("await refreshPilotSafetyChecks()");
+  });
+
   it("forgets invalid credentials and prepared ids beyond the current tab", async () => {
     const html = await (await authenticatedPilotDashboard()).text();
 
     expect(html).toContain("response.status===401");
     expect(html).toContain("sessionStorage.removeItem(PILOT_TOKEN_KEY)");
     expect(html).toContain("sessionStorage.removeItem(PILOT_CL_ORD_ID_KEY)");
+    expect(html).toContain("sessionStorage.removeItem(PILOT_SAFE_REFRESH_KEY)");
     expect(html).toContain("Olvidar token");
   });
 
   it("offers only server-built preparation and validate=true without any submit path", async () => {
     const html = await (await authenticatedPilotDashboard()).text();
 
-    expect(html).toContain("Preparar validación de hasta 5 €");
-    expect(html).toContain("Validar en Kraken — no enviar");
+    expect(html).toContain("Paso 1 · Preparar validación de hasta 5 €");
+    expect(html).toContain("Paso 2 · Validar en Kraken — no enviar");
     expect(html).toContain("/api/pilot/prepare-validation");
     expect(html).toContain("/api/pilot/preflight");
     expect(html).toContain("window.confirm");
@@ -49,6 +60,12 @@ describe("authenticated pilot dashboard route", () => {
     expect(html).not.toContain("createOrder");
     expect(html).not.toContain("AddOrder");
     expect(html).not.toContain("LIVE_TRADING_ENABLED");
+  });
+
+  it("explains that PAPER blocks real money but not validate-only", async () => {
+    const html = await (await authenticatedPilotDashboard()).text();
+    expect(html).toContain("los bloqueos PAPER pueden impedir un piloto con dinero real");
+    expect(html).toContain("no impiden completar esta validación técnica sin envío");
   });
 
   it("does not accept browser fields for pair, price, volume, balance or amount", async () => {
