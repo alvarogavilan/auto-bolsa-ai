@@ -5,6 +5,10 @@ import {
   type ValidateOnlyOrderGateway,
 } from "./live-order-preflight";
 import {
+  createLivePreflightCertificate,
+  type LivePreflightCertificate,
+} from "./live-preflight-certificate";
+import {
   fetchAllTickers,
   fetchTradableAssetPairs,
   type KrakenAssetPair,
@@ -17,6 +21,8 @@ export interface AdminKrakenPreflightConfig {
   apiKey: string;
   apiSecret: string;
   pair: string;
+  /** Identificador de la orden preparada que deberá reutilizar el envío futuro. */
+  clOrdId: string;
   nextNonce: () => Promise<string>;
   now?: number;
 }
@@ -32,14 +38,16 @@ export interface AdminKrakenPreflightDependencies {
 }
 
 export interface AdminKrakenPreflightReport {
-  schemaVersion: "admin-kraken-preflight-v1";
+  schemaVersion: "admin-kraken-preflight-v2";
   checkedAt: number;
   configured: true;
   pair: string;
+  clOrdId: string;
   publicDataVerified: true;
   preflightComplete: boolean;
   plan: ValidateOnlyBuyPlan;
   result: LiveOrderPreflightResult;
+  certificate: LivePreflightCertificate | null;
   orderCreated: false | null;
   liveTrading: false;
   message: string;
@@ -62,7 +70,8 @@ function tickerForPair(
 /**
  * Servicio aislado para el futuro botón admin. Solo usa datos públicos para
  * construir la intención y una pasarela AddOrder que fuerza validate=true.
- * No conoce rutas HTTP, ADMIN_TOKEN ni estados LIVE.
+ * El mismo `clOrdId` de la orden preparada se utiliza en Kraken y queda ligado
+ * al certificado de un solo uso. No conoce rutas HTTP ni activa LIVE.
  */
 export async function runAdminKrakenValidateOnlyPreflight(
   config: AdminKrakenPreflightConfig,
@@ -70,6 +79,7 @@ export async function runAdminKrakenValidateOnlyPreflight(
 ): Promise<AdminKrakenPreflightReport> {
   if (!config.apiKey || !config.apiSecret) throw new Error("Faltan credenciales Kraken para el preflight");
   if (!config.pair.trim()) throw new Error("Falta el par configurado para el preflight");
+  if (!config.clOrdId.trim()) throw new Error("Falta el clOrdId preparado para el preflight");
 
   const fetchPairs = dependencies.fetchPairs ?? fetchTradableAssetPairs;
   const fetchTickers = dependencies.fetchTickers ?? fetchAllTickers;
@@ -99,24 +109,33 @@ export async function runAdminKrakenValidateOnlyPreflight(
       maxNotionalDeviationPct: 0.01,
     },
     gateway,
-    { now: checkedAt },
+    {
+      now: checkedAt,
+      clOrdIdFactory: () => config.clOrdId,
+    },
   );
 
+  const certificate = result.status === "validated"
+    ? await createLivePreflightCertificate(plan.intent, result)
+    : null;
+
   return {
-    schemaVersion: "admin-kraken-preflight-v1",
+    schemaVersion: "admin-kraken-preflight-v2",
     checkedAt,
     configured: true,
     pair: config.pair,
+    clOrdId: config.clOrdId,
     publicDataVerified: true,
     preflightComplete: result.status !== "unknown",
     plan,
     result,
+    certificate,
     orderCreated: result.realOrderCreated,
     liveTrading: false,
     message: result.status === "validated"
-      ? "Preflight completado: Kraken validó la compra límite sin crearla."
+      ? "Preflight completado: Kraken validó la compra límite y se emitió un certificado de un solo uso."
       : result.status === "rejected"
         ? "Preflight completado: Kraken evaluó y rechazó la compra sin crearla."
-        : "Preflight no certificable: no se repetirá hasta revisar el fallo.",
+        : "Preflight no certificable: no se emitió certificado ni se repetirá hasta revisar el fallo.",
   };
 }
