@@ -16,7 +16,9 @@ describe("production fire-drill gate", () => {
     expect(adapter).toContain('from "./index"');
     expect(adapter).toContain('url.pathname === "/api/pilot/readiness"');
     expect(adapter).toContain('url.pathname === "/api/pilot/refresh-kraken"');
-    expect(adapter).toContain("enrichReadinessWithFireDrill(await coreWorker.fetch(request, env))");
+    expect(adapter).toContain("const base = await coreWorker.fetch(request, env)");
+    expect(adapter).toContain("const withFireDrill = await enrichReadinessWithFireDrill(base)");
+    expect(adapter).toContain("return enrichReadinessWithAccountCleanliness(");
 
     expect(core).toContain('url.pathname === "/api/pilot/submit"');
     expect(core).toContain("PILOT_SUBMISSION_NOT_ARMED");
