@@ -29,59 +29,59 @@ export async function temporalDemoDashboard(): Promise<Response> {
     <div id="temporalMessage" class="status-message" style="margin-top:12px">Esperando muestra cerrada.</div>
     <div id="temporalDetails"></div>
   </section>
-+
-+  <div class="section-title">Impacto medido del comité</div>`,
+
+  <div class="section-title">Impacto medido del comité</div>`,
   );
 
   html = replaceRequired(
     html,
     "<script>\n",
     `<script>
-+  function temporalPf(metrics){
-+    if(!metrics)return '—';
-+    if(metrics.profitFactorNoLosses)return 'Sin pérdidas';
-+    return metrics.profitFactor===null||metrics.profitFactor===undefined?'—':Number(metrics.profitFactor).toFixed(2).replace('.',',');
-+  }
-+  function selectedTemporal(lab,demo){
-+    const report=lab&&lab.temporalValidation?lab.temporalValidation:null;
-+    const entries=Array.isArray(report&&report.entries)?report.entries:[];
-+    const selected=demo&&demo.selectedStrategy?demo.selectedStrategy.id:null;
-+    return {report:report,entry:entries.find(function(item){return item.strategyId===selected})||(Array.isArray(report&&report.leaderboard)?report.leaderboard[0]:null)||entries[0]||null};
-+  }
-+  function renderTemporalValidation(lab,demo){
-+    const selected=selectedTemporal(lab,demo);const report=selected.report;const entry=selected.entry;
-+    const verdict=document.getElementById('temporalVerdict');const summary=document.getElementById('temporalSummary');
-+    const panels=document.getElementById('temporalPanels');const folds=document.getElementById('temporalFolds');
-+    const message=document.getElementById('temporalMessage');const details=document.getElementById('temporalDetails');
-+    if(!report||!entry){verdict.textContent='Inicializando';summary.innerHTML='<div class="empty-state">Todavía no hay estrategias evaluables.</div>';panels.innerHTML='';folds.innerHTML='';message.textContent='La validación temporal aparecerá cuando existan operaciones cerradas.';details.innerHTML='';return}
-+    const labels={insufficient:'Muestra insuficiente',unstable:'Inestable',developing:'En desarrollo',robust_candidate:'Candidata robusta'};
-+    verdict.textContent=labels[entry.verdict]||entry.verdict;
-+    summary.innerHTML=[
-+      ['Estrategias con muestra',report.sufficientlySampledStrategies+'/'+report.strategyCount],
-+      ['Candidatas robustas',report.robustCandidates],
-+      ['En desarrollo',report.developingStrategies],
-+      ['Inestables',report.unstableStrategies],
-+      ['Estrategia mostrada',humanMarket(entry.symbol)],
-+      ['Operaciones cerradas',entry.totalClosedTrades],
-+      ['Puntuación estabilidad',entry.stabilityScore+' / 100'],
-+      ['Bloques positivos',entry.positiveRollingFolds+' / '+entry.evaluatedRollingFolds]
-+    ].map(function(item){return '<div class="mini"><span>'+escapeHtml(item[0])+'</span><strong>'+escapeHtml(item[1])+'</strong></div>'}).join('');
-+    function panel(title,m){return '<div class="temporal-panel"><h3>'+title+'</h3><div class="position-grid">'+
-+      '<div class="mini"><span>Operaciones</span><strong>'+escapeHtml(m.trades)+'</strong></div>'+
-+      '<div class="mini"><span>Resultado</span><strong class="'+pnlClass(m.netPnlEur)+'">'+money(m.netPnlEur)+'</strong></div>'+
-+      '<div class="mini"><span>Profit factor</span><strong>'+escapeHtml(temporalPf(m))+'</strong></div>'+
-+      '<div class="mini"><span>Win rate</span><strong>'+(m.winRatePct===null?'—':Number(m.winRatePct).toFixed(1).replace('.',',')+' %')+'</strong></div>'+
-+      '<div class="mini"><span>Media por operación</span><strong class="'+pnlClass(m.averagePnlEur)+'">'+money(m.averagePnlEur)+'</strong></div>'+
-+      '<div class="mini"><span>Concentración mejor ganancia</span><strong>'+(m.positivePnlConcentrationPct===null?'—':Number(m.positivePnlConcentrationPct).toFixed(1).replace('.',',')+' %')+'</strong></div>'+
-+      '</div></div>'}
-+    panels.innerHTML=panel('60 % inicial',entry.training)+panel('40 % posterior',entry.validation);
-+    const rolling=Array.isArray(entry.rollingFolds)?entry.rollingFolds:[];
-+    folds.innerHTML=rolling.map(function(fold){return '<div class="fold '+(fold.positive?'positive':'negative')+'"><strong>'+escapeHtml(fold.label)+'</strong><div class="muted" style="font-size:11px;margin-top:5px">'+fold.metrics.trades+' operaciones</div><div class="'+pnlClass(fold.metrics.netPnlEur)+'" style="font-weight:850;margin-top:6px">'+money(fold.metrics.netPnlEur)+'</div></div>'}).join('');
-+    message.textContent=entry.interpretation+' Esta capa no cambia operaciones ni habilita dinero real.';
-+    const blockers=Array.isArray(entry.blockers)?entry.blockers:[];const warnings=Array.isArray(entry.warnings)?entry.warnings:[];
-+    details.innerHTML=(blockers.length?'<div style="margin-top:12px"><strong>Bloqueos</strong><ul class="temporal-list">'+blockers.map(function(item){return '<li>'+escapeHtml(item)+'</li>'}).join('')+'</ul></div>':'')+(warnings.length?'<div style="margin-top:12px"><strong>Avisos</strong><ul class="temporal-list">'+warnings.map(function(item){return '<li>'+escapeHtml(item)+'</li>'}).join('')+'</ul></div>':'');
-+  }
-+`,
+  function temporalPf(metrics){
+    if(!metrics)return '—';
+    if(metrics.profitFactorNoLosses)return 'Sin pérdidas';
+    return metrics.profitFactor===null||metrics.profitFactor===undefined?'—':Number(metrics.profitFactor).toFixed(2).replace('.',',');
+  }
+  function selectedTemporal(lab,demo){
+    const report=lab&&lab.temporalValidation?lab.temporalValidation:null;
+    const entries=Array.isArray(report&&report.entries)?report.entries:[];
+    const selected=demo&&demo.selectedStrategy?demo.selectedStrategy.id:null;
+    return {report:report,entry:entries.find(function(item){return item.strategyId===selected})||(Array.isArray(report&&report.leaderboard)?report.leaderboard[0]:null)||entries[0]||null};
+  }
+  function renderTemporalValidation(lab,demo){
+    const selected=selectedTemporal(lab,demo);const report=selected.report;const entry=selected.entry;
+    const verdict=document.getElementById('temporalVerdict');const summary=document.getElementById('temporalSummary');
+    const panels=document.getElementById('temporalPanels');const folds=document.getElementById('temporalFolds');
+    const message=document.getElementById('temporalMessage');const details=document.getElementById('temporalDetails');
+    if(!report||!entry){verdict.textContent='Inicializando';summary.innerHTML='<div class="empty-state">Todavía no hay estrategias evaluables.</div>';panels.innerHTML='';folds.innerHTML='';message.textContent='La validación temporal aparecerá cuando existan operaciones cerradas.';details.innerHTML='';return}
+    const labels={insufficient:'Muestra insuficiente',unstable:'Inestable',developing:'En desarrollo',robust_candidate:'Candidata robusta'};
+    verdict.textContent=labels[entry.verdict]||entry.verdict;
+    summary.innerHTML=[
+      ['Estrategias con muestra',report.sufficientlySampledStrategies+'/'+report.strategyCount],
+      ['Candidatas robustas',report.robustCandidates],
+      ['En desarrollo',report.developingStrategies],
+      ['Inestables',report.unstableStrategies],
+      ['Estrategia mostrada',humanMarket(entry.symbol)],
+      ['Operaciones cerradas',entry.totalClosedTrades],
+      ['Puntuación estabilidad',entry.stabilityScore+' / 100'],
+      ['Bloques positivos',entry.positiveRollingFolds+' / '+entry.evaluatedRollingFolds]
+    ].map(function(item){return '<div class="mini"><span>'+escapeHtml(item[0])+'</span><strong>'+escapeHtml(item[1])+'</strong></div>'}).join('');
+    function panel(title,m){return '<div class="temporal-panel"><h3>'+title+'</h3><div class="position-grid">'+
+      '<div class="mini"><span>Operaciones</span><strong>'+escapeHtml(m.trades)+'</strong></div>'+
+      '<div class="mini"><span>Resultado</span><strong class="'+pnlClass(m.netPnlEur)+'">'+money(m.netPnlEur)+'</strong></div>'+
+      '<div class="mini"><span>Profit factor</span><strong>'+escapeHtml(temporalPf(m))+'</strong></div>'+
+      '<div class="mini"><span>Win rate</span><strong>'+(m.winRatePct===null?'—':Number(m.winRatePct).toFixed(1).replace('.',',')+' %')+'</strong></div>'+
+      '<div class="mini"><span>Media por operación</span><strong class="'+pnlClass(m.averagePnlEur)+'">'+money(m.averagePnlEur)+'</strong></div>'+
+      '<div class="mini"><span>Concentración mejor ganancia</span><strong>'+(m.positivePnlConcentrationPct===null?'—':Number(m.positivePnlConcentrationPct).toFixed(1).replace('.',',')+' %')+'</strong></div>'+
+      '</div></div>'}
+    panels.innerHTML=panel('60 % inicial',entry.training)+panel('40 % posterior',entry.validation);
+    const rolling=Array.isArray(entry.rollingFolds)?entry.rollingFolds:[];
+    folds.innerHTML=rolling.map(function(fold){return '<div class="fold '+(fold.positive?'positive':'negative')+'"><strong>'+escapeHtml(fold.label)+'</strong><div class="muted" style="font-size:11px;margin-top:5px">'+fold.metrics.trades+' operaciones</div><div class="'+pnlClass(fold.metrics.netPnlEur)+'" style="font-weight:850;margin-top:6px">'+money(fold.metrics.netPnlEur)+'</div></div>'}).join('');
+    message.textContent=entry.interpretation+' Esta capa no cambia operaciones ni habilita dinero real.';
+    const blockers=Array.isArray(entry.blockers)?entry.blockers:[];const warnings=Array.isArray(entry.warnings)?entry.warnings:[];
+    details.innerHTML=(blockers.length?'<div style="margin-top:12px"><strong>Bloqueos</strong><ul class="temporal-list">'+blockers.map(function(item){return '<li>'+escapeHtml(item)+'</li>'}).join('')+'</ul></div>':'')+(warnings.length?'<div style="margin-top:12px"><strong>Avisos</strong><ul class="temporal-list">'+warnings.map(function(item){return '<li>'+escapeHtml(item)+'</li>'}).join('')+'</ul></div>':'');
+  }
+`,
   );
 
   html = replaceRequired(
