@@ -14,13 +14,17 @@ describe("committee shadow isolation", () => {
     expect(enrichCall).toBeGreaterThan(baseCall);
   });
 
-  it("fails open when committee storage cannot be read, persisted or reset", () => {
+  it("fails open when auxiliary storage cannot be read, persisted or reset", () => {
     const source = readFileSync(join(ROOT, "src/research-lab-state.ts"), "utf8");
 
     expect(source).toContain("COMMITTEE_IMPACT_STORAGE_READ_FAILED");
     expect(source).toContain("COMMITTEE_IMPACT_PERSIST_FAILED");
+    expect(source).toContain("PAPER_EVIDENCE_STORAGE_READ_FAILED");
+    expect(source).toContain("PAPER_EVIDENCE_PERSIST_FAILED");
     expect(source).toContain("failOpenForPaper: true");
-    expect(source).toContain("Un fallo del ledger shadow no debe revertirlo");
+    expect(source).toContain("Promise.allSettled");
+    expect(source).toContain("this.auxiliaryStorage.delete(COMMITTEE_IMPACT_KEY)");
+    expect(source).toContain("this.auxiliaryStorage.delete(PAPER_EVIDENCE_KEY)");
     expect(source).toContain("changesTradingDecision: false");
   });
 
