@@ -1,4 +1,5 @@
 import { BotState as BaseBotState } from "./bot-state-base";
+import { openOrders } from "./kraken";
 import {
   fetchKrakenEffectiveFees,
   type KrakenEffectiveFeesAudit,
@@ -11,6 +12,16 @@ const KRAKEN_EFFECTIVE_FEES_TTL_MS = 10 * 60_000;
 interface CachedFees {
   cachedAt: number;
   audit: KrakenEffectiveFeesAudit;
+}
+
+interface KrakenOpenOrdersAudit {
+  checkedAt: number;
+  openOrderCount: number;
+  accountClean: boolean;
+  permissionRequired: "query-open-trades";
+  readOnly: true;
+  realOrderCreated: false;
+  liveTrading: false;
 }
 
 async function responseObject(response: Response): Promise<Record<string, unknown>> {
@@ -34,6 +45,16 @@ export class BotState extends BaseBotState {
     this.feeEnv = env;
   }
 
+  private async nextCentralKrakenNonce(): Promise<string> {
+    const nonceResponse = await super.fetch(new Request("https://bot/kraken/next-nonce", { method: "POST" }));
+    if (!nonceResponse.ok) throw new Error(`Nonce authority HTTP ${nonceResponse.status}`);
+    const nonceBody = await responseObject(nonceResponse);
+    if (typeof nonceBody.nonce !== "string" || !nonceBody.nonce) {
+      throw new Error("Nonce authority returned no nonce");
+    }
+    return nonceBody.nonce;
+  }
+
   private async cachedEffectiveFees(now = Date.now()): Promise<KrakenEffectiveFeesAudit | null> {
     try {
       const cached = await this.feeContext.storage.get<CachedFees>(KRAKEN_EFFECTIVE_FEES_KEY);
@@ -53,16 +74,11 @@ export class BotState extends BaseBotState {
     if (!this.feeEnv.KRAKEN_API_KEY || !this.feeEnv.KRAKEN_API_SECRET) {
       throw new Error("Kraken credentials are not configured");
     }
-    const nonceResponse = await super.fetch(new Request("https://bot/kraken/next-nonce", { method: "POST" }));
-    if (!nonceResponse.ok) throw new Error(`Nonce authority HTTP ${nonceResponse.status}`);
-    const nonceBody = await responseObject(nonceResponse);
-    if (typeof nonceBody.nonce !== "string" || !nonceBody.nonce) {
-      throw new Error("Nonce authority returned no nonce");
-    }
+    const nonce = await this.nextCentralKrakenNonce();
     const audit = await fetchKrakenEffectiveFees(
       this.feeEnv.KRAKEN_API_KEY,
       this.feeEnv.KRAKEN_API_SECRET,
-      nonceBody.nonce,
+      nonce,
       this.feeEnv.PAIR || "XBTEUR",
       0.004,
     );
@@ -77,11 +93,40 @@ export class BotState extends BaseBotState {
     return audit;
   }
 
+  private async freshOpenOrdersAudit(): Promise<KrakenOpenOrdersAudit> {
+    if (!this.feeEnv.KRAKEN_API_KEY || !this.feeEnv.KRAKEN_API_SECRET) {
+      throw new Error("Kraken credentials are not configured");
+    }
+    const nonce = await this.nextCentralKrakenNonce();
+    const orders = await openOrders(
+      this.feeEnv.KRAKEN_API_KEY,
+      this.feeEnv.KRAKEN_API_SECRET,
+      nonce,
+    );
+    return {
+      checkedAt: Date.now(),
+      openOrderCount: orders.length,
+      accountClean: orders.length === 0,
+      permissionRequired: "query-open-trades",
+      readOnly: true,
+      realOrderCreated: false,
+      liveTrading: false,
+    };
+  }
+
   private async connectionWithFees(request: Request): Promise<Response> {
     const base = await super.fetch(request);
     if (!base.ok) return base;
     const body = await responseObject(base);
     if (body.connected !== true) return base;
+
+    let openOrdersAudit: KrakenOpenOrdersAudit | null = null;
+    let openOrdersError: string | null = null;
+    try {
+      openOrdersAudit = await this.freshOpenOrdersAudit();
+    } catch (caught) {
+      openOrdersError = caught instanceof Error ? caught.message : "Kraken open-order audit failed";
+    }
 
     let audit = await this.cachedEffectiveFees();
     let error: string | null = null;
@@ -93,8 +138,25 @@ export class BotState extends BaseBotState {
       }
     }
 
+    const nonZeroAssetCount = Number(body.nonZeroAssetCount);
+    const balancesClean = Number.isFinite(nonZeroAssetCount) && nonZeroAssetCount === 1;
+    const accountClean = balancesClean && openOrdersAudit?.accountClean === true;
+
     return Response.json({
       ...body,
+      openOrderCount: openOrdersAudit?.openOrderCount ?? null,
+      accountClean,
+      openOrdersAudit: {
+        available: openOrdersAudit !== null,
+        checkedAt: openOrdersAudit?.checkedAt ?? null,
+        openOrderCount: openOrdersAudit?.openOrderCount ?? null,
+        accountClean: openOrdersAudit?.accountClean ?? false,
+        error: openOrdersError,
+        permissionRequired: "query-open-trades",
+        readOnly: true,
+        realOrderCreated: false,
+        liveTrading: false,
+      },
       effectiveFees: audit,
       effectiveFeesStatus: {
         available: audit !== null,
