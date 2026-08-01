@@ -6,6 +6,7 @@ import { buildPilotOneShotManifest } from "../src/pilot-one-shot-manifest";
 
 const ROOT = process.cwd();
 const NOW = 1_800_000_000_000;
+const SECRET_NONCE_FIXTURE = "9999999999999";
 
 function readiness(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
@@ -58,7 +59,7 @@ function connection(takerPercent: number | null = 0.4): Record<string, unknown> 
 }
 
 describe("pilot one-shot manifest", () => {
-  it("seals a complete eligible dossier without creating execution capability", async () => {
+  it("seals a complete eligible dossier without execution capability", async () => {
     const manifest = await buildPilotOneShotManifest(readiness(), connection(), NOW);
 
     expect(manifest.schemaVersion).toBe("pilot-one-shot-manifest-v1");
@@ -89,19 +90,14 @@ describe("pilot one-shot manifest", () => {
     expect(manifest.liveTrading).toBe(false);
   });
 
-  it("produces a stable hash independent of object property order", async () => {
+  it("keeps the hash stable across property ordering", async () => {
     const first = await buildPilotOneShotManifest(readiness(), connection(), NOW);
     const reordered = {
       liveTrading: false,
       submissionArmed: false,
       submissionEndpointAvailable: false,
       infrastructureEligibleForManualReview: true,
-      fireDrill: {
-        totalChecks: 6,
-        generatedAt: NOW - 200,
-        passedChecks: 6,
-        passed: true,
-      },
+      fireDrill: { totalChecks: 6, generatedAt: NOW - 200, passedChecks: 6, passed: true },
       accountCleanliness: {
         openOrderCount: 0,
         nonEurAssetCount: 0,
@@ -129,15 +125,17 @@ describe("pilot one-shot manifest", () => {
       maximumOrderNotionalEur: 5,
       generatedAt: NOW - 1_000,
     };
-    const second = await buildPilotOneShotManifest(reordered, {
-      effectiveFees: { taker: { percent: 0.4 } },
-    }, NOW);
+    const second = await buildPilotOneShotManifest(
+      reordered,
+      { effectiveFees: { taker: { percent: 0.4 } } },
+      NOW,
+    );
 
     expect(second.payloadHashSha256).toBe(first.payloadHashSha256);
     expect(second.manifestId).toBe(first.manifestId);
   });
 
-  it("changes the seal when an order field changes", async () => {
+  it("changes the seal when any order field changes", async () => {
     const first = await buildPilotOneShotManifest(readiness(), connection(), NOW);
     const changed = readiness({
       executor: {
@@ -158,16 +156,18 @@ describe("pilot one-shot manifest", () => {
   });
 
   it("never upgrades a blocked readiness report", async () => {
-    const manifest = await buildPilotOneShotManifest(readiness({
-      infrastructureEligibleForManualReview: false,
-    }), connection(), NOW);
+    const manifest = await buildPilotOneShotManifest(
+      readiness({ infrastructureEligibleForManualReview: false }),
+      connection(),
+      NOW,
+    );
 
     expect(manifest.eligibleForHumanArming).toBe(false);
     expect(manifest.blockers).toContain("El expediente base todavía no es elegible para revisión humana");
     expect(manifest.submitCapable).toBe(false);
   });
 
-  it("blocks an order above five euros", async () => {
+  it("blocks an order above the absolute five euro maximum", async () => {
     const manifest = await buildPilotOneShotManifest(readiness({
       executor: {
         order: {
@@ -194,7 +194,7 @@ describe("pilot one-shot manifest", () => {
     expect(manifest.blockers).toContain("La orden no respeta el máximo absoluto de 5 EUR");
   });
 
-  it("blocks invalid or expired certificates", async () => {
+  it("blocks invalid and expired certificates", async () => {
     const invalid = await buildPilotOneShotManifest(readiness({
       preflightCertificate: {
         status: "invalid",
@@ -210,13 +210,13 @@ describe("pilot one-shot manifest", () => {
       },
     }), connection(), NOW);
 
-    expect(invalid.eligibleForHumanArming).toBe(false);
     expect(invalid.blockers).toContain("El certificado validate=true no está vigente");
-    expect(expired.eligibleForHumanArming).toBe(false);
     expect(expired.blockers).toContain("El certificado validate=true ha caducado");
+    expect(invalid.eligibleForHumanArming).toBe(false);
+    expect(expired.eligibleForHumanArming).toBe(false);
   });
 
-  it("blocks missing effective fees and insufficient exit reserve", async () => {
+  it("blocks missing fees and insufficient exit reserve", async () => {
     const missingFee = await buildPilotOneShotManifest(readiness(), connection(null), NOW);
     const insufficientReserve = await buildPilotOneShotManifest(readiness({
       accountCleanliness: {
@@ -239,7 +239,7 @@ describe("pilot one-shot manifest", () => {
       ...readiness(),
       KRAKEN_API_KEY: "should-not-appear",
       KRAKEN_API_SECRET: "should-not-appear",
-      nonce: "1800000000000",
+      nonce: SECRET_NONCE_FIXTURE,
     }, {
       ...connection(),
       apiKey: "should-not-appear",
@@ -248,12 +248,12 @@ describe("pilot one-shot manifest", () => {
     const serialized = JSON.stringify(manifest);
 
     expect(serialized).not.toContain("should-not-appear");
-    expect(serialized).not.toContain("1800000000000");
+    expect(serialized).not.toContain(SECRET_NONCE_FIXTURE);
     expect(serialized).not.toContain("API-Sign");
     expect(manifest.authorizationToken).toBeNull();
   });
 
-  it("renders a non-submitting iPhone manifest card with valid JavaScript", async () => {
+  it("renders a non-submitting iPhone card with valid JavaScript", async () => {
     const response = await manifestPilotDashboard();
     const html = await response.text();
 
@@ -270,7 +270,7 @@ describe("pilot one-shot manifest", () => {
     expect(() => new Function(script)).not.toThrow();
   });
 
-  it("keeps the manifest endpoint private and the real submit routes untouched", () => {
+  it("keeps the endpoint private and real submit routes untouched", () => {
     const adapter = readFileSync(join(ROOT, "src/index-fire-drill.ts"), "utf8");
     const core = readFileSync(join(ROOT, "src/index.ts"), "utf8");
 
