@@ -6,7 +6,7 @@ function read(path: string): string {
   return readFileSync(join(process.cwd(), path), "utf8");
 }
 
-describe("dormant validate-only preflight isolation", () => {
+describe("validate-only preflight isolation in the persistent pilot", () => {
   it("assembles the internal preflight only for an exact prepared LIVE order", () => {
     const state = read("src/live-executor-state.ts");
     expect(state).toMatch(/url\.pathname\s*===\s*["']\/preflight["']/);
@@ -19,19 +19,29 @@ describe("dormant validate-only preflight isolation", () => {
     expect(state).toMatch(/createLivePreflightCertificate\(intent, result\)/);
   });
 
-  it("does not expose or instantiate LiveExecutorState in the deployed Worker", () => {
+  it("deploys validate-only preparation without exposing any submission path", () => {
     const index = read("src/index.ts");
     const wrangler = read("wrangler.jsonc");
 
-    expect(index).not.toMatch(/from\s*["']\.\/live-executor-state["']/);
-    expect(index).not.toMatch(/export\s*\{[^}]*LiveExecutorState/s);
-    expect(index).not.toMatch(/\/api\/kraken\/order-preflight/);
+    expect(index).toMatch(/from\s*["']\.\/live-executor-state["']/);
+    expect(index).toMatch(/export\s*\{[^}]*LiveExecutorState/s);
+    expect(index).toContain('"/api/pilot/preflight": "/preflight"');
+    expect(index).toContain('url.pathname === "/api/pilot/submit"');
+    expect(index).toContain("PILOT_SUBMISSION_NOT_ARMED");
     expect(index).toMatch(/url\.pathname\.startsWith\(["']\/api\/live["']\)/);
     expect(index).toMatch(/LIVE_TRADING_HARD_DISABLED/);
 
-    expect(wrangler).not.toMatch(/LIVE_EXECUTOR/);
-    expect(wrangler).not.toMatch(/LiveExecutorState/);
+    const actionMapStart = index.indexOf("const pilotActions");
+    const actionMapEnd = index.indexOf("const target", actionMapStart);
+    expect(index.slice(actionMapStart, actionMapEnd)).not.toContain('"/api/pilot/submit"');
+
+    expect(wrangler).toMatch(/LIVE_EXECUTOR/);
+    expect(wrangler).toMatch(/LiveExecutorState/);
     expect(wrangler).not.toMatch(/LIVE_TRADING_ENABLED/);
     expect(wrangler).toMatch(/["']TRADING_MODE["']\s*:\s*["']paper["']/);
+
+    const scheduled = index.slice(index.indexOf("async scheduled"));
+    expect(scheduled).not.toContain("liveExecutorState(");
+    expect(scheduled).not.toContain("/api/pilot");
   });
 });
