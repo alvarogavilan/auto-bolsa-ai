@@ -47,7 +47,7 @@ describe("inactive LIVE state certified submission architecture", () => {
     expect(storeSection).not.toContain("KrakenLiveOrderTransport");
   });
 
-  it("routes every future submit through certificate and journal gates", () => {
+  it("routes every internal submit through certificate and journal gates", () => {
     expect(source).toContain("submitOrderWithAtomicPreflightCertificate(");
     expect(source).toContain("this.certificateStore()");
     expect(source).toContain("this.submissionJournal()");
@@ -63,12 +63,27 @@ describe("inactive LIVE state certified submission architecture", () => {
     expect(source).toContain("reconciledJournals");
   });
 
-  it("keeps the LIVE class absent from production bindings and exports", () => {
+  it("deploys persistent pilot state while keeping public submission impossible", () => {
     const wrangler = read("wrangler.jsonc");
     const index = read("src/index.ts");
-    expect(wrangler).not.toContain("LIVE_EXECUTOR");
-    expect(wrangler).not.toContain("LiveExecutorState");
-    expect(index).not.toMatch(/export\s*\{?\s*LiveExecutorState/);
-    expect(index).not.toContain('from "./live-executor-state"');
+
+    expect(wrangler).toContain('"name": "LIVE_EXECUTOR"');
+    expect(wrangler).toContain('"class_name": "LiveExecutorState"');
+    expect(wrangler).toContain('"tag": "v3"');
+    expect(wrangler).not.toContain("LIVE_TRADING_ENABLED");
+
+    expect(index).toContain('from "./live-executor-state"');
+    expect(index).toMatch(/export\s*\{[^}]*LiveExecutorState/s);
+    expect(index).toContain('url.pathname === "/api/pilot/submit"');
+    expect(index).toContain("PILOT_SUBMISSION_NOT_ARMED");
+
+    const actionMapStart = index.indexOf("const pilotActions");
+    const actionMapEnd = index.indexOf("const target", actionMapStart);
+    const actionMap = index.slice(actionMapStart, actionMapEnd);
+    expect(actionMap).not.toContain('"/api/pilot/submit"');
+
+    const scheduled = index.slice(index.indexOf("async scheduled"));
+    expect(scheduled).not.toContain("liveExecutorState(");
+    expect(scheduled).not.toContain("/api/pilot");
   });
 });
