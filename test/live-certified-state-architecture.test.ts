@@ -19,6 +19,16 @@ describe("inactive LIVE state certified submission architecture", () => {
     expect(source).toMatch(/clOrdIdFactory:\s*\(\)\s*=>\s*order\.clOrdId/);
   });
 
+  it("blocks a new preflight when a write-ahead intent is still unresolved", () => {
+    expect(source).toContain("this.submissionJournal().recoveryDecision(order.clOrdId)");
+    expect(source).toMatch(/recovery\.action === "reconcile_only"/);
+    expect(source).toMatch(/se exige reconciliación y nunca un nuevo preflight/);
+    const recoveryCheck = source.indexOf("recoveryDecision(order.clOrdId)");
+    const gatewayCreation = source.indexOf("new KrakenValidateOnlyOrderGateway");
+    expect(recoveryCheck).toBeGreaterThan(0);
+    expect(gatewayCreation).toBeGreaterThan(recoveryCheck);
+  });
+
   it("invalidates any older certificate and only persists a newly validated certificate", () => {
     expect(source).toMatch(/storage\.delete\(certificateKey\)/);
     expect(source).toMatch(/result\.status === "validated"/);
@@ -27,19 +37,30 @@ describe("inactive LIVE state certified submission architecture", () => {
     expect(source).toContain("certificatePersisted: certificate !== null");
   });
 
-  it("uses an atomic local certificate store without holding the lock during Kraken transport", () => {
+  it("uses atomic local stores without holding their locks during Kraken transport", () => {
     expect(source).toContain("PersistedAtomicLivePreflightCertificateStore");
+    expect(source).toContain("PersistedLiveSubmissionJournal");
     expect(source).toMatch(/blockConcurrencyWhile\(operation\)/);
-    const storeMethodEnd = source.indexOf("private async pairResolution");
+    const storeMethodEnd = source.indexOf("private async resolveVerifiedJournals");
     const storeSection = source.slice(source.indexOf("private certificateStore"), storeMethodEnd);
     expect(storeSection).not.toContain("this.transport()");
     expect(storeSection).not.toContain("KrakenLiveOrderTransport");
   });
 
-  it("routes every future submit through the certificate gate, never directly through submitOrder", () => {
+  it("routes every future submit through certificate and journal gates", () => {
     expect(source).toContain("submitOrderWithAtomicPreflightCertificate(");
+    expect(source).toContain("this.certificateStore()");
+    expect(source).toContain("this.submissionJournal()");
     expect(source).not.toMatch(/\bsubmitOrder\s*\(/);
     expect(source).not.toMatch(/\bsubmitOrder,\s*\n/);
+  });
+
+  it("marks journals reconciled only after a verified reconciliation report", () => {
+    expect(source).toContain("private async resolveVerifiedJournals");
+    expect(source).toMatch(/if \(!reportOk\) return \[\]/);
+    expect(source).toMatch(/report\.ok,\s*\n\s*report\.unresolvedOrders/);
+    expect(source).toContain("journal.markReconciled(order.clOrdId, now)");
+    expect(source).toContain("reconciledJournals");
   });
 
   it("keeps the LIVE class absent from production bindings and exports", () => {
