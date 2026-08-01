@@ -61,7 +61,7 @@ export async function stressDemoDashboard(): Promise<Response> {
       ['Frágiles',report.fragileStrategies],
       ['Ciclos emparejados',entry.closedRoundTrips],
       ['Resultado combinado',money(combined.netPnlEur||0)],
-      ['Drawdown combinado',Number(combined.maxDrawdownPct||0).toFixed(2).replace('.',',')+' %'],
+      ['Drawdown combinado',Number((combined.maxDrawdownPct||0)*100).toFixed(2).replace('.',',')+' %'],
       ['Racha perdedora',combined.longestLosingStreak||0],
       ['Peor bloque de 5',money(combined.worstFiveTradePnlEur||0)]
     ].map(function(item){return '<div class="mini"><span>'+escapeHtml(item[0])+'</span><strong>'+escapeHtml(item[1])+'</strong></div>'}).join('');
