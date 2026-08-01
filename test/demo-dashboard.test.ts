@@ -28,8 +28,8 @@ describe("human DEMO dashboard", () => {
     expect(html).toContain("t.pnlEur");
     expect(html).toContain("t.feeEur");
     expect(html).toContain("t.reason");
-    expect(html).toContain("fetch('/api/lab'");
-    expect(html).toContain("fetch('/api/readiness'");
+    expect(html).toContain("fetchJsonOrNull('/api/lab')");
+    expect(html).toContain("fetchJsonOrNull('/api/readiness')");
   });
 
   it("makes the complete Kraken EUR market universe visible", async () => {
@@ -42,7 +42,15 @@ describe("human DEMO dashboard", () => {
     expect(html).toContain("candidate.fastEligible");
     expect(html).toContain("candidate.intradayEligible");
     expect(html).toContain("candidate.swingEligible");
-    expect(html).toContain("fetch('/api/markets'");
+    expect(html).toContain("fetchJsonOrNull('/api/markets')");
+  });
+
+  it("keeps each panel rendering independently when one data source fails", async () => {
+    const html = await (await demoDashboard()).text();
+    expect(html).toContain("function fetchJsonOrNull");
+    expect(html).toContain("if(!r.ok)return null");
+    expect(html).not.toContain("responses.some");
+    expect(html).toContain("render(lab,readiness,markets)");
   });
 
   it("translates Kraken tickers into human market names", async () => {

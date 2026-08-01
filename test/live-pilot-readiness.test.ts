@@ -15,7 +15,7 @@ function fullyPassingPaper(): PaperReadiness {
     evidenceMethod: "closed-15m-candles-v1",
     evidenceStartedAt: 0,
     daysObserved: 20,
-    tickAttempts: 2000,
+    successfulTickAttempts: 2000,
     uniqueClosedCandlesObserved: 600,
     duplicateCandleSkips: 0,
     errorsObserved: 0,
