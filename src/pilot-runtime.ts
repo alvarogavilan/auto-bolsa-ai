@@ -1,3 +1,4 @@
+import type { KrakenEffectiveFeesAudit } from "./kraken-fees";
 import type { LiveExecutorSnapshot, LiveOrder } from "./live-executor";
 import { fetchLivePairResolution } from "./live-pair-metadata";
 import type { PaperReadiness } from "./paper-readiness";
@@ -28,9 +29,35 @@ interface KrakenPermissionSummary {
   error: string | null;
 }
 
+export interface KrakenEffectiveFeeSummary {
+  available: boolean;
+  checkedAt: number | null;
+  pairRequested: string | null;
+  pairResolved: string | null;
+  currency: string | null;
+  volume30d: number | null;
+  tierBasis: number | null;
+  tierBasisSource: string | null;
+  makerFeePercent: number | null;
+  makerFeeRate: number | null;
+  takerFeePercent: number | null;
+  takerFeeRate: number | null;
+  assumedPaperFeeEachSidePercent: number | null;
+  paperFeeMatchesCurrentTaker: boolean | null;
+  paperTakerGapRate: number | null;
+  fiveEurTakerRoundTripFeeEur: number | null;
+  error: string | null;
+  permissionRequired: "query-funds";
+  readOnly: true;
+  changesStrategyParameters: false;
+  realOrderCreated: false;
+  liveTrading: false;
+}
+
 interface KrakenSafetySummary {
   connection: KrakenConnectionSummary;
   permissions: KrakenPermissionSummary;
+  fees: KrakenEffectiveFeeSummary;
 }
 
 interface DemoStatusSummary {
@@ -58,7 +85,9 @@ function safetyCacheKey(): Request {
 async function responseJson(response: Response): Promise<Record<string, unknown>> {
   try {
     const value = await response.json();
-    return value && typeof value === "object" ? value as Record<string, unknown> : {};
+    return value && typeof value === "object" && !Array.isArray(value)
+      ? value as Record<string, unknown>
+      : {};
   } catch {
     return {};
   }
@@ -69,12 +98,66 @@ function bool(value: unknown): boolean {
 }
 
 function finiteOrNull(value: unknown): number | null {
+  if (value === null || value === undefined || value === "") return null;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
 }
 
 function errorOrNull(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value : null;
+}
+
+function objectOrNull(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function nullableBoolean(value: unknown): boolean | null {
+  return typeof value === "boolean" ? value : null;
+}
+
+export function summarizeKrakenEffectiveFees(connectionBody: Record<string, unknown>): KrakenEffectiveFeeSummary {
+  const audit = objectOrNull(connectionBody.effectiveFees) as (Record<string, unknown> & Partial<KrakenEffectiveFeesAudit>) | null;
+  const status = objectOrNull(connectionBody.effectiveFeesStatus);
+  const maker = objectOrNull(audit?.maker);
+  const taker = objectOrNull(audit?.taker);
+  const tierInputs = objectOrNull(audit?.tierInputs);
+  const validAudit = audit?.schemaVersion === "kraken-effective-fees-v1";
+  const available = validAudit && status?.available !== false;
+
+  return {
+    available,
+    checkedAt: available ? finiteOrNull(audit?.checkedAt) : null,
+    pairRequested: available && typeof audit?.pairRequested === "string" ? audit.pairRequested : null,
+    pairResolved: available && typeof audit?.pairResolved === "string" ? audit.pairResolved : null,
+    currency: available && typeof audit?.currency === "string" ? audit.currency : null,
+    volume30d: available ? finiteOrNull(audit?.volume30d) : null,
+    tierBasis: available ? finiteOrNull(tierInputs?.effectiveTierBasis) : null,
+    tierBasisSource: available && typeof tierInputs?.effectiveTierBasisSource === "string"
+      ? tierInputs.effectiveTierBasisSource
+      : null,
+    makerFeePercent: available ? finiteOrNull(maker?.percent) : null,
+    makerFeeRate: available ? finiteOrNull(maker?.rate) : null,
+    takerFeePercent: available ? finiteOrNull(taker?.percent) : null,
+    takerFeeRate: available ? finiteOrNull(taker?.rate) : null,
+    assumedPaperFeeEachSidePercent: available
+      ? finiteOrNull(audit?.assumedPaperFeeEachSidePct)
+      : null,
+    paperFeeMatchesCurrentTaker: available
+      ? nullableBoolean(audit?.paperFeeMatchesCurrentTaker)
+      : null,
+    paperTakerGapRate: available ? finiteOrNull(audit?.paperTakerGapRate) : null,
+    fiveEurTakerRoundTripFeeEur: available
+      ? finiteOrNull(audit?.fiveEurTakerRoundTripFeeEur)
+      : null,
+    error: errorOrNull(status?.error),
+    permissionRequired: "query-funds",
+    readOnly: true,
+    changesStrategyParameters: false,
+    realOrderCreated: false,
+    liveTrading: false,
+  };
 }
 
 async function queryKrakenSafety(env: Env): Promise<KrakenSafetySummary> {
@@ -109,6 +192,7 @@ async function queryKrakenSafety(env: Env): Promise<KrakenSafetySummary> {
         : null,
       error: errorOrNull(permissionsBody.error) ?? (permissionsResponse.ok ? null : `HTTP ${permissionsResponse.status}`),
     },
+    fees: summarizeKrakenEffectiveFees(connectionBody),
   };
 }
 
@@ -167,6 +251,10 @@ function safeOrder(order: LiveOrder | null): Record<string, unknown> | null {
   };
 }
 
+function percentText(value: number | null): string {
+  return value === null ? "desconocida" : `${value.toFixed(4)} %`;
+}
+
 export async function buildPilotRuntimeReadiness(
   env: Env,
   forceKrakenRefresh = false,
@@ -206,6 +294,21 @@ export async function buildPilotRuntimeReadiness(
     passedChecks.push("Permisos Kraken auditados sin retirada, depósito ni Earn");
   } else {
     blockers.push("La auditoría de permisos Kraken no está completa o no es segura");
+  }
+
+  if (kraken.fees.available) {
+    passedChecks.push(
+      `Tarifa efectiva Kraken leída en modo consulta: maker ${percentText(kraken.fees.makerFeePercent)}, taker ${percentText(kraken.fees.takerFeePercent)}`,
+    );
+    if (kraken.fees.paperFeeMatchesCurrentTaker === false) {
+      warnings.push(
+        `La tarifa taker efectiva (${percentText(kraken.fees.takerFeePercent)}) difiere del supuesto PAPER (${percentText(kraken.fees.assumedPaperFeeEachSidePercent)}). La cohorte congelada no se modifica automáticamente.`,
+      );
+    }
+  } else {
+    warnings.push(
+      `No se pudo leer la tarifa efectiva Kraken en esta comprobación${kraken.fees.error ? `: ${kraken.fees.error}` : "."}`,
+    );
   }
 
   if (pairResolution) passedChecks.push(`Metadatos públicos Kraken verificados para ${pair}`);
