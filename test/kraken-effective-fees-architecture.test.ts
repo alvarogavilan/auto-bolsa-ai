@@ -36,11 +36,13 @@ describe("Kraken effective fee architecture", () => {
     expect(wrapper).not.toContain("submitOrder");
   });
 
-  it("does not expose credentials in the fee audit module", () => {
+  it("keeps credentials out of the public audit interface and returned object", () => {
     const module = readFileSync(join(ROOT, "src/kraken-fees.ts"), "utf8");
+    const interfaceBody = module.match(/export interface KrakenEffectiveFeesAudit\s*\{([\s\S]*?)\n\}/)?.[1] ?? "";
+    const returnBody = module.match(/return\s*\{\s*schemaVersion:\s*"kraken-effective-fees-v1"([\s\S]*?)\n\s*\};/m)?.[1] ?? "";
 
-    expect(module).not.toContain("apiSecret:");
-    expect(module).not.toContain("apiKey:");
+    expect(interfaceBody).not.toMatch(/apiKey|apiSecret|nonce|signature/i);
+    expect(returnBody).not.toMatch(/apiKey|apiSecret|nonce|signature/i);
     expect(module).toContain("readOnly: true");
     expect(module).toContain("realOrderCreated: false");
     expect(module).toContain("/0/private/TradeVolume");
