@@ -258,7 +258,13 @@ async function preparePilotValidation(env: Env): Promise<Response> {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ eurBalance: proposal.eurBalance, request: proposal.request }),
   });
-  const prepared = await preparedResponse.json<Record<string, unknown>>().catch(() => ({}));
+  let prepared: Record<string, unknown> = {};
+  try {
+    const value = await preparedResponse.json();
+    if (value && typeof value === "object") prepared = value as Record<string, unknown>;
+  } catch {
+    prepared = {};
+  }
   if (!preparedResponse.ok || prepared.ok !== true) {
     return Response.json(
       {
@@ -274,6 +280,7 @@ async function preparePilotValidation(env: Env): Promise<Response> {
   }
 
   const order = prepared.order as Record<string, unknown> | undefined;
+  const request = order?.request as Record<string, unknown> | undefined;
   return Response.json({
     ok: true,
     schemaVersion: "pilot-validation-preparation-v1",
@@ -298,11 +305,11 @@ async function preparePilotValidation(env: Env): Promise<Response> {
       ? {
           clOrdId: order.clOrdId,
           status: order.status,
-          pair: (order.request as Record<string, unknown> | undefined)?.pair,
-          side: (order.request as Record<string, unknown> | undefined)?.side,
-          volumeBase: (order.request as Record<string, unknown> | undefined)?.volumeBase,
-          limitPrice: (order.request as Record<string, unknown> | undefined)?.limitPrice,
-          notionalEur: (order.request as Record<string, unknown> | undefined)?.notionalEur,
+          pair: request?.pair,
+          side: request?.side,
+          volumeBase: request?.volumeBase,
+          limitPrice: request?.limitPrice,
+          notionalEur: request?.notionalEur,
         }
       : null,
     clOrdId: typeof order?.clOrdId === "string" ? order.clOrdId : null,
