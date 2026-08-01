@@ -5,8 +5,12 @@ import { demoDashboard } from "../src/demo-dashboard";
 
 const ROOT = process.cwd();
 
-describe("human DEMO dashboard", () => {
-  it("renders a human-readable mobile dashboard instead of raw JSON", async () => {
+async function dashboardHtml(): Promise<string> {
+  return (await demoDashboard()).text();
+}
+
+describe("standalone PAPER DEMO dashboard", () => {
+  it("renders the standalone mobile dashboard with a strict no-store contract", async () => {
     const response = await demoDashboard();
     expect(response.headers.get("Content-Type")).toContain("text/html");
     expect(response.headers.get("Cache-Control")).toBe("no-store");
@@ -14,87 +18,87 @@ describe("human DEMO dashboard", () => {
 
     expect(html).toContain("DEMO en directo");
     expect(html).toContain("Capital virtual");
-    expect(html).toContain("Historial de operaciones");
-    expect(html).toContain("Compras y ventas simuladas");
-    expect(html).toContain("Estrategias activas");
-    expect(html).toContain("Expediente PAPER");
+    expect(html).toContain("Resumen");
+    expect(html).toContain("Posiciones");
+    expect(html).toContain("Historial");
+    expect(html).toContain("Auditoría");
+    expect(html).toContain("Rendimiento");
+    expect(html).toContain("Sistema");
+    expect(html).not.toContain("JSON.stringify");
   });
 
-  it("shows position, PnL, fees and trade reasons from the public lab response", async () => {
-    const html = await (await demoDashboard()).text();
-    expect(html).toContain("strategy.positionOpen");
+  it("uses one PAPER source of truth across every tab", async () => {
+    const html = await dashboardHtml();
+    expect(html).toContain("fetch('/api/lab'");
+    expect(html).toContain("function norm()");
+    expect(html).toContain("function renderSummary()");
+    expect(html).toContain("function renderPositions()");
+    expect(html).toContain("function renderHistory()");
+    expect(html).toContain("function renderAudit()");
+    expect(html).toContain("function renderPerformance()");
+    expect(html).toContain("function renderSystem()");
+  });
+
+  it("normalizes the nine independent research balances to one 50 euro reference account", async () => {
+    const html = await dashboardHtml();
+    expect(html).toContain("const TARGET=50");
+    expect(html).toContain("scale=t.initial?TARGET/t.initial:1");
+    expect(html).toContain("Cuenta equivalente de 50 €");
+    expect(html).toContain("no suma ficticia de nueve carteras");
+  });
+
+  it("shows current positions and preserves closed losses in the same account value", async () => {
+    const html = await dashboardHtml();
+    expect(html).toContain("Posiciones vigentes");
+    expect(html).toContain("Estado exacto del mismo capital mostrado en Resumen");
+    expect(html).toContain("s.position");
     expect(html).toContain("p.entryPrice");
-    expect(html).toContain("strategy.currentReferencePrice");
-    expect(html).toContain("t.pnlEur");
-    expect(html).toContain("t.feeEur");
+    expect(html).toContain("p.stopLoss");
+    expect(html).toContain("p.takeProfit");
+    expect(html).toContain("las pérdidas y comisiones cerradas permanecen contabilizadas");
+  });
+
+  it("renders every retained order as an expandable audit record", async () => {
+    const html = await dashboardHtml();
+    expect(html).toContain("Historial completo");
+    expect(html).toContain("<details class=\"item\"");
+    expect(html).toContain("Precio unitario");
+    expect(html).toContain("Comisión");
+    expect(html).toContain("PnL realizado");
     expect(html).toContain("t.reason");
-    expect(html).toContain("fetchJsonOrNull('/api/lab')");
-    expect(html).toContain("fetchJsonOrNull('/api/readiness')");
+    expect(html).toContain("t.id");
   });
 
-  it("makes the complete Kraken EUR market universe visible", async () => {
-    const html = await (await demoDashboard()).text();
-    expect(html).toContain("Universo de mercados");
-    expect(html).toContain("Todo el mercado EUR de Kraken");
-    expect(html).toContain("marketsDiscovered");
-    expect(html).toContain("marketsOnline");
-    expect(html).toContain("marketsCompatible");
-    expect(html).toContain("candidate.fastEligible");
-    expect(html).toContain("candidate.intradayEligible");
-    expect(html).toContain("candidate.swingEligible");
-    expect(html).toContain("fetchJsonOrNull('/api/markets')");
+  it("explains why many small losses can produce a limited total drawdown", async () => {
+    const html = await dashboardHtml();
+    expect(html).toContain("Auditoría de cierres");
+    expect(html).toContain("Pérdida por costes");
+    expect(html).toContain("Stop loss");
+    expect(html).toContain("Tiempo máximo");
+    expect(html).toContain("Señal revertida");
+    expect(html).toContain("Resultado bruto");
+    expect(html).toContain("Costes ida/vuelta");
+    expect(html).toContain("Resultado neto");
+    expect(html).toContain("el patrón 0 ganadoras");
   });
 
-  it("keeps each panel rendering independently when one data source fails", async () => {
-    const html = await (await demoDashboard()).text();
-    expect(html).toContain("function fetchJsonOrNull");
-    expect(html).toContain("if(!r.ok)return null");
-    expect(html).not.toContain("responses.some");
-    expect(html).toContain("render(lab,readiness,markets)");
+  it("keeps LIVE visibly and structurally disabled", async () => {
+    const html = await dashboardHtml();
+    expect(html).toContain("LIVE desactivado");
+    expect(html).toContain("Órdenes reales bloqueadas");
+    expect(html).toContain("NO APTO LIVE");
+
+    const index = readFileSync(join(ROOT, "src/index.ts"), "utf8");
+    expect(index).toContain('url.pathname.startsWith("/api/live")');
+    expect(index).toContain("LIVE_TRADING_HARD_DISABLED");
+    expect(index).not.toContain('url.pathname === "/live"');
   });
 
-  it("translates Kraken tickers into human market names", async () => {
-    const html = await (await demoDashboard()).text();
-    expect(html).toContain("XBT:'Bitcoin'");
-    expect(html).toContain("ETH:'Ethereum'");
-    expect(html).toContain("SOL:'Solana'");
-    expect(html).toContain("function humanMarket");
-    expect(html).toContain("XBT es Bitcoin");
-  });
-
-  it("shows activity even when no new trade is executed", async () => {
-    const html = await (await demoDashboard()).text();
-    expect(html).toContain("Actividad en tiempo real");
-    expect(html).toContain("Qué está haciendo el sistema");
-    expect(html).toContain("renderSystemActivity");
-    expect(html).toContain("Sin ciclo reciente");
-    expect(html).toContain("lastDecision");
-    expect(html).toContain("lastSuccessfulAt");
-  });
-
-  it("shows the shadow committee and demanding benchmark suite", async () => {
-    const html = await (await demoDashboard()).text();
-    expect(html).toContain("Comité interno · shadow");
-    expect(html).toContain("Decisión auditada por seis funciones");
-    expect(html).toContain("renderCommittee");
-    expect(html).toContain("Comparación exigente");
-    expect(html).toContain("Mejor alternativa pasiva");
-    expect(html).toContain("renderBenchmarkSuite");
-    expect(html).toContain("Modo shadow: no altera ninguna compra o venta");
-  });
-
-  it("keeps technical JSON and admin controls on a separate route", () => {
+  it("keeps the human DEMO and technical administration on separate routes", () => {
     const index = readFileSync(join(ROOT, "src/index.ts"), "utf8");
     expect(index).toContain('url.pathname === "/" || url.pathname === "/demo"');
     expect(index).toContain('url.pathname === "/technical"');
     expect(index).toContain("return demoDashboard()");
     expect(index).toContain("return technicalDashboard()");
-  });
-
-  it("does not add or expose any LIVE route", () => {
-    const index = readFileSync(join(ROOT, "src/index.ts"), "utf8");
-    expect(index).toContain('url.pathname.startsWith("/api/live")');
-    expect(index).toContain("LIVE_TRADING_HARD_DISABLED");
-    expect(index).not.toContain('url.pathname === "/live"');
   });
 });
