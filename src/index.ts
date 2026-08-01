@@ -4,17 +4,21 @@ import { analyzeExecutionQuality } from "./execution-quality";
 import { fingerprintKrakenCredentials } from "./kraken";
 import { fetchAllTickers, fetchTradableAssetPairs } from "./kraken-markets";
 import { fetchPreTradeBook } from "./kraken-pretrade";
+import { LiveExecutorState } from "./live-executor-state";
 import { buildMarketUniverse, type MarketCandidate, type MarketUniverse } from "./market-universe";
+import {
+  buildPilotRuntimeReadiness,
+  krakenSafetySummary,
+  liveExecutorState,
+} from "./pilot-runtime";
 import { type FastEntryGate } from "./research-lab";
 import { ResearchLabState } from "./research-lab-state";
 import { BOT_STATE_SINGLETON_NAME, type Env } from "./types";
 
-// `LiveExecutorState` (src/live-executor-state.ts) NO se exporta ni se enlaza
-// aquí a propósito: no está declarado en wrangler.jsonc, no tiene binding, y
-// por tanto Cloudflare nunca lo instancia ni lo despliega. Solo existe como
-// código fuente, typecheckeado y usado por sus tests, hasta que un piloto
-// manual decida activarlo explícitamente (ver docs/live-executor.md).
-export { BotState, ResearchLabState };
+// El ejecutor queda desplegado únicamente como estado persistente para un
+// futuro piloto manual. Ninguna ruta pública puede invocar /submit y el
+// interruptor LIVE permanece ausente/false.
+export { BotState, ResearchLabState, LiveExecutorState };
 
 const jsonHeaders = { "Content-Type": "application/json; charset=utf-8" };
 const MARKET_CACHE_TTL_SECONDS = 60 * 60;
@@ -153,8 +157,8 @@ async function executionQuality(env: Env, forceRefresh = false): Promise<Respons
       return leftCost - rightCost;
     }),
     interpretation: {
-      immediateRoundTrip: "Simula comprar 10 EUR contra asks y vender la cantidad adquirida contra bids, con 0,40 % de comisión taker por lado.",
-      eligibility: "Solo mantiene candidatos cuyo libro cubre ambas patas y cuyo rango de 24 h supera al menos 2,25 veces el coste inmediato.",
+      immediateRoundTrip: "Simula comprar 10 EUR contra asks y vender la cantidad adquirida contra bids, con el modelo de comisiones PAPER configurado.",
+      eligibility: "Solo mantiene candidatos cuyo libro cubre ambas patas y cuyo rango de 24 h supera holgadamente el coste inmediato.",
       guarantee: "Una lectura favorable no garantiza beneficio y solo autoriza investigación PAPER.",
     },
     eligibleForLiveReview: false,
@@ -223,8 +227,17 @@ async function runResearchLab(env: Env): Promise<Response> {
   });
 }
 
+async function forwardPilotRequest(request: Request, env: Env, targetPath: string): Promise<Response> {
+  const body = request.method === "GET" || request.method === "HEAD" ? null : await request.text();
+  return liveExecutorState(env).fetch(`https://live${targetPath}`, {
+    method: request.method,
+    headers: { "Content-Type": request.headers.get("Content-Type") ?? "application/json" },
+    body,
+  });
+}
+
 function technicalDashboard(): Response {
-  const html = `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Auto Bolsa AI · Técnico</title><style>:root{color-scheme:dark}body{font-family:-apple-system,BlinkMacSystemFont,sans-serif;background:#0b1020;color:#fff;margin:0;padding:20px}main{max-width:820px;margin:auto}.card{background:#151c32;border:1px solid #2b3659;border-radius:18px;padding:17px;margin:13px 0}.ok{color:#5ee6a8}.muted{color:#aeb8d4}pre{white-space:pre-wrap;word-break:break-word;font-size:12px;max-height:420px;overflow:auto}button,input,a{font:inherit;border-radius:12px}button,a{display:inline-block;padding:11px 13px;border:0;font-weight:700;margin:5px 5px 5px 0;background:#eef2ff;color:#10172c;text-decoration:none}input{width:100%;padding:12px;background:#0e1529;color:#fff;border:1px solid #405078;margin:7px 0;box-sizing:border-box}.grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}@media(max-width:560px){.grid{grid-template-columns:1fr}}</style></head><body><main><a href="/demo">← Volver al DEMO visual</a><h1>Panel técnico</h1><p class="ok">PAPER obligatorio · LIVE bloqueado</p><div class="card"><h2>Estados internos</h2><div class="grid"><button onclick="show('/api/lab','lab')">Laboratorio</button><button onclick="show('/api/readiness','readiness')">Readiness</button><button onclick="show('/api/status','status')">Motor principal</button><button onclick="show('/api/execution','execution')">Ejecución rápida</button></div><pre id="output">Pulsa una sección para ver el JSON.</pre></div><div class="card"><h2>Control privado</h2><p class="muted">El token solo permanece en esta pestaña.</p><input id="token" type="password" autocomplete="off" placeholder="ADMIN_TOKEN"><div class="grid"><button onclick="admin('/api/tick','POST')">Ciclo principal</button><button onclick="admin('/api/lab/run','POST')">Ciclo laboratorio</button><button onclick="admin('/api/execution/refresh','POST')">Actualizar ejecución</button><button onclick="admin('/api/markets/refresh','POST')">Actualizar mercados</button><button onclick="admin('/api/signals','GET')">Señales</button><button onclick="admin('/api/checkpoints','GET')">Registro diario</button><button onclick="admin('/api/kraken/connection','GET')">Conexión Kraken</button><button onclick="admin('/api/kraken/permissions','GET')">Permisos Kraken</button><button onclick="admin('/api/pause','POST')">Pausar</button><button onclick="admin('/api/resume','POST')">Reanudar</button></div><pre id="adminResult">Sin acciones.</pre></div><div class="card"><h2>Comparación local de credenciales</h2><p class="muted">Los valores se comparan en tu navegador mediante SHA-256 y no se envían.</p><input id="compareKey" type="password" autocomplete="off" placeholder="Clave pública"><input id="compareSecret" type="password" autocomplete="off" placeholder="Secreto privado"><button onclick="compareCredentials()">Comparar</button><pre id="compareResult">Sin comparación.</pre></div><script>async function show(path){const out=document.getElementById('output');out.textContent='Cargando…';try{const r=await fetch(path,{cache:'no-store'});out.textContent=JSON.stringify(await r.json(),null,2)}catch(e){out.textContent='Error de conexión'}}async function admin(path,method){const token=document.getElementById('token').value;const out=document.getElementById('adminResult');if(!token){out.textContent='Introduce primero el ADMIN_TOKEN.';return}out.textContent='Comprobando…';try{const r=await fetch(path,{method:method,headers:{Authorization:'Bearer '+token}});const text=await r.text();try{out.textContent=JSON.stringify(JSON.parse(text),null,2)}catch(e){out.textContent=text}}catch(e){out.textContent='Error de conexión'}}function normalizeLocal(value){return value.trim().replace(/[\\s\\u200B-\\u200D\\u2060\\uFEFF]/g,'')}async function sha256Prefix(value){const bytes=new TextEncoder().encode(normalizeLocal(value));const digest=new Uint8Array(await crypto.subtle.digest('SHA-256',bytes));return Array.from(digest.slice(0,8),function(b){return b.toString(16).padStart(2,'0')}).join('')}async function compareCredentials(){const token=document.getElementById('token').value;const key=document.getElementById('compareKey');const secret=document.getElementById('compareSecret');const out=document.getElementById('compareResult');if(!token||!key.value||!secret.value){out.textContent='Completa token, clave y secreto.';return}try{const r=await fetch('/api/kraken/fingerprints',{headers:{Authorization:'Bearer '+token}});const server=await r.json();const keyFingerprint=await sha256Prefix(key.value);const secretFingerprint=await sha256Prefix(secret.value);const both=keyFingerprint===server.apiKeyFingerprint&&secretFingerprint===server.apiSecretFingerprint;out.textContent=both?'Cloudflare contiene exactamente esta pareja.':'La pareja no coincide completamente.'}catch(e){out.textContent='No se pudo comparar.'}finally{key.value='';secret.value=''}}</script></main></body></html>`;
+  const html = `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Auto Bolsa AI · Técnico</title><style>:root{color-scheme:dark}body{font-family:-apple-system,BlinkMacSystemFont,sans-serif;background:#0b1020;color:#fff;margin:0;padding:20px}main{max-width:820px;margin:auto}.card{background:#151c32;border:1px solid #2b3659;border-radius:18px;padding:17px;margin:13px 0}.ok{color:#5ee6a8}.muted{color:#aeb8d4}pre{white-space:pre-wrap;word-break:break-word;font-size:12px;max-height:420px;overflow:auto}button,input,a{font:inherit;border-radius:12px}button,a{display:inline-block;padding:11px 13px;border:0;font-weight:700;margin:5px 5px 5px 0;background:#eef2ff;color:#10172c;text-decoration:none}input{width:100%;padding:12px;background:#0e1529;color:#fff;border:1px solid #405078;margin:7px 0;box-sizing:border-box}.grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}@media(max-width:560px){.grid{grid-template-columns:1fr}}</style></head><body><main><a href="/demo">← Volver al DEMO visual</a><h1>Panel técnico</h1><p class="ok">PAPER obligatorio · envío LIVE bloqueado</p><div class="card"><h2>Estados internos</h2><div class="grid"><button onclick="show('/api/lab')">Laboratorio</button><button onclick="show('/api/readiness')">Readiness</button><button onclick="show('/api/status')">Motor principal</button><button onclick="show('/api/execution')">Ejecución rápida</button></div><pre id="output">Pulsa una sección para ver el JSON.</pre></div><div class="card"><h2>Control privado</h2><p class="muted">El token solo permanece en esta pestaña.</p><input id="token" type="password" autocomplete="off" placeholder="ADMIN_TOKEN"><div class="grid"><button onclick="admin('/api/tick','POST')">Ciclo principal</button><button onclick="admin('/api/lab/run','POST')">Ciclo laboratorio</button><button onclick="admin('/api/execution/refresh','POST')">Actualizar ejecución</button><button onclick="admin('/api/markets/refresh','POST')">Actualizar mercados</button><button onclick="admin('/api/pilot/readiness','GET')">Preparación piloto</button><button onclick="admin('/api/pilot/refresh-kraken','POST')">Revalidar Kraken</button><button onclick="admin('/api/kraken/connection','GET')">Conexión Kraken</button><button onclick="admin('/api/kraken/permissions','GET')">Permisos Kraken</button><button onclick="admin('/api/pause','POST')">Pausar</button><button onclick="admin('/api/resume','POST')">Reanudar</button></div><pre id="adminResult">Sin acciones.</pre></div><script>async function show(path){const out=document.getElementById('output');out.textContent='Cargando…';try{const r=await fetch(path,{cache:'no-store'});out.textContent=JSON.stringify(await r.json(),null,2)}catch(e){out.textContent='Error de conexión'}}async function admin(path,method){const token=document.getElementById('token').value;const out=document.getElementById('adminResult');if(!token){out.textContent='Introduce primero el ADMIN_TOKEN.';return}out.textContent='Comprobando…';try{const r=await fetch(path,{method:method,headers:{Authorization:'Bearer '+token}});const text=await r.text();try{out.textContent=JSON.stringify(JSON.parse(text),null,2)}catch(e){out.textContent=text}}catch(e){out.textContent='Error de conexión'}}</script></main></body></html>`;
   return new Response(html, { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
 }
 
@@ -236,7 +249,7 @@ export default {
     if (request.method === "GET" && url.pathname === "/technical") return technicalDashboard();
     if (request.method === "GET" && url.pathname === "/health") {
       return new Response(
-        JSON.stringify({ ok: true, service: "auto-bolsa-ai", version: "0.17.0", mode: "paper", liveTrading: false }),
+        JSON.stringify({ ok: true, service: "auto-bolsa-ai", version: "0.18.0", mode: "paper", liveTrading: false, pilotExecutorBound: true, pilotSubmissionArmed: false }),
         { headers: jsonHeaders },
       );
     }
@@ -245,6 +258,44 @@ export default {
     if (request.method === "GET" && url.pathname === "/api/markets") return marketUniverse(env);
     if (request.method === "GET" && url.pathname === "/api/execution") return executionQuality(env);
     if (request.method === "GET" && url.pathname === "/api/lab") return researchLabSingleton(env).fetch("https://lab/status");
+
+    if (url.pathname.startsWith("/api/pilot")) {
+      if (!isAuthorized(request, env)) return new Response("Unauthorized", { status: 401 });
+
+      if (url.pathname === "/api/pilot/submit") {
+        return Response.json(
+          {
+            error: "PILOT_SUBMISSION_NOT_ARMED",
+            message: "El estado persistente y el preflight están disponibles, pero ninguna ruta pública puede enviar una orden real.",
+            liveTrading: false,
+          },
+          { status: 403 },
+        );
+      }
+      if (request.method === "GET" && url.pathname === "/api/pilot/readiness") {
+        return Response.json(await buildPilotRuntimeReadiness(env));
+      }
+      if (request.method === "POST" && url.pathname === "/api/pilot/refresh-kraken") {
+        await krakenSafetySummary(env, true);
+        return Response.json(await buildPilotRuntimeReadiness(env));
+      }
+      if (request.method === "GET" && url.pathname === "/api/pilot/status") {
+        return forwardPilotRequest(request, env, "/status");
+      }
+
+      const pilotActions: Record<string, string> = {
+        "/api/pilot/observe-market": "/observe-market",
+        "/api/pilot/prepare": "/prepare",
+        "/api/pilot/preflight": "/preflight",
+        "/api/pilot/reconcile": "/reconcile",
+        "/api/pilot/retry": "/retry",
+        "/api/pilot/emergency-cancel-all": "/emergency-cancel-all",
+        "/api/pilot/clear-emergency-stop": "/clear-emergency-stop",
+      };
+      const target = pilotActions[url.pathname];
+      if (request.method === "POST" && target) return forwardPilotRequest(request, env, target);
+      return new Response("Not found", { status: 404 });
+    }
 
     if (request.method === "POST" && url.pathname === "/api/lab/run") {
       if (!isAuthorized(request, env)) return new Response("Unauthorized", { status: 401 });
@@ -290,7 +341,7 @@ export default {
       return Response.json(
         {
           error: "LIVE_TRADING_HARD_DISABLED",
-          message: "La versión 0.17 solo permite simulación y exige evidencia pública reciente para cualquier entrada rápida PAPER.",
+          message: "Las rutas LIVE permanecen bloqueadas. El piloto solo permite estado, preparación y validación sin envío.",
         },
         { status: 403 },
       );

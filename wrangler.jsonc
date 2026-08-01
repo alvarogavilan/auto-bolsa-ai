@@ -17,6 +17,10 @@
       {
         "name": "RESEARCH_LAB",
         "class_name": "ResearchLabState"
+      },
+      {
+        "name": "LIVE_EXECUTOR",
+        "class_name": "LiveExecutorState"
       }
     ]
   },
@@ -28,6 +32,10 @@
     {
       "tag": "v2",
       "new_sqlite_classes": ["ResearchLabState"]
+    },
+    {
+      "tag": "v3",
+      "new_sqlite_classes": ["LiveExecutorState"]
     }
   ],
   "triggers": {
