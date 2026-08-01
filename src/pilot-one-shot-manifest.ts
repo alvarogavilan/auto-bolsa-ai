@@ -83,19 +83,28 @@ export async function buildPilotOneShotManifest(
   const certificate = record(readiness.preflightCertificate);
   const effectiveFees = record(connection.effectiveFees);
   const taker = record(effectiveFees.taker);
+  const kraken = record(readiness.kraken);
+  const connectionSummary = record(kraken.connection);
 
   const clOrdId = text(rawOrder.clOrdId);
   const pair = text(rawOrder.pair);
   const sideRaw = text(rawOrder.side);
-  const side = sideRaw === "buy" || sideRaw === "sell" ? sideRaw : null;
+  const side: "buy" | "sell" | null = sideRaw === "buy" || sideRaw === "sell"
+    ? sideRaw
+    : null;
   const volumeBase = finite(rawOrder.volumeBase);
   const limitPrice = finite(rawOrder.limitPrice);
   const notionalEur = finite(rawOrder.notionalEur);
-  const order = clOrdId && pair && side && volumeBase !== null && limitPrice !== null && notionalEur !== null
+  const order: PilotOneShotManifest["order"] = clOrdId
+    && pair
+    && side
+    && volumeBase !== null
+    && limitPrice !== null
+    && notionalEur !== null
     ? { clOrdId, pair, side, volumeBase, limitPrice, notionalEur }
     : null;
 
-  const eurBalance = finite(account.eurBalance) ?? finite(record(readiness.kraken).connection && record(record(readiness.kraken).connection).eurBalance);
+  const eurBalance = finite(account.eurBalance) ?? finite(connectionSummary.eurBalance);
   const takerFeePercent = finite(taker.percent);
   const takerRate = takerFeePercent === null ? null : takerFeePercent / 100;
   const estimatedRoundTripFeeEur = order && takerRate !== null
