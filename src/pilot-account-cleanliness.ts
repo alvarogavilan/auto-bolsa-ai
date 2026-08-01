@@ -2,6 +2,10 @@ import {
   KrakenReadOnlyAccountGateway,
   type KrakenAccountCleanlinessAudit,
 } from "./live-order-preflight";
+import {
+  acquireKrakenPrivateLease,
+  releaseKrakenPrivateLease,
+} from "./kraken-private-lease";
 import { BOT_STATE_SINGLETON_NAME, type Env } from "./types";
 
 const CACHE_TTL_SECONDS = 10 * 60;
@@ -47,19 +51,27 @@ export async function auditPilotAccountCleanliness(
     if (cached) return cached.json<KrakenAccountCleanlinessAudit>();
   }
 
-  const gateway = new KrakenReadOnlyAccountGateway(
-    env.KRAKEN_API_KEY,
-    env.KRAKEN_API_SECRET,
-    () => nextSharedNonce(env),
+  const leaseId = await acquireKrakenPrivateLease(
+    env,
+    `account-cleanliness:${crypto.randomUUID()}`,
   );
-  const audit = await gateway.audit();
-  await cache.put(
-    key,
-    Response.json(audit, {
-      headers: { "Cache-Control": `private, max-age=${CACHE_TTL_SECONDS}` },
-    }),
-  );
-  return audit;
+  try {
+    const gateway = new KrakenReadOnlyAccountGateway(
+      env.KRAKEN_API_KEY,
+      env.KRAKEN_API_SECRET,
+      () => nextSharedNonce(env),
+    );
+    const audit = await gateway.audit();
+    await cache.put(
+      key,
+      Response.json(audit, {
+        headers: { "Cache-Control": `private, max-age=${CACHE_TTL_SECONDS}` },
+      }),
+    );
+    return audit;
+  } finally {
+    await releaseKrakenPrivateLease(env, leaseId).catch(() => undefined);
+  }
 }
 
 export function applyAccountCleanlinessToReadiness(
