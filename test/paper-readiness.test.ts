@@ -136,4 +136,15 @@ describe("paper readiness gate", () => {
     expect(result.checks.drawdownAccepted).toBe(false);
     expect(result.eligibleForLiveReview).toBe(false);
   });
+
+  it("exposes successfulTickAttempts so it never appears lower than errorsObserved implies", () => {
+    const result = calculatePaperReadiness(
+      snapshot({ ticksObserved: 0, errorsObserved: 5 }),
+      15 * DAY,
+    );
+
+    expect(result.successfulTickAttempts).toBe(0);
+    expect(result.errorsObserved).toBe(5);
+    expect(result.errorRatePct).toBe(100);
+  });
 });
