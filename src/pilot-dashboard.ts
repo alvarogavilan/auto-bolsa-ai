@@ -56,9 +56,6 @@ export async function pilotDashboard(): Promise<Response> {
     "    renderKraken(data.kraken);\n    renderKrakenFees(data.kraken);\n    renderMarket(data);",
   );
 
-  const script = html.match(/<script>([\s\S]*?)<\/script>/)?.[1] ?? "";
-  new Function(script);
-
   return new Response(html, {
     headers: {
       "Content-Type": "text/html; charset=utf-8",
