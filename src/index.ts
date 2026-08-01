@@ -344,6 +344,12 @@ export default {
     if (request.method === "GET" && url.pathname === "/api/markets") return marketUniverse(env);
     if (request.method === "GET" && url.pathname === "/api/execution") return executionQuality(env);
     if (request.method === "GET" && url.pathname === "/api/lab") return researchLabSingleton(env).fetch("https://lab/status");
+    // Misma fuente de solo lectura que el `/api/signals` administrativo (sin
+    // credenciales ni llamadas a Kraken: es el diario de señales PAPER ya
+    // grabado por el motor principal), expuesta sin token para que el DEMO
+    // pueda mostrar una cronología completa de decisiones. No cambia cuándo
+    // ni cómo se registra o decide nada.
+    if (request.method === "GET" && url.pathname === "/api/decisions") return singleton(env).fetch("https://bot/signals");
 
     if (url.pathname.startsWith("/api/pilot")) {
       if (!isAuthorized(request, env)) return new Response("Unauthorized", { status: 401 });
