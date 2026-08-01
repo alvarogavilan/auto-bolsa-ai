@@ -11,7 +11,7 @@ import {
   summarizeResearchLab,
   type FastEntryGate,
   type ResearchLabState as StoredResearchLabState,
-} from "./research-lab";
+} from "./research-lab-adaptive";
 import { buildShadowLiveDemo } from "./shadow-live-demo";
 import {
   buildBenchmarkComparison,
