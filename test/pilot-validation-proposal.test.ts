@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { buildPilotValidationProposal } from "../src/pilot-validation-proposal";
+import {
+  buildPilotValidationProposal,
+  type PilotValidationProposalDependencies,
+} from "../src/pilot-validation-proposal";
 
 const NOW = 1_800_000_000_000;
 const resolution = {
@@ -42,7 +45,9 @@ function safety(balance: number) {
   };
 }
 
-function dependencies(overrides: Record<string, unknown> = {}) {
+function dependencies(
+  overrides: Partial<PilotValidationProposalDependencies> = {},
+): PilotValidationProposalDependencies {
   return {
     safety: safety(10),
     openOrderCount: 0,
