@@ -35,7 +35,7 @@ describe("GET /api/demo", () => {
 
   it("mantiene Durable Objects, cron y Worker original mediante wrapper", () => {
     expect(source).toContain("export { BotState, ResearchLabState, LiveExecutorState }");
-    expect(source).toContain("return worker.fetch(request, env, ctx)");
+    expect(source).toContain("return worker.fetch(request, env)");
     expect(source).toContain("return worker.scheduled(controller, env, ctx)");
     expect(wrangler).toContain('"main": "src/index-api-demo.ts"');
     expect(wrangler).toContain('"TRADING_MODE": "paper"');
