@@ -445,11 +445,19 @@ export default {
   },
 
   async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+    // El motor de un solo par se ejecuta primero y hasta el final antes de
+    // arrancar el laboratorio: `runResearchLab` puede lanzar hasta 5 llamadas
+    // públicas simultáneas a Kraken (coste de ejecución) además de las de
+    // escaneo de mercado, y ejecutarlas en paralelo con el propio tick del
+    // motor principal competía por el mismo cupo de peticiones públicas de
+    // Kraken, elevando su tasa de error muy por encima de lo esperado. El
+    // laboratorio sigue siendo fail-open: un fallo suyo nunca bloquea al
+    // motor principal, que ya se completó antes.
     ctx.waitUntil(
-      Promise.all([
-        singleton(env).fetch("https://bot/tick", { method: "POST" }).then(() => undefined),
-        runResearchLab(env).then(() => undefined).catch(() => undefined),
-      ]).then(() => undefined),
+      singleton(env).fetch("https://bot/tick", { method: "POST" })
+        .catch(() => undefined)
+        .then(() => runResearchLab(env).catch(() => undefined))
+        .then(() => undefined),
     );
   },
 };
