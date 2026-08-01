@@ -20,28 +20,30 @@ describe("validate-only preflight isolation in the persistent pilot", () => {
   });
 
   it("deploys validate-only preparation without exposing any submission path", () => {
-    const index = read("src/index.ts");
+    const wrapper = read("src/index.ts");
+    const indexCore = read("src/index-core.ts");
     const wrangler = read("wrangler.jsonc");
 
-    expect(index).toMatch(/from\s*["']\.\/live-executor-state["']/);
-    expect(index).toMatch(/export\s*\{[^}]*LiveExecutorState/s);
-    expect(index).toContain('"/api/pilot/preflight": "/preflight"');
-    expect(index).toContain('url.pathname === "/api/pilot/submit"');
-    expect(index).toContain("PILOT_SUBMISSION_NOT_ARMED");
-    expect(index).toMatch(/url\.pathname\.startsWith\(["']\/api\/live["']\)/);
-    expect(index).toMatch(/LIVE_TRADING_HARD_DISABLED/);
+    expect(indexCore).toMatch(/from\s*["']\.\/live-executor-state["']/);
+    expect(wrapper).toMatch(/export\s*\{[^}]*LiveExecutorState/s);
+    expect(indexCore).toContain('"/api/pilot/preflight": "/preflight"');
+    expect(indexCore).toContain('url.pathname === "/api/pilot/submit"');
+    expect(indexCore).toContain("PILOT_SUBMISSION_NOT_ARMED");
+    expect(indexCore).toMatch(/url\.pathname\.startsWith\(["']\/api\/live["']\)/);
+    expect(indexCore).toMatch(/LIVE_TRADING_HARD_DISABLED/);
 
-    const actionMapStart = index.indexOf("const pilotActions");
-    const actionMapEnd = index.indexOf("const target", actionMapStart);
-    expect(index.slice(actionMapStart, actionMapEnd)).not.toContain('"/api/pilot/submit"');
+    const actionMapStart = indexCore.indexOf("const pilotActions");
+    const actionMapEnd = indexCore.indexOf("const target", actionMapStart);
+    expect(indexCore.slice(actionMapStart, actionMapEnd)).not.toContain('"/api/pilot/submit"');
 
     expect(wrangler).toMatch(/LIVE_EXECUTOR/);
     expect(wrangler).toMatch(/LiveExecutorState/);
     expect(wrangler).not.toMatch(/LIVE_TRADING_ENABLED/);
     expect(wrangler).toMatch(/["']TRADING_MODE["']\s*:\s*["']paper["']/);
 
-    const scheduled = index.slice(index.indexOf("async scheduled"));
+    const scheduled = indexCore.slice(indexCore.indexOf("async scheduled"));
     expect(scheduled).not.toContain("liveExecutorState(");
     expect(scheduled).not.toContain("/api/pilot");
+    expect(wrapper).toContain("return coreWorker.scheduled(controller, env, ctx)");
   });
 });
