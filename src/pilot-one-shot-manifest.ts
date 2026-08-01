@@ -31,6 +31,11 @@ export interface PilotOneShotManifest {
     certificateId: string | null;
     certificateExpiresAt: number | null;
   };
+  freshness: {
+    readiness: EvidenceFreshness;
+    account: EvidenceFreshness;
+    fireDrill: EvidenceFreshness;
+  };
   singleOrderOnly: true;
   requiresManualHumanAction: true;
   authorizationToken: null;
@@ -38,6 +43,54 @@ export interface PilotOneShotManifest {
   submitCapable: false;
   realOrderCreated: false;
   liveTrading: false;
+}
+
+/**
+ * Barreras de frescura monotónicas (hallazgo CTO, issue #83): sin esto, una
+ * auditoría de cuenta, un readiness o un simulacro obtenidos hace mucho
+ * tiempo podían sellarse dentro de un manifiesto nuevo sin que nada lo
+ * impidiera, dejando una ventana TOCTOU entre la evidencia y el sello. Todas
+ * las evidencias críticas se generan en la misma petición que construye el
+ * manifiesto (ver `src/index-fire-drill.ts`: `/api/pilot/one-shot-manifest`
+ * fuerza refresco de cuenta y ejecuta el simulacro en el momento), así que
+ * 30 s es conservador de sobra para el camino normal y sigue cerrando el
+ * hueco frente a una evidencia reutilizada o cacheada indebidamente.
+ */
+const MAX_READINESS_AGE_MS = 30_000;
+const MAX_ACCOUNT_CLEANLINESS_AGE_MS = 30_000;
+const MAX_FIRE_DRILL_AGE_MS = 30_000;
+
+export interface EvidenceFreshness {
+  timestamp: number | null;
+  ageMs: number | null;
+  fresh: boolean;
+}
+
+interface FreshnessEvaluation extends EvidenceFreshness {
+  present: boolean;
+  future: boolean;
+}
+
+/**
+ * Sin tolerancia para evidencia futura: una marca temporal posterior a `now`
+ * solo puede deberse a un reloj desincronizado o a un dato manipulado, y en
+ * ambos casos debe bloquear, nunca aceptarse silenciosamente.
+ */
+function evaluateFreshness(value: number | null, now: number, maxAgeMs: number): FreshnessEvaluation {
+  if (value === null || !Number.isFinite(value)) {
+    return { present: false, future: false, timestamp: null, ageMs: null, fresh: false };
+  }
+  const ageMs = now - value;
+  if (ageMs < 0) {
+    return { present: true, future: true, timestamp: value, ageMs, fresh: false };
+  }
+  return { present: true, future: false, timestamp: value, ageMs, fresh: ageMs <= maxAgeMs };
+}
+
+/** Nunca promete validez futura para una evidencia ausente, inválida o futura. */
+function evidenceDeadline(evaluation: FreshnessEvaluation, maxAgeMs: number, now: number): number {
+  if (!evaluation.present || evaluation.future || evaluation.timestamp === null) return now;
+  return evaluation.timestamp + maxAgeMs;
 }
 
 function record(value: unknown): Record<string, unknown> {
@@ -123,6 +176,11 @@ export async function buildPilotOneShotManifest(
   const firePassed = fireDrill.passed === true;
   const fireChecks = `${finite(fireDrill.passedChecks) ?? 0}/${finite(fireDrill.totalChecks) ?? 0}`;
   const accountClean = account.accountCleanForBaseline === true;
+
+  const readinessFreshness = evaluateFreshness(finite(readiness.generatedAt), now, MAX_READINESS_AGE_MS);
+  const accountFreshness = evaluateFreshness(finite(account.checkedAt), now, MAX_ACCOUNT_CLEANLINESS_AGE_MS);
+  const fireDrillFreshness = evaluateFreshness(finite(fireDrill.generatedAt), now, MAX_FIRE_DRILL_AGE_MS);
+
   const blockers: string[] = [];
 
   if (readiness.infrastructureEligibleForManualReview !== true) {
@@ -136,6 +194,19 @@ export async function buildPilotOneShotManifest(
   }
   if (certificateStatus !== "valid") blockers.push("El certificado validate=true no está vigente");
   if (certificateExpiresAt !== null && certificateExpiresAt <= now) blockers.push("El certificado validate=true ha caducado");
+
+  function pushFreshnessBlockers(evaluation: FreshnessEvaluation, label: string, maxAgeMs: number): void {
+    if (!evaluation.present) {
+      blockers.push(`${label}: falta una marca temporal válida`);
+    } else if (evaluation.future) {
+      blockers.push(`${label}: la marca temporal está en el futuro`);
+    } else if (!evaluation.fresh) {
+      blockers.push(`${label}: evidencia obsoleta (más de ${Math.round(maxAgeMs / 1000)} s de antigüedad)`);
+    }
+  }
+  pushFreshnessBlockers(readinessFreshness, "El informe de preparación (readiness.generatedAt)", MAX_READINESS_AGE_MS);
+  pushFreshnessBlockers(accountFreshness, "La auditoría de cuenta (accountCleanliness.checkedAt)", MAX_ACCOUNT_CLEANLINESS_AGE_MS);
+  pushFreshnessBlockers(fireDrillFreshness, "El simulacro integral (fireDrill.generatedAt)", MAX_FIRE_DRILL_AGE_MS);
   if (takerFeePercent === null) blockers.push("La tarifa taker efectiva no está confirmada");
   if (!reserveSatisfied) blockers.push("El saldo EUR no conserva la reserva mínima para costes y salida");
   if (readiness.submissionEndpointAvailable !== false) blockers.push("La ruta de envío no consta como bloqueada");
@@ -168,12 +239,26 @@ export async function buildPilotOneShotManifest(
       estimatedRoundTripFeeEur,
       minimumReservedEur,
     },
+    freshness: {
+      readiness: { timestamp: readinessFreshness.timestamp, ageMs: readinessFreshness.ageMs, fresh: readinessFreshness.fresh },
+      account: { timestamp: accountFreshness.timestamp, ageMs: accountFreshness.ageMs, fresh: accountFreshness.fresh },
+      fireDrill: { timestamp: fireDrillFreshness.timestamp, ageMs: fireDrillFreshness.ageMs, fresh: fireDrillFreshness.fresh },
+    },
   };
   const payloadHashSha256 = await sha256Hex(payload);
   const defaultExpiry = now + 2 * 60_000;
-  const expiresAt = certificateExpiresAt === null
-    ? defaultExpiry
-    : Math.min(defaultExpiry, certificateExpiresAt);
+  // El manifiesto nunca promete validez más allá del vencimiento por
+  // frescura de ninguna evidencia crítica, ni del propio certificado.
+  const readinessDeadline = evidenceDeadline(readinessFreshness, MAX_READINESS_AGE_MS, now);
+  const accountDeadline = evidenceDeadline(accountFreshness, MAX_ACCOUNT_CLEANLINESS_AGE_MS, now);
+  const fireDrillDeadline = evidenceDeadline(fireDrillFreshness, MAX_FIRE_DRILL_AGE_MS, now);
+  const expiresAt = Math.min(
+    defaultExpiry,
+    certificateExpiresAt ?? defaultExpiry,
+    readinessDeadline,
+    accountDeadline,
+    fireDrillDeadline,
+  );
 
   return {
     schemaVersion: "pilot-one-shot-manifest-v1",
@@ -200,6 +285,11 @@ export async function buildPilotOneShotManifest(
       certificateStatus,
       certificateId,
       certificateExpiresAt,
+    },
+    freshness: {
+      readiness: { timestamp: readinessFreshness.timestamp, ageMs: readinessFreshness.ageMs, fresh: readinessFreshness.fresh },
+      account: { timestamp: accountFreshness.timestamp, ageMs: accountFreshness.ageMs, fresh: accountFreshness.fresh },
+      fireDrill: { timestamp: fireDrillFreshness.timestamp, ageMs: fireDrillFreshness.ageMs, fresh: fireDrillFreshness.fresh },
     },
     singleOrderOnly: true,
     requiresManualHumanAction: true,

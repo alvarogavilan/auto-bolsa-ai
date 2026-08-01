@@ -68,7 +68,11 @@ describe("pilot one-shot manifest", () => {
     expect(manifest.manifestId).toHaveLength(24);
     expect(manifest.payloadHashSha256).toMatch(/^[0-9a-f]{64}$/);
     expect(manifest.generatedAt).toBe(NOW);
-    expect(manifest.expiresAt).toBe(NOW + 90_000);
+    // El vencimiento por frescura de readiness.generatedAt (NOW - 1_000 + 30 s
+    // de tolerancia) es ahora más estricto que el del certificado (NOW + 90 s):
+    // el manifiesto nunca puede prometer validez más allá de la evidencia más
+    // próxima a caducar (issue #83).
+    expect(manifest.expiresAt).toBe(NOW - 1_000 + 30_000);
     expect(manifest.order).toEqual({
       clOrdId: "pilot-order-1",
       pair: "XBTEUR",
@@ -282,5 +286,191 @@ describe("pilot one-shot manifest", () => {
     expect(core).toContain("PILOT_SUBMISSION_NOT_ARMED");
     expect(core).toContain('url.pathname.startsWith("/api/live")');
     expect(core).toContain("LIVE_TRADING_HARD_DISABLED");
+  });
+});
+
+describe("pilot one-shot manifest: evidence freshness barriers (issue #83)", () => {
+  it("Pruebas obligatorias #1: is eligible when every evidence timestamp was just generated", async () => {
+    const manifest = await buildPilotOneShotManifest(readiness({
+      generatedAt: NOW - 1_000,
+      accountCleanliness: {
+        schemaVersion: "kraken-account-cleanliness-v1",
+        accountCleanForBaseline: true,
+        checkedAt: NOW - 100,
+        eurBalance: 10,
+        nonEurAssetCount: 0,
+        openOrderCount: 0,
+      },
+      fireDrill: { passed: true, passedChecks: 6, totalChecks: 6, generatedAt: NOW - 50 },
+    }), connection(), NOW);
+
+    expect(manifest.eligibleForHumanArming).toBe(true);
+    expect(manifest.blockers).toEqual([]);
+    expect(manifest.freshness.readiness.fresh).toBe(true);
+    expect(manifest.freshness.account.fresh).toBe(true);
+    expect(manifest.freshness.fireDrill.fresh).toBe(true);
+    expect(manifest.freshness.account.ageMs).toBe(100);
+  });
+
+  it("Pruebas obligatorias #2: blocks a stale account cleanliness audit", async () => {
+    const manifest = await buildPilotOneShotManifest(readiness({
+      accountCleanliness: {
+        schemaVersion: "kraken-account-cleanliness-v1",
+        accountCleanForBaseline: true,
+        checkedAt: NOW - 31_000,
+        eurBalance: 10,
+        nonEurAssetCount: 0,
+        openOrderCount: 0,
+      },
+    }), connection(), NOW);
+
+    expect(manifest.eligibleForHumanArming).toBe(false);
+    expect(manifest.freshness.account.fresh).toBe(false);
+    expect(manifest.blockers.some((blocker) => blocker.includes("auditoría de cuenta") && blocker.includes("obsoleta"))).toBe(true);
+  });
+
+  it("Pruebas obligatorias #3: blocks a stale readiness report", async () => {
+    const manifest = await buildPilotOneShotManifest(readiness({
+      generatedAt: NOW - 45_000,
+    }), connection(), NOW);
+
+    expect(manifest.eligibleForHumanArming).toBe(false);
+    expect(manifest.freshness.readiness.fresh).toBe(false);
+    expect(manifest.blockers.some((blocker) => blocker.includes("informe de preparación") && blocker.includes("obsoleta"))).toBe(true);
+  });
+
+  it("Pruebas obligatorias #4: blocks a stale fire drill", async () => {
+    const manifest = await buildPilotOneShotManifest(readiness({
+      fireDrill: { passed: true, passedChecks: 6, totalChecks: 6, generatedAt: NOW - 60_000 },
+    }), connection(), NOW);
+
+    expect(manifest.eligibleForHumanArming).toBe(false);
+    expect(manifest.freshness.fireDrill.fresh).toBe(false);
+    expect(manifest.blockers.some((blocker) => blocker.includes("simulacro integral") && blocker.includes("obsoleta"))).toBe(true);
+  });
+
+  it("Pruebas obligatorias #5: blocks a missing timestamp for any of the three evidences", async () => {
+    const missingReadiness = await buildPilotOneShotManifest(readiness({ generatedAt: undefined }), connection(), NOW);
+    const missingAccount = await buildPilotOneShotManifest(readiness({
+      accountCleanliness: {
+        schemaVersion: "kraken-account-cleanliness-v1",
+        accountCleanForBaseline: true,
+        eurBalance: 10,
+        nonEurAssetCount: 0,
+        openOrderCount: 0,
+      },
+    }), connection(), NOW);
+    const missingFireDrill = await buildPilotOneShotManifest(readiness({
+      fireDrill: { passed: true, passedChecks: 6, totalChecks: 6 },
+    }), connection(), NOW);
+
+    for (const manifest of [missingReadiness, missingAccount, missingFireDrill]) {
+      expect(manifest.eligibleForHumanArming).toBe(false);
+      expect(manifest.blockers.some((blocker) => blocker.includes("falta una marca temporal válida"))).toBe(true);
+    }
+  });
+
+  it("Pruebas obligatorias #5: blocks an invalid (non-numeric) timestamp", async () => {
+    const manifest = await buildPilotOneShotManifest(readiness({
+      accountCleanliness: {
+        schemaVersion: "kraken-account-cleanliness-v1",
+        accountCleanForBaseline: true,
+        checkedAt: "not-a-timestamp",
+        eurBalance: 10,
+        nonEurAssetCount: 0,
+        openOrderCount: 0,
+      },
+    }), connection(), NOW);
+
+    expect(manifest.eligibleForHumanArming).toBe(false);
+    expect(manifest.freshness.account.timestamp).toBeNull();
+    expect(manifest.blockers.some((blocker) => blocker.includes("auditoría de cuenta") && blocker.includes("falta una marca temporal válida"))).toBe(true);
+  });
+
+  it("Pruebas obligatorias #5: blocks a future timestamp for any of the three evidences, with zero tolerance", async () => {
+    const futureReadiness = await buildPilotOneShotManifest(readiness({ generatedAt: NOW + 1 }), connection(), NOW);
+    const futureAccount = await buildPilotOneShotManifest(readiness({
+      accountCleanliness: {
+        schemaVersion: "kraken-account-cleanliness-v1",
+        accountCleanForBaseline: true,
+        checkedAt: NOW + 1,
+        eurBalance: 10,
+        nonEurAssetCount: 0,
+        openOrderCount: 0,
+      },
+    }), connection(), NOW);
+    const futureFireDrill = await buildPilotOneShotManifest(readiness({
+      fireDrill: { passed: true, passedChecks: 6, totalChecks: 6, generatedAt: NOW + 1 },
+    }), connection(), NOW);
+
+    for (const manifest of [futureReadiness, futureAccount, futureFireDrill]) {
+      expect(manifest.eligibleForHumanArming).toBe(false);
+      expect(manifest.blockers.some((blocker) => blocker.includes("está en el futuro"))).toBe(true);
+    }
+  });
+
+  it("Pruebas obligatorias #6: expiresAt never exceeds the deadline of the nearest evidence, even when the certificate lasts longer", async () => {
+    const manifest = await buildPilotOneShotManifest(readiness({
+      generatedAt: NOW - 29_000, // vence en NOW + 1_000: el más próximo de todos
+      accountCleanliness: {
+        schemaVersion: "kraken-account-cleanliness-v1",
+        accountCleanForBaseline: true,
+        checkedAt: NOW - 1_000,
+        eurBalance: 10,
+        nonEurAssetCount: 0,
+        openOrderCount: 0,
+      },
+      fireDrill: { passed: true, passedChecks: 6, totalChecks: 6, generatedAt: NOW - 1_000 },
+      preflightCertificate: { status: "valid", certificateId: "certificate-1", expiresAt: NOW + 10 * 60_000 },
+    }), connection(), NOW);
+
+    expect(manifest.eligibleForHumanArming).toBe(true);
+    expect(manifest.expiresAt).toBe(NOW + 1_000);
+  });
+
+  it("Pruebas obligatorias #6: never promises future validity for evidence that is already invalid", async () => {
+    const manifest = await buildPilotOneShotManifest(readiness({
+      generatedAt: NOW + 5_000, // futuro: no se le puede prometer ningún vencimiento futuro
+    }), connection(), NOW);
+
+    expect(manifest.eligibleForHumanArming).toBe(false);
+    expect(manifest.expiresAt).toBeLessThanOrEqual(NOW);
+  });
+
+  it("changes the seal when only freshness/age changes, even if every other field stays identical", async () => {
+    const fresh = await buildPilotOneShotManifest(readiness(), connection(), NOW);
+    const staleAccount = await buildPilotOneShotManifest(readiness({
+      accountCleanliness: {
+        schemaVersion: "kraken-account-cleanliness-v1",
+        accountCleanForBaseline: true,
+        checkedAt: NOW - 20_000,
+        eurBalance: 10,
+        nonEurAssetCount: 0,
+        openOrderCount: 0,
+      },
+    }), connection(), NOW);
+
+    expect(staleAccount.payloadHashSha256).not.toBe(fresh.payloadHashSha256);
+  });
+
+  it("Pruebas obligatorias #7: does not change /api/pilot/submit, /api/live*, cron, strategy or secrets", () => {
+    const core = readFileSync(join(ROOT, "src/index.ts"), "utf8");
+    const scheduled = core.slice(core.indexOf("async scheduled"));
+
+    expect(core).toContain('url.pathname === "/api/pilot/submit"');
+    expect(core).toContain("PILOT_SUBMISSION_NOT_ARMED");
+    expect(core).toContain('url.pathname.startsWith("/api/live")');
+    expect(core).toContain("LIVE_TRADING_HARD_DISABLED");
+    expect(scheduled).not.toContain("liveExecutorState(");
+    expect(scheduled).not.toContain("/api/pilot");
+    expect(scheduled).not.toContain("buildPilotOneShotManifest");
+
+    const manifestSource = readFileSync(join(ROOT, "src/pilot-one-shot-manifest.ts"), "utf8");
+    expect(manifestSource).toContain("submitCapable: false");
+    expect(manifestSource).toContain("realOrderCreated: false");
+    expect(manifestSource).toContain("liveTrading: false");
+    expect(manifestSource).not.toMatch(/LIVE_TRADING_ENABLED\s*[:=]\s*(true|"true")/);
+    expect(manifestSource).not.toContain("KRAKEN_API_KEY");
+    expect(manifestSource).not.toContain("KRAKEN_API_SECRET");
   });
 });
