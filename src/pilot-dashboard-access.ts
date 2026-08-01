@@ -12,7 +12,7 @@ function replaceRequired(source: string, search: string, replacement: string): s
  * El token y el clOrdId preparado viven solo en sessionStorage de la pestaña.
  */
 export async function authenticatedPilotDashboard(): Promise<Response> {
-  const base = pilotDashboard();
+  const base = await pilotDashboard();
   let html = await base.text();
 
   html = replaceRequired(
@@ -212,6 +212,9 @@ export async function authenticatedPilotDashboard(): Promise<Response> {
     "loadPilot(false);setInterval(function(){loadPilot(false)},15000);",
     "restorePilotAuth();if(currentPilotToken()){refreshPilotSafetyChecks()}else{loadPilot(false)}setInterval(function(){if(currentPilotToken())loadPilot(false)},15000);",
   );
+
+  const script = html.match(/<script>([\s\S]*?)<\/script>/)?.[1] ?? "";
+  new Function(script);
 
   return new Response(html, {
     headers: {
