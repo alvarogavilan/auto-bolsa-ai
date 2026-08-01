@@ -14,7 +14,7 @@ function isAuthorized(request: Request, env: Env): boolean {
   return request.headers.get("Authorization") === `Bearer ${env.ADMIN_TOKEN}`;
 }
 
-async function enrichReadinessWithFireDrill(response: Response): Promise<Response> {
+export async function enrichReadinessWithFireDrill(response: Response): Promise<Response> {
   if (!response.ok) return response;
 
   let body: Record<string, unknown>;
