@@ -79,6 +79,7 @@ describe("validate-only preparation", () => {
       NOW,
     );
     expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected submit to remain blocked");
     expect(result.blockers).toContain("LIVE_TRADING_ENABLED no está activado");
     expect((await transport.listOpenOrders()).length).toBe(0);
     expect((await transport.listClosedOrders()).length).toBe(0);
