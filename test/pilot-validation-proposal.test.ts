@@ -31,6 +31,8 @@ function safety(balance: number) {
       connected: true,
       eurBalance: balance,
       nonZeroAssetCount: 1,
+      openOrderCount: 0,
+      accountClean: true,
       error: null,
     },
     permissions: {
@@ -96,7 +98,7 @@ describe("server-built validation proposal", () => {
     expect(() => buildPilotValidationProposal(dependencies({
       safety: {
         ...safety(10),
-        connection: { ...safety(10).connection, nonZeroAssetCount: 2 },
+        connection: { ...safety(10).connection, nonZeroAssetCount: 2, accountClean: false },
       },
       idempotencyKey: "existing-assets",
     }))).toThrow(/activos adicionales|inventario/i);
@@ -104,10 +106,28 @@ describe("server-built validation proposal", () => {
     expect(() => buildPilotValidationProposal(dependencies({
       safety: {
         ...safety(10),
-        connection: { ...safety(10).connection, nonZeroAssetCount: null },
+        connection: { ...safety(10).connection, nonZeroAssetCount: null, accountClean: false },
       },
       idempotencyKey: "unknown-assets",
     }))).toThrow(/inventario no es verificable/i);
+  });
+
+  it("blocks prior open orders and unverifiable open-order state", () => {
+    expect(() => buildPilotValidationProposal(dependencies({
+      safety: {
+        ...safety(10),
+        connection: { ...safety(10).connection, openOrderCount: 1, accountClean: false },
+      },
+      idempotencyKey: "existing-open-order",
+    }))).toThrow(/órdenes abiertas previas|cuenta Kraken no está limpia/i);
+
+    expect(() => buildPilotValidationProposal(dependencies({
+      safety: {
+        ...safety(10),
+        connection: { ...safety(10).connection, openOrderCount: null, accountClean: false },
+      },
+      idempotencyKey: "unknown-open-orders",
+    }))).toThrow(/No se pudo verificar.*órdenes abiertas/i);
   });
 
   it("blocks an abnormally wide public spread", () => {
