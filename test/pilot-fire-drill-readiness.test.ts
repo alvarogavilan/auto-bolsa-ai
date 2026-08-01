@@ -59,13 +59,15 @@ describe("pilot fire drill readiness gate", () => {
     expect(() => new Function(script)).not.toThrow();
   });
 
-  it("intercepts only readiness and refresh while preserving the original Worker", () => {
+  it("chains readiness through fire drill and account cleanliness", () => {
     const adapter = readFileSync(join(ROOT, "src/index-fire-drill.ts"), "utf8");
     const core = readFileSync(join(ROOT, "src/index.ts"), "utf8");
 
     expect(adapter).toContain('url.pathname === "/api/pilot/readiness"');
     expect(adapter).toContain('url.pathname === "/api/pilot/refresh-kraken"');
-    expect(adapter).toContain("enrichReadinessWithFireDrill(await coreWorker.fetch(request, env))");
+    expect(adapter).toContain("const base = await coreWorker.fetch(request, env)");
+    expect(adapter).toContain("const withFireDrill = await enrichReadinessWithFireDrill(base)");
+    expect(adapter).toContain("return enrichReadinessWithAccountCleanliness(");
     expect(core).toContain("PILOT_SUBMISSION_NOT_ARMED");
     expect(core).toContain("LIVE_TRADING_HARD_DISABLED");
   });
