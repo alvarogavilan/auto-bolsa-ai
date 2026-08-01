@@ -1,12 +1,19 @@
+import { canonicalKrakenFeePair } from "./kraken-fees";
 import { fetchAllTickers, type KrakenTicker } from "./kraken-markets";
 import { fetchLivePairResolution, type LivePairResolution } from "./live-pair-metadata";
 import type { LiveOrderRequest } from "./live-executor";
 import type { KrakenAccountCleanlinessAudit } from "./live-order-preflight";
 import { auditPilotAccountCleanliness } from "./pilot-account-cleanliness";
-import { krakenSafetySummary } from "./pilot-runtime";
+import {
+  fetchPilotValidationSafety,
+  type PilotValidationSafety,
+} from "./pilot-validation-safety";
 import type { Env } from "./types";
 
-const FEE_RESERVE_PCT = 0.01;
+const MIN_FEE_RESERVE_RATE = 0.01;
+const FEE_RESERVE_BUFFER_RATE = 0.0025;
+const MAX_EFFECTIVE_TAKER_RATE = 0.05;
+const MAX_FEE_AUDIT_AGE_MS = 15 * 60_000;
 const MAX_VALIDATION_NOTIONAL_EUR = 5;
 const MAX_BALANCE_ALLOCATION_PCT = 0.5;
 const MAX_VALIDATION_SPREAD_PCT = 0.01;
@@ -42,6 +49,45 @@ function findTicker(
   return null;
 }
 
+function effectiveFeeReserve(
+  safety: PilotValidationSafety,
+  pair: string,
+  now: number,
+): {
+  takerRate: number;
+  reserveRate: number;
+  checkedAt: number;
+} {
+  const audit = safety.connection.effectiveFees;
+  if (!audit) {
+    const reason = safety.connection.effectiveFeesError
+      ? `: ${safety.connection.effectiveFeesError}`
+      : "";
+    throw new Error(`La tarifa efectiva de Kraken no está disponible${reason}`);
+  }
+  if (!Number.isFinite(audit.checkedAt) || audit.checkedAt <= 0) {
+    throw new Error("La auditoría de tarifas Kraken no tiene una fecha válida");
+  }
+  if (audit.checkedAt > now + 60_000 || now - audit.checkedAt > MAX_FEE_AUDIT_AGE_MS) {
+    throw new Error("La auditoría de tarifas Kraken está caducada");
+  }
+  if (canonicalKrakenFeePair(audit.pairRequested) !== canonicalKrakenFeePair(pair)) {
+    throw new Error("La auditoría de tarifas no corresponde al par configurado");
+  }
+  const taker = audit.taker;
+  if (!taker || canonicalKrakenFeePair(taker.pair) !== canonicalKrakenFeePair(pair)) {
+    throw new Error("Kraken no devolvió una tarifa taker verificable para el par configurado");
+  }
+  if (!Number.isFinite(taker.rate) || taker.rate < 0 || taker.rate > MAX_EFFECTIVE_TAKER_RATE) {
+    throw new Error("La tarifa taker efectiva está fuera del rango de seguridad");
+  }
+  const reserveRate = Math.max(MIN_FEE_RESERVE_RATE, taker.rate + FEE_RESERVE_BUFFER_RATE);
+  if (!Number.isFinite(reserveRate) || reserveRate <= 0 || reserveRate >= 1) {
+    throw new Error("La reserva de comisión calculada es inválida");
+  }
+  return { takerRate: taker.rate, reserveRate, checkedAt: audit.checkedAt };
+}
+
 export interface PilotValidationProposal {
   schemaVersion: "pilot-validation-proposal-v1";
   generatedAt: number;
@@ -56,7 +102,10 @@ export interface PilotValidationProposal {
   orderMinBase: number;
   eurBalance: number;
   grossBudgetEur: number;
+  effectiveTakerFeeRate: number;
+  feeReserveBufferRate: number;
   feeReservePct: number;
+  feeAuditCheckedAt: number;
   request: LiveOrderRequest;
   validateOnly: true;
   realOrderCreated: false;
@@ -64,7 +113,7 @@ export interface PilotValidationProposal {
 }
 
 export interface PilotValidationProposalDependencies {
-  safety: Awaited<ReturnType<typeof krakenSafetySummary>>;
+  safety: PilotValidationSafety;
   accountAudit: KrakenAccountCleanlinessAudit;
   resolution: LivePairResolution;
   tickers: Record<string, KrakenTicker>;
@@ -73,7 +122,7 @@ export interface PilotValidationProposalDependencies {
   idempotencyKey: string;
 }
 
-/** Función pura y determinista para probar límites, cuantización y aliases. */
+/** Función pura y determinista para probar límites, cuantización, costes y aliases. */
 export function buildPilotValidationProposal(
   dependencies: PilotValidationProposalDependencies,
 ): PilotValidationProposal {
@@ -105,6 +154,7 @@ export function buildPilotValidationProposal(
   }
   if (!idempotencyKey.trim()) throw new Error("Falta idempotencyKey del servidor");
 
+  const fee = effectiveFeeReserve(safety, pair, now);
   const match = findTicker(tickers, resolution);
   if (!match) throw new Error(`No existe ticker público reciente para ${pair}`);
   const { ticker } = match;
@@ -121,7 +171,7 @@ export function buildPilotValidationProposal(
 
   const limitPrice = ceilToDecimals(ticker.ask, resolution.metadata.priceDecimals);
   const grossBudgetEur = Math.min(MAX_VALIDATION_NOTIONAL_EUR, (eurBalance as number) * MAX_BALANCE_ALLOCATION_PCT);
-  const spendableEur = grossBudgetEur * (1 - FEE_RESERVE_PCT);
+  const spendableEur = grossBudgetEur * (1 - fee.reserveRate);
   const volumeBase = floorToDecimals(spendableEur / limitPrice, resolution.metadata.lotDecimals);
   if (volumeBase < resolution.metadata.orderMinBase) {
     throw new Error(
@@ -147,7 +197,10 @@ export function buildPilotValidationProposal(
     orderMinBase: resolution.metadata.orderMinBase,
     eurBalance: eurBalance as number,
     grossBudgetEur: money(grossBudgetEur),
-    feeReservePct: FEE_RESERVE_PCT,
+    effectiveTakerFeeRate: fee.takerRate,
+    feeReserveBufferRate: FEE_RESERVE_BUFFER_RATE,
+    feeReservePct: fee.reserveRate,
+    feeAuditCheckedAt: fee.checkedAt,
     request: {
       idempotencyKey,
       pair,
@@ -169,10 +222,10 @@ export async function buildPilotValidationProposalFromKraken(
 ): Promise<PilotValidationProposal> {
   const pair = env.PAIR || "XBTEUR";
 
-  // Las lecturas privadas son deliberadamente secuenciales. Cada capa obtiene
-  // sus nonces de BotState y termina antes de iniciar la siguiente, evitando
-  // que una respuesta con nonce superior llegue a Kraken antes que otra.
-  const safety = await krakenSafetySummary(env, true);
+  // Todas las lecturas privadas son secuenciales. La primera conexión obtiene
+  // también la tarifa efectiva; después se auditan permisos y limpieza de
+  // cuenta bajo la concesión global. Solo mercado público se paraleliza.
+  const safety = await fetchPilotValidationSafety(env);
   const accountAudit = await auditPilotAccountCleanliness(env, true);
   const [resolution, tickers] = await Promise.all([
     fetchLivePairResolution(pair),
