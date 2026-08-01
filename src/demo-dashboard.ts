@@ -1,5 +1,5 @@
-import { forwardDemoDashboard } from "./demo-dashboard-forward";
+import { evidenceDemoDashboard } from "./demo-dashboard-evidence";
 
 export function demoDashboard(): Promise<Response> {
-  return forwardDemoDashboard();
+  return evidenceDemoDashboard();
 }
