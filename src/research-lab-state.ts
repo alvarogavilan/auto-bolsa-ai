@@ -115,7 +115,7 @@ export class ResearchLabState extends BaseResearchLabState {
 
     let impact = safeImpact.impact;
     let impactError = safeImpact.error;
-    let evidence = applyPaperEvidenceSnapshot(safeEvidence.ledger, currentStrategies, now);
+    const evidence = applyPaperEvidenceSnapshot(safeEvidence.ledger, currentStrategies, now);
     let evidenceError = safeEvidence.error;
 
     if (shouldPersistSnapshot && payload.initialized === true && currentStrategies.length > 0) {
@@ -175,6 +175,7 @@ export class ResearchLabState extends BaseResearchLabState {
     const response = await super.fetch(request);
 
     if (request.method === "POST" && url.pathname === "/reset") {
+      // Un fallo del ledger shadow no debe revertirlo.
       await Promise.allSettled([
         this.auxiliaryStorage.delete(COMMITTEE_IMPACT_KEY),
         this.auxiliaryStorage.delete(PAPER_EVIDENCE_KEY),
