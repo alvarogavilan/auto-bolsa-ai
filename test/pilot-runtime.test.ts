@@ -3,7 +3,8 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const ROOT = process.cwd();
-const indexSource = () => readFileSync(join(ROOT, "src/index.ts"), "utf8");
+const wrapperSource = () => readFileSync(join(ROOT, "src/index.ts"), "utf8");
+const indexCoreSource = () => readFileSync(join(ROOT, "src/index-core.ts"), "utf8");
 const wranglerSource = () => readFileSync(join(ROOT, "wrangler.jsonc"), "utf8");
 const typesSource = () => readFileSync(join(ROOT, "src/types.ts"), "utf8");
 const runtimeSource = () => readFileSync(join(ROOT, "src/pilot-runtime.ts"), "utf8");
@@ -22,22 +23,24 @@ describe("pilot runtime remains fail-closed", () => {
   });
 
   it("exports the Durable Object but does not invoke it from the cron", () => {
-    const index = indexSource();
-    expect(index).toContain("export { BotState, ResearchLabState, LiveExecutorState }");
-    const scheduled = index.slice(index.indexOf("async scheduled"));
+    const wrapper = wrapperSource();
+    const indexCore = indexCoreSource();
+    expect(wrapper).toContain("export { BotState, ResearchLabState, LiveExecutorState }");
+    const scheduled = indexCore.slice(indexCore.indexOf("async scheduled"));
     expect(scheduled).not.toContain("liveExecutorState(");
     expect(scheduled).not.toContain("/api/pilot");
+    expect(wrapper).toContain("return coreWorker.scheduled(controller, env, ctx)");
   });
 
   it("hard-blocks the pilot submission route before forwarding actions", () => {
-    const index = indexSource();
-    const submitBlock = index.indexOf('url.pathname === "/api/pilot/submit"');
-    const actionMap = index.indexOf("const pilotActions");
+    const indexCore = indexCoreSource();
+    const submitBlock = indexCore.indexOf('url.pathname === "/api/pilot/submit"');
+    const actionMap = indexCore.indexOf("const pilotActions");
     expect(submitBlock).toBeGreaterThan(-1);
     expect(actionMap).toBeGreaterThan(submitBlock);
-    expect(index).toContain("PILOT_SUBMISSION_NOT_ARMED");
+    expect(indexCore).toContain("PILOT_SUBMISSION_NOT_ARMED");
 
-    const actionMapSource = index.slice(actionMap, index.indexOf("const target", actionMap));
+    const actionMapSource = indexCore.slice(actionMap, indexCore.indexOf("const target", actionMap));
     expect(actionMapSource).not.toContain('"/api/pilot/submit"');
     expect(actionMapSource).toContain('"/api/pilot/preflight": "/preflight"');
     expect(actionMapSource).toContain('"/api/pilot/reconcile": "/reconcile"');
@@ -48,19 +51,23 @@ describe("pilot runtime remains fail-closed", () => {
   });
 
   it("keeps all legacy /api/live routes hard-disabled", () => {
-    const index = indexSource();
-    expect(index).toContain('url.pathname.startsWith("/api/live")');
-    expect(index).toContain("LIVE_TRADING_HARD_DISABLED");
+    const indexCore = indexCoreSource();
+    expect(indexCore).toContain('url.pathname.startsWith("/api/live")');
+    expect(indexCore).toContain("LIVE_TRADING_HARD_DISABLED");
   });
 
   it("requires ADMIN_TOKEN for every pilot route", () => {
-    const index = indexSource();
-    const pilotSection = index.slice(
-      index.indexOf('url.pathname.startsWith("/api/pilot")'),
-      index.indexOf('url.pathname === "/api/lab/run"'),
+    const wrapper = wrapperSource();
+    const indexCore = indexCoreSource();
+    const pilotSection = indexCore.slice(
+      indexCore.indexOf('url.pathname.startsWith("/api/pilot")'),
+      indexCore.indexOf('url.pathname === "/api/lab/run"'),
     );
     expect(pilotSection).toContain("if (!isAuthorized(request, env))");
     expect(pilotSection).toContain("status: 401");
+    expect(wrapper).toContain('url.pathname === "/api/pilot/fire-drill"');
+    expect(wrapper).toContain("if (!isAuthorized(request, env))");
+    expect(wrapper).toContain("status: 401");
   });
 
   it("exposes only sanitized Kraken safety fields", () => {
