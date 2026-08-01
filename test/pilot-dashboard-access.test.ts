@@ -28,14 +28,30 @@ describe("authenticated pilot dashboard route", () => {
     expect(html).not.toContain("document.cookie");
   });
 
-  it("refreshes Kraken safety checks automatically after saving a token", async () => {
+  it("revalidates Kraken automatically when a saved session token is restored", async () => {
     const html = await (await authenticatedPilotDashboard()).text();
 
-    expect(html).toContain("refreshPilotSafetyChecks");
+    expect(html).toContain("Token restaurado. Revalidando conexión, saldo y permisos de Kraken");
+    expect(html).toContain("restorePilotAuth();if(currentPilotToken()){refreshPilotSafetyChecks()}");
     expect(html).toContain("authenticatedPilotPost('/api/pilot/refresh-kraken')");
-    expect(html).toContain("Conexión, saldo y permisos de Kraken actualizados");
-    expect(html).toContain("PILOT_SAFE_REFRESH_KEY");
-    expect(html).toContain("await refreshPilotSafetyChecks()");
+  });
+
+  it("marks Kraken ready only after authentication and safe permissions are both confirmed", async () => {
+    const html = await (await authenticatedPilotDashboard()).text();
+
+    expect(html).toContain("connection.connected===true&&permissions.auditComplete===true&&permissions.safePermissions===true");
+    expect(html).toContain("sessionStorage.setItem(PILOT_SAFE_REFRESH_KEY,'ready')");
+    expect(html).toContain("sessionStorage.removeItem(PILOT_SAFE_REFRESH_KEY)");
+    expect(html).toContain("currentKrakenReady()");
+    expect(html).toContain("Paso 1 deshabilitado:");
+  });
+
+  it("keeps Step 1 disabled until Kraken safety checks are genuinely ready", async () => {
+    const html = await (await authenticatedPilotDashboard()).text();
+
+    expect(html).toContain('id="prepareValidationButton" class="small" disabled');
+    expect(html).toContain("document.getElementById('prepareValidationButton').disabled=!ready");
+    expect(html).toContain("if(!currentKrakenReady())");
   });
 
   it("forgets invalid credentials and prepared ids beyond the current tab", async () => {

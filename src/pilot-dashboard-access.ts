@@ -36,10 +36,10 @@ export async function authenticatedPilotDashboard(): Promise<Response> {
       <div class="validation-note">Preparar solo escribe estado local. Validar usa Kraken con <strong>validate=true</strong>: comprueba la orden, pero no la envía al motor de mercado.</div>
       <div class="phase-note"><strong>Importante:</strong> los bloqueos PAPER pueden impedir un piloto con dinero real, pero no impiden completar esta validación técnica sin envío.</div>
       <div class="validation-actions">
-        <button id="prepareValidationButton" class="small" onclick="prepareValidationOnly()">Paso 1 · Preparar validación de hasta 5 €</button>
+        <button id="prepareValidationButton" class="small" disabled onclick="prepareValidationOnly()">Paso 1 · Preparar validación de hasta 5 €</button>
         <button id="runPreflightButton" class="small validate-button" style="display:none" onclick="runValidationPreflight()">Paso 2 · Validar en Kraken — no enviar</button>
       </div>
-      <div id="validationActionStatus" class="action-status">Todavía no hay una orden validate-only preparada en esta pestaña.</div>
+      <div id="validationActionStatus" class="action-status">Esperando autenticación y comprobaciones seguras de Kraken.</div>
     </section>
 
     <div id="error" class="error"></div>`,
@@ -54,15 +54,19 @@ export async function authenticatedPilotDashboard(): Promise<Response> {
   const PILOT_SAFE_REFRESH_KEY='auto-bolsa-ai-pilot-safe-refresh';
   function currentPilotToken(){return sessionStorage.getItem(PILOT_TOKEN_KEY)||''}
   function currentPreparedClOrdId(){return sessionStorage.getItem(PILOT_CL_ORD_ID_KEY)||''}
+  function currentKrakenReady(){return sessionStorage.getItem(PILOT_SAFE_REFRESH_KEY)==='ready'}
   function updateAuthStatus(message){document.getElementById('authStatus').textContent=message}
   function updateValidationControls(message){
     const clOrdId=currentPreparedClOrdId();
+    const ready=currentPilotToken().length>0&&currentKrakenReady();
+    document.getElementById('prepareValidationButton').disabled=!ready;
     document.getElementById('runPreflightButton').style.display=clOrdId?'inline-block':'none';
-    document.getElementById('validationActionStatus').textContent=message||(clOrdId?'Orden local preparada. Ya puede validarse sin enviar.':'Todavía no hay una orden validate-only preparada en esta pestaña.');
+    document.getElementById('validationActionStatus').textContent=message||(clOrdId?'Orden local preparada. Ya puede validarse sin enviar.':ready?'Kraken autenticado y permisos seguros. Ya puedes ejecutar el Paso 1.':'Esperando autenticación y comprobaciones seguras de Kraken.');
   }
   function restorePilotAuth(){
     const present=currentPilotToken().length>0;
-    updateAuthStatus(present?'Token guardado únicamente durante esta pestaña.':'Introduce el token para cargar el informe privado.');
+    updateAuthStatus(present?'Token restaurado. Revalidando conexión, saldo y permisos de Kraken…':'Introduce el token para cargar el informe privado.');
+    sessionStorage.removeItem(PILOT_SAFE_REFRESH_KEY);
     updateValidationControls('');
   }
   async function savePilotToken(){
@@ -73,6 +77,7 @@ export async function authenticatedPilotDashboard(): Promise<Response> {
     sessionStorage.removeItem(PILOT_SAFE_REFRESH_KEY);
     input.value='';
     updateAuthStatus('Token guardado únicamente durante esta pestaña. Comprobando Kraken…');
+    updateValidationControls('Comprobando autenticación, saldo y permisos antes de habilitar el Paso 1…');
     await refreshPilotSafetyChecks();
   }
   function forgetPilotToken(){
@@ -81,7 +86,7 @@ export async function authenticatedPilotDashboard(): Promise<Response> {
     sessionStorage.removeItem(PILOT_SAFE_REFRESH_KEY);
     document.getElementById('pilotToken').value='';
     updateAuthStatus('Token eliminado de esta pestaña.');
-    updateValidationControls('Orden local olvidada en esta pestaña.');
+    updateValidationControls('Esperando autenticación y comprobaciones seguras de Kraken.');
     document.getElementById('updated').textContent='Acceso privado pendiente';
   }
   async function authenticatedPilotPost(path,body){
@@ -103,21 +108,53 @@ export async function authenticatedPilotDashboard(): Promise<Response> {
     if(!response.ok)throw new Error(data.message||data.error||(Array.isArray(data.blockers)?data.blockers.join('; '):'Acción bloqueada'));
     return data;
   }
+  function krakenSafetyReason(data){
+    const connection=data&&data.kraken&&data.kraken.connection?data.kraken.connection:{};
+    const permissions=data&&data.kraken&&data.kraken.permissions?data.kraken.permissions:{};
+    const reasons=[];
+    if(connection.connected!==true){
+      if(connection.error)reasons.push('Conexión: '+connection.error);
+      else reasons.push('Kraken no confirmó la autenticación o el saldo.');
+    }
+    if(permissions.auditComplete!==true||permissions.safePermissions!==true){
+      if(permissions.error)reasons.push('Permisos: '+permissions.error);
+      else reasons.push('Kraken no confirmó una auditoría de permisos segura.');
+    }
+    return reasons.join(' ');
+  }
   async function refreshPilotSafetyChecks(){
     const token=currentPilotToken();
-    if(!token){updateAuthStatus('Introduce primero el ADMIN_TOKEN.');return}
+    if(!token){updateAuthStatus('Introduce primero el ADMIN_TOKEN.');updateValidationControls('Esperando autenticación y comprobaciones seguras de Kraken.');return}
+    sessionStorage.removeItem(PILOT_SAFE_REFRESH_KEY);
+    updateValidationControls('Comprobando autenticación, saldo y permisos antes de habilitar el Paso 1…');
     updateAuthStatus('Comprobando conexión, saldo y permisos de Kraken…');
     try{
-      await authenticatedPilotPost('/api/pilot/refresh-kraken');
-      sessionStorage.setItem(PILOT_SAFE_REFRESH_KEY,'done');
-      updateAuthStatus('Token válido. Conexión, saldo y permisos de Kraken actualizados.');
+      const data=await authenticatedPilotPost('/api/pilot/refresh-kraken');
+      const connection=data&&data.kraken&&data.kraken.connection?data.kraken.connection:{};
+      const permissions=data&&data.kraken&&data.kraken.permissions?data.kraken.permissions:{};
+      const ready=connection.connected===true&&permissions.auditComplete===true&&permissions.safePermissions===true;
+      if(!ready){
+        sessionStorage.removeItem(PILOT_SAFE_REFRESH_KEY);
+        const reason=krakenSafetyReason(data)||'Kraken no devolvió una comprobación segura.';
+        updateAuthStatus('Comprobaciones completadas, pero Kraken sigue bloqueado. '+reason);
+        updateValidationControls('Paso 1 deshabilitado: '+reason);
+        await loadPilot(true);
+        return;
+      }
+      sessionStorage.setItem(PILOT_SAFE_REFRESH_KEY,'ready');
+      updateAuthStatus('Token válido. Conexión, saldo y permisos de Kraken confirmados.');
+      updateValidationControls('Kraken autenticado y permisos seguros. Ya puedes ejecutar el Paso 1.');
       await loadPilot(true);
     }catch(e){
-      updateAuthStatus('No se pudieron completar las comprobaciones: '+String(e&&e.message?e.message:e));
+      sessionStorage.removeItem(PILOT_SAFE_REFRESH_KEY);
+      const message=String(e&&e.message?e.message:e);
+      updateAuthStatus('No se pudieron completar las comprobaciones: '+message);
+      updateValidationControls('Paso 1 deshabilitado: '+message);
       await loadPilot(true);
     }
   }
   async function prepareValidationOnly(){
+    if(!currentKrakenReady()){updateValidationControls('Paso 1 deshabilitado hasta confirmar autenticación, saldo y permisos. Pulsa “Actualizar comprobaciones seguras”.');return}
     if(!window.confirm('Se construirá una propuesta con datos reales de Kraken y se guardará únicamente como orden local preparada. No se enviará dinero. ¿Continuar?'))return;
     const button=document.getElementById('prepareValidationButton');button.disabled=true;
     updateValidationControls('Construyendo propuesta segura desde Kraken…');
@@ -128,7 +165,7 @@ export async function authenticatedPilotDashboard(): Promise<Response> {
       sessionStorage.setItem(PILOT_CL_ORD_ID_KEY,clOrdId);
       updateValidationControls('Preparación local completada. Importe: '+Number(data.proposal?.notionalEur||0).toLocaleString('es-ES',{style:'currency',currency:'EUR'})+'. No se contactó con el endpoint privado de órdenes.');
       await loadPilot(true);
-    }catch(e){updateValidationControls('Preparación bloqueada: '+String(e&&e.message?e.message:e))}finally{button.disabled=false}
+    }catch(e){updateValidationControls('Preparación bloqueada: '+String(e&&e.message?e.message:e))}finally{button.disabled=!currentKrakenReady()}
   }
   async function runValidationPreflight(){
     const clOrdId=currentPreparedClOrdId();
@@ -173,7 +210,7 @@ export async function authenticatedPilotDashboard(): Promise<Response> {
   html = replaceRequired(
     html,
     "loadPilot(false);setInterval(function(){loadPilot(false)},15000);",
-    "restorePilotAuth();if(currentPilotToken()&&!sessionStorage.getItem(PILOT_SAFE_REFRESH_KEY)){refreshPilotSafetyChecks()}else{loadPilot(false)}setInterval(function(){if(currentPilotToken())loadPilot(false)},15000);",
+    "restorePilotAuth();if(currentPilotToken()){refreshPilotSafetyChecks()}else{loadPilot(false)}setInterval(function(){if(currentPilotToken())loadPilot(false)},15000);",
   );
 
   return new Response(html, {
