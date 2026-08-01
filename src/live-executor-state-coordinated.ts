@@ -1,28 +1,19 @@
-import { DurableObject } from "cloudflare:workers";
 import { LiveExecutorState as BaseLiveExecutorState } from "./live-executor-state";
 import {
   acquireKrakenPrivateLease,
   isLiveExecutorPrivatePath,
   releaseKrakenPrivateLease,
 } from "./kraken-private-lease";
-import type { Env } from "./types";
 
 /**
- * Adaptador de seguridad del Durable Object LIVE. Conserva exactamente la
- * máquina de estados existente, pero cualquier ruta que pueda usar la API
- * privada de Kraken debe poseer antes la concesión global guardada en BotState.
+ * Adaptador de seguridad del Durable Object LIVE. Hereda la máquina de estados
+ * y su mismo storage; solo añade la concesión global alrededor de las rutas
+ * que pueden usar la API privada de Kraken.
  */
-export class CoordinatedLiveExecutorState extends DurableObject<Env> {
-  private readonly delegate: BaseLiveExecutorState;
-
-  constructor(ctx: DurableObjectState, env: Env) {
-    super(ctx, env);
-    this.delegate = new BaseLiveExecutorState(ctx, env);
-  }
-
+export class CoordinatedLiveExecutorState extends BaseLiveExecutorState {
   async fetch(request: Request): Promise<Response> {
     const pathname = new URL(request.url).pathname;
-    if (!isLiveExecutorPrivatePath(pathname)) return this.delegate.fetch(request);
+    if (!isLiveExecutorPrivatePath(pathname)) return super.fetch(request);
 
     let leaseId: string;
     try {
@@ -41,7 +32,7 @@ export class CoordinatedLiveExecutorState extends DurableObject<Env> {
     }
 
     try {
-      return await this.delegate.fetch(request);
+      return await super.fetch(request);
     } finally {
       await releaseKrakenPrivateLease(this.env, leaseId).catch(() => undefined);
     }
