@@ -5,12 +5,7 @@ function replaceRequired(source: string, search: string, replacement: string): s
   return source.replace(search, replacement);
 }
 
-export function pilotDashboard(): Response {
-  const core = pilotDashboardCore();
-  return new Response(core.body ? core.body : null, core);
-}
-
-export async function pilotDashboardWithFees(): Promise<Response> {
+export async function pilotDashboard(): Promise<Response> {
   const core = pilotDashboardCore();
   let html = await core.text();
 
