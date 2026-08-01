@@ -18,7 +18,7 @@ export async function authenticatedPilotDashboard(): Promise<Response> {
   html = replaceRequired(
     html,
     "</style>",
-    `.auth-card,.validation-card{background:rgba(15,29,49,.98);border:1px solid #35557f;border-radius:19px;padding:17px;margin:12px 0}.auth-card input{width:100%;padding:12px 13px;border-radius:13px;border:1px solid #405d82;background:#081526;color:var(--text);font:inherit;margin:9px 0}.auth-actions,.validation-actions{display:flex;gap:8px;flex-wrap:wrap}.secondary{background:#172b46;color:#c8dbf4;border:1px solid #35557f}.validate-button{background:#d7f6e9;color:#0a3525}.auth-status,.action-status{font-size:12px;color:var(--muted);line-height:1.5;margin-top:8px}.validation-note{padding:10px 11px;border-radius:12px;background:rgba(73,221,161,.08);border:1px solid rgba(73,221,161,.25);color:#baf5dc;font-size:12px;line-height:1.5;margin:10px 0}</style>`,
+    `.auth-card,.validation-card{background:rgba(15,29,49,.98);border:1px solid #35557f;border-radius:19px;padding:17px;margin:12px 0}.auth-card input{width:100%;padding:12px 13px;border-radius:13px;border:1px solid #405d82;background:#081526;color:var(--text);font:inherit;margin:9px 0}.auth-actions,.validation-actions{display:flex;gap:8px;flex-wrap:wrap}.secondary{background:#172b46;color:#c8dbf4;border:1px solid #35557f}.validate-button{background:#d7f6e9;color:#0a3525}.auth-status,.action-status{font-size:12px;color:var(--muted);line-height:1.5;margin-top:8px}.validation-note{padding:10px 11px;border-radius:12px;background:rgba(73,221,161,.08);border:1px solid rgba(73,221,161,.25);color:#baf5dc;font-size:12px;line-height:1.5;margin:10px 0}.phase-note{padding:10px 11px;border-radius:12px;background:rgba(105,167,255,.08);border:1px solid rgba(105,167,255,.25);color:#cde2ff;font-size:12px;line-height:1.5;margin:10px 0}</style>`,
   );
 
   html = replaceRequired(
@@ -27,16 +27,17 @@ export async function authenticatedPilotDashboard(): Promise<Response> {
     `<section id="authCard" class="auth-card">
       <div class="between"><div><strong>Acceso privado</strong><div class="auth-status">Introduce el ADMIN_TOKEN. Solo permanecerá en esta pestaña del iPhone.</div></div><span class="badge">Sesión local</span></div>
       <input id="pilotToken" type="password" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="ADMIN_TOKEN">
-      <div class="auth-actions"><button class="small" onclick="savePilotToken()">Guardar en esta pestaña</button><button class="small secondary" onclick="forgetPilotToken()">Olvidar token</button></div>
+      <div class="auth-actions"><button class="small" onclick="savePilotToken()">Guardar en esta pestaña</button><button class="small secondary" onclick="refreshPilotSafetyChecks()">Actualizar comprobaciones seguras</button><button class="small secondary" onclick="forgetPilotToken()">Olvidar token</button></div>
       <div id="authStatus" class="auth-status">El token no se incluye en la URL, el HTML ni el informe técnico.</div>
     </section>
 
     <section id="validationCard" class="validation-card">
       <div class="between"><div><strong>Validación previa sin envío</strong><div class="action-status">El servidor decide par, precio, volumen e importe usando Kraken.</div></div><span class="badge">Máximo 5 €</span></div>
       <div class="validation-note">Preparar solo escribe estado local. Validar usa Kraken con <strong>validate=true</strong>: comprueba la orden, pero no la envía al motor de mercado.</div>
+      <div class="phase-note"><strong>Importante:</strong> los bloqueos PAPER pueden impedir un piloto con dinero real, pero no impiden completar esta validación técnica sin envío.</div>
       <div class="validation-actions">
-        <button id="prepareValidationButton" class="small" onclick="prepareValidationOnly()">Preparar validación de hasta 5 €</button>
-        <button id="runPreflightButton" class="small validate-button" style="display:none" onclick="runValidationPreflight()">Validar en Kraken — no enviar</button>
+        <button id="prepareValidationButton" class="small" onclick="prepareValidationOnly()">Paso 1 · Preparar validación de hasta 5 €</button>
+        <button id="runPreflightButton" class="small validate-button" style="display:none" onclick="runValidationPreflight()">Paso 2 · Validar en Kraken — no enviar</button>
       </div>
       <div id="validationActionStatus" class="action-status">Todavía no hay una orden validate-only preparada en esta pestaña.</div>
     </section>
@@ -50,6 +51,7 @@ export async function authenticatedPilotDashboard(): Promise<Response> {
     `<script>
   const PILOT_TOKEN_KEY='auto-bolsa-ai-pilot-admin-token';
   const PILOT_CL_ORD_ID_KEY='auto-bolsa-ai-pilot-validation-clordid';
+  const PILOT_SAFE_REFRESH_KEY='auto-bolsa-ai-pilot-safe-refresh';
   function currentPilotToken(){return sessionStorage.getItem(PILOT_TOKEN_KEY)||''}
   function currentPreparedClOrdId(){return sessionStorage.getItem(PILOT_CL_ORD_ID_KEY)||''}
   function updateAuthStatus(message){document.getElementById('authStatus').textContent=message}
@@ -63,18 +65,20 @@ export async function authenticatedPilotDashboard(): Promise<Response> {
     updateAuthStatus(present?'Token guardado únicamente durante esta pestaña.':'Introduce el token para cargar el informe privado.');
     updateValidationControls('');
   }
-  function savePilotToken(){
+  async function savePilotToken(){
     const input=document.getElementById('pilotToken');
     const token=String(input.value||'').trim();
     if(!token){updateAuthStatus('El token no puede estar vacío.');return}
     sessionStorage.setItem(PILOT_TOKEN_KEY,token);
+    sessionStorage.removeItem(PILOT_SAFE_REFRESH_KEY);
     input.value='';
-    updateAuthStatus('Token guardado únicamente durante esta pestaña.');
-    loadPilot(true);
+    updateAuthStatus('Token guardado únicamente durante esta pestaña. Comprobando Kraken…');
+    await refreshPilotSafetyChecks();
   }
   function forgetPilotToken(){
     sessionStorage.removeItem(PILOT_TOKEN_KEY);
     sessionStorage.removeItem(PILOT_CL_ORD_ID_KEY);
+    sessionStorage.removeItem(PILOT_SAFE_REFRESH_KEY);
     document.getElementById('pilotToken').value='';
     updateAuthStatus('Token eliminado de esta pestaña.');
     updateValidationControls('Orden local olvidada en esta pestaña.');
@@ -89,6 +93,7 @@ export async function authenticatedPilotDashboard(): Promise<Response> {
     if(response.status===401){
       sessionStorage.removeItem(PILOT_TOKEN_KEY);
       sessionStorage.removeItem(PILOT_CL_ORD_ID_KEY);
+      sessionStorage.removeItem(PILOT_SAFE_REFRESH_KEY);
       updateAuthStatus('Token incorrecto o caducado. Introdúcelo de nuevo.');
       updateValidationControls('Acceso privado caducado.');
       throw new Error('Acceso no autorizado.');
@@ -97,6 +102,20 @@ export async function authenticatedPilotDashboard(): Promise<Response> {
     let data={};try{data=JSON.parse(text)}catch(e){data={message:text}}
     if(!response.ok)throw new Error(data.message||data.error||(Array.isArray(data.blockers)?data.blockers.join('; '):'Acción bloqueada'));
     return data;
+  }
+  async function refreshPilotSafetyChecks(){
+    const token=currentPilotToken();
+    if(!token){updateAuthStatus('Introduce primero el ADMIN_TOKEN.');return}
+    updateAuthStatus('Comprobando conexión, saldo y permisos de Kraken…');
+    try{
+      await authenticatedPilotPost('/api/pilot/refresh-kraken');
+      sessionStorage.setItem(PILOT_SAFE_REFRESH_KEY,'done');
+      updateAuthStatus('Token válido. Conexión, saldo y permisos de Kraken actualizados.');
+      await loadPilot(true);
+    }catch(e){
+      updateAuthStatus('No se pudieron completar las comprobaciones: '+String(e&&e.message?e.message:e));
+      await loadPilot(true);
+    }
   }
   async function prepareValidationOnly(){
     if(!window.confirm('Se construirá una propuesta con datos reales de Kraken y se guardará únicamente como orden local preparada. No se enviará dinero. ¿Continuar?'))return;
@@ -141,6 +160,7 @@ export async function authenticatedPilotDashboard(): Promise<Response> {
       if(response.status===401){
         sessionStorage.removeItem(PILOT_TOKEN_KEY);
         sessionStorage.removeItem(PILOT_CL_ORD_ID_KEY);
+        sessionStorage.removeItem(PILOT_SAFE_REFRESH_KEY);
         updateAuthStatus('Token incorrecto o caducado. Introdúcelo de nuevo.');
         updateValidationControls('Acceso privado caducado.');
         error.textContent='Acceso no autorizado. El token se ha eliminado de esta pestaña.';
@@ -153,7 +173,7 @@ export async function authenticatedPilotDashboard(): Promise<Response> {
   html = replaceRequired(
     html,
     "loadPilot(false);setInterval(function(){loadPilot(false)},15000);",
-    "restorePilotAuth();loadPilot(false);setInterval(function(){if(currentPilotToken())loadPilot(false)},15000);",
+    "restorePilotAuth();if(currentPilotToken()&&!sessionStorage.getItem(PILOT_SAFE_REFRESH_KEY)){refreshPilotSafetyChecks()}else{loadPilot(false)}setInterval(function(){if(currentPilotToken())loadPilot(false)},15000);",
   );
 
   return new Response(html, {
