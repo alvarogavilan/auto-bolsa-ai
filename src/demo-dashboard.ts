@@ -1,5 +1,5 @@
-import { temporalDemoDashboard } from "./demo-dashboard-temporal";
+import { stressDemoDashboard } from "./demo-dashboard-stress";
 
 export function demoDashboard(): Promise<Response> {
-  return temporalDemoDashboard();
+  return stressDemoDashboard();
 }
