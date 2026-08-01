@@ -1,5 +1,5 @@
-import { healthDemoDashboard } from "./demo-dashboard-health";
+import { labelledDemoDashboard } from "./demo-dashboard-labels";
 
 export function demoDashboard(): Promise<Response> {
-  return healthDemoDashboard();
+  return labelledDemoDashboard();
 }
