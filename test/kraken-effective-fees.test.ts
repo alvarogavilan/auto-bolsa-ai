@@ -1,7 +1,44 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { fetchKrakenEffectiveFees } from "../src/kraken-fees";
+import {
+  buildKrakenEffectiveFeesAudit,
+  fetchKrakenEffectiveFees,
+} from "../src/kraken-fees";
+import { summarizeKrakenEffectiveFees } from "../src/pilot-runtime";
 
 const originalFetch = globalThis.fetch;
+
+const PAYLOAD = {
+  error: [],
+  result: {
+    currency: "ZEUR",
+    volume: "12.5",
+    inputs: {
+      domain_spot_volume_30d: "12.5",
+      domain_futures_volume_30d: "0",
+      domain_assets_on_platform: "50",
+    },
+    fees: {
+      XXBTZEUR: {
+        fee: "0.8000",
+        minfee: "0.1000",
+        maxfee: "0.8000",
+        nextfee: "0.7500",
+        tiervolume: "0",
+        nextvolume: "10000",
+      },
+    },
+    fees_maker: {
+      XXBTZEUR: {
+        fee: "0.4000",
+        minfee: "0.0000",
+        maxfee: "0.4000",
+        nextfee: "0.3500",
+        tiervolume: "0",
+        nextvolume: "10000",
+      },
+    },
+  },
+};
 
 afterEach(() => {
   globalThis.fetch = originalFetch;
@@ -9,7 +46,7 @@ afterEach(() => {
 });
 
 describe("Kraken effective fee audit", () => {
-  it("parses maker and taker percentages into decimal rates", async () => {
+  it("parses maker, taker and tier basis through the signed read-only request", async () => {
     let requestUrl = "";
     let requestMethod = "";
     let requestBody = "";
@@ -20,34 +57,7 @@ describe("Kraken effective fee audit", () => {
       requestMethod = request.method;
       requestBody = await request.clone().text();
       requestApiKey = request.headers.get("API-Key");
-      return Response.json({
-        error: [],
-        result: {
-          currency: "ZEUR",
-          volume: "0.0000",
-          inputs: { domain_spot_volume_30d: "0.0000" },
-          fees: {
-            XXBTZEUR: {
-              fee: "0.4000",
-              minfee: "0.1000",
-              maxfee: "0.4000",
-              nextfee: "0.3500",
-              tiervolume: "0.0000",
-              nextvolume: "10000.0000",
-            },
-          },
-          fees_maker: {
-            XXBTZEUR: {
-              fee: "0.2500",
-              minfee: "0.0000",
-              maxfee: "0.2500",
-              nextfee: "0.2000",
-              tiervolume: "0.0000",
-              nextvolume: "10000.0000",
-            },
-          },
-        },
-      });
+      return Response.json(PAYLOAD);
     }) as typeof fetch;
 
     const audit = await fetchKrakenEffectiveFees(
@@ -59,14 +69,19 @@ describe("Kraken effective fee audit", () => {
       1_800_000_000_000,
     );
 
-    expect(audit.taker?.pair).toBe("XXBTZEUR");
-    expect(audit.taker?.percent).toBe(0.4);
-    expect(audit.taker?.rate).toBe(0.004);
-    expect(audit.maker?.percent).toBe(0.25);
-    expect(audit.maker?.rate).toBe(0.0025);
-    expect(audit.volume30d).toBe(0);
-    expect(audit.paperFeeMatchesCurrentTaker).toBe(true);
-    expect(audit.recommendedPaperFeeEachSideRate).toBe(0.004);
+    expect(audit.pairResolved).toBe("XXBTZEUR");
+    expect(audit.taker?.percent).toBe(0.8);
+    expect(audit.taker?.rate).toBe(0.008);
+    expect(audit.maker?.percent).toBe(0.4);
+    expect(audit.maker?.rate).toBe(0.004);
+    expect(audit.volume30d).toBe(12.5);
+    expect(audit.tierInputs.effectiveTierBasis).toBe(50);
+    expect(audit.tierInputs.effectiveTierBasisSource).toBe("assets-on-platform");
+    expect(audit.paperFeeMatchesCurrentTaker).toBe(false);
+    expect(audit.paperTakerGapRate).toBe(0.004);
+    expect(audit.recommendedPaperFeeEachSideRate).toBe(0.008);
+    expect(audit.fiveEurTakerRoundTripFeeEur).toBeCloseTo(0.08, 10);
+    expect(audit.changesStrategyParameters).toBe(false);
     expect(audit.readOnly).toBe(true);
     expect(audit.realOrderCreated).toBe(false);
     expect(audit.liveTrading).toBe(false);
@@ -80,27 +95,17 @@ describe("Kraken effective fee audit", () => {
     expect(requestApiKey).toBe("api-key");
   });
 
-  it("reports when the static PAPER fee differs from the account taker fee", async () => {
-    globalThis.fetch = vi.fn(async () => Response.json({
+  it("rejects an ambiguous response instead of borrowing another pair fee", () => {
+    expect(() => buildKrakenEffectiveFeesAudit({
       error: [],
       result: {
-        fees: { XBTEUR: { fee: "0.2600" } },
-        fees_maker: { XBTEUR: { fee: "0.1600" } },
+        fees: {
+          ETHEUR: { fee: "0.8" },
+          ADÄEUR: { fee: "0.8" },
+        },
+        fees_maker: {},
       },
-    })) as typeof fetch;
-
-    const audit = await fetchKrakenEffectiveFees(
-      "api-key",
-      "c2VjcmV0",
-      "1800000000002",
-      "XBTEUR",
-      0.004,
-    );
-
-    expect(audit.taker?.rate).toBe(0.0026);
-    expect(audit.maker?.rate).toBe(0.0016);
-    expect(audit.paperFeeMatchesCurrentTaker).toBe(false);
-    expect(audit.recommendedPaperFeeEachSideRate).toBe(0.0026);
+    }, "XBTEUR", 0.004)).toThrow(/no unambiguous fee tier/i);
   });
 
   it("fails closed on Kraken errors and malformed results", async () => {
@@ -118,11 +123,33 @@ describe("Kraken effective fee audit", () => {
     )).rejects.toThrow("EAPI:Permission denied");
   });
 
-  it("never returns credentials or signing material", async () => {
-    globalThis.fetch = vi.fn(async () => Response.json({
-      error: [],
-      result: { fees: { XBTEUR: { fee: "0.4000" } } },
-    })) as typeof fetch;
+  it("publishes a safe readiness summary without turning missing values into zero", () => {
+    const audit = buildKrakenEffectiveFeesAudit(PAYLOAD, "XBTEUR", 0.004, 1_800_000_000_000);
+    const summary = summarizeKrakenEffectiveFees({
+      effectiveFees: audit,
+      effectiveFeesStatus: { available: true, error: null },
+    });
+
+    expect(summary.available).toBe(true);
+    expect(summary.makerFeePercent).toBe(0.4);
+    expect(summary.takerFeePercent).toBe(0.8);
+    expect(summary.fiveEurTakerRoundTripFeeEur).toBeCloseTo(0.08, 10);
+    expect(summary.permissionRequired).toBe("query-funds");
+    expect(summary.changesStrategyParameters).toBe(false);
+    expect(summary.realOrderCreated).toBe(false);
+
+    const missing = summarizeKrakenEffectiveFees({
+      effectiveFeesStatus: { available: false, error: "not available" },
+    });
+    expect(missing.available).toBe(false);
+    expect(missing.makerFeePercent).toBeNull();
+    expect(missing.takerFeePercent).toBeNull();
+    expect(missing.fiveEurTakerRoundTripFeeEur).toBeNull();
+    expect(missing.error).toBe("not available");
+  });
+
+  it("never returns credentials, nonce or signing material", async () => {
+    globalThis.fetch = vi.fn(async () => Response.json(PAYLOAD)) as typeof fetch;
 
     const audit = await fetchKrakenEffectiveFees(
       "visible-api-key",
