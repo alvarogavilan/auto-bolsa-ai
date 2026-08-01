@@ -16,9 +16,8 @@ describe("human DEMO dashboard", () => {
     expect(html).toContain("Capital virtual");
     expect(html).toContain("Historial de operaciones");
     expect(html).toContain("Compras y ventas simuladas");
-    expect(html).toContain("Estrategias observadas");
+    expect(html).toContain("Estrategias activas");
     expect(html).toContain("Expediente PAPER");
-    expect(html).toContain("Añadir a pantalla de inicio");
   });
 
   it("shows position, PnL, fees and trade reasons from the public lab response", async () => {
@@ -31,6 +30,28 @@ describe("human DEMO dashboard", () => {
     expect(html).toContain("t.reason");
     expect(html).toContain("fetch('/api/lab'");
     expect(html).toContain("fetch('/api/readiness'");
+  });
+
+  it("makes the complete Kraken EUR market universe visible", async () => {
+    const html = await demoDashboard().text();
+    expect(html).toContain("Universo de mercados");
+    expect(html).toContain("Todo el mercado EUR de Kraken");
+    expect(html).toContain("marketsDiscovered");
+    expect(html).toContain("marketsOnline");
+    expect(html).toContain("marketsCompatible");
+    expect(html).toContain("candidate.fastEligible");
+    expect(html).toContain("candidate.intradayEligible");
+    expect(html).toContain("candidate.swingEligible");
+    expect(html).toContain("fetch('/api/markets'");
+  });
+
+  it("translates Kraken tickers into human market names", async () => {
+    const html = await demoDashboard().text();
+    expect(html).toContain("XBT:'Bitcoin'");
+    expect(html).toContain("ETH:'Ethereum'");
+    expect(html).toContain("SOL:'Solana'");
+    expect(html).toContain("function humanMarket");
+    expect(html).toContain("XBT es Bitcoin");
   });
 
   it("keeps technical JSON and admin controls on a separate route", () => {
