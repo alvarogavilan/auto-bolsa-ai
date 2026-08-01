@@ -73,7 +73,7 @@ describe("pilot fire drill", () => {
     expect(wrapper).toContain('from "./index-core"');
     expect(wrapper).toContain('url.pathname === "/api/pilot/fire-drill"');
     expect(wrapper).toContain("if (!isAuthorized(request, env))");
-    expect(wrapper).toContain("return coreWorker.fetch(request, env, ctx)");
+    expect(wrapper).toContain("return coreWorker.fetch(request, env)");
     expect(wrapper).toContain("return coreWorker.scheduled(controller, env, ctx)");
     expect(core).toContain('url.pathname === "/api/pilot/submit"');
     expect(core).toContain("PILOT_SUBMISSION_NOT_ARMED");
