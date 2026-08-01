@@ -7,6 +7,9 @@ import {
 } from "./committee-shadow-impact";
 import { buildCostSequenceStressReport } from "./cost-sequence-stress";
 import type { ResearchCommitteeReport } from "./decision-committee";
+import { buildInstitutionalIntelligence } from "./institutional-intelligence";
+import { buildMarketProductIntelligence } from "./market-product-intelligence";
+import { buildNewsIntelligence, type NewsIntelligenceReport } from "./news-intelligence";
 import {
   applyPaperEvidenceSnapshot,
   buildPaperEvidenceLedgerReport,
@@ -27,6 +30,8 @@ interface LabResponsePayload {
   initialized?: boolean;
   state?: StoredResearchLabState;
   committee?: ResearchCommitteeReport;
+  benchmarkSuite?: unknown;
+  benchmarkComparison?: unknown;
   [key: string]: unknown;
 }
 
@@ -47,6 +52,28 @@ function validCommittee(value: unknown): value is ResearchCommitteeReport {
     && (value as ResearchCommitteeReport).schemaVersion === "paper-research-committee-v1"
     && Array.isArray((value as ResearchCommitteeReport).reports),
   );
+}
+
+function unavailableNews(now: number, error: unknown): NewsIntelligenceReport {
+  return {
+    schemaVersion: "global-news-intelligence-v1",
+    generatedAt: now,
+    refreshTargetSeconds: 60,
+    sourcesConfigured: 3,
+    sourcesAvailable: 0,
+    signals: [],
+    sourceStatus: [{
+      id: "department",
+      label: "Departamento mundial de noticias",
+      available: false,
+      items: 0,
+      error: error instanceof Error ? error.message : "NEWS_INTELLIGENCE_FAILED",
+    }],
+    changesTradingDecision: false,
+    advisoryOnly: true,
+    eligibleForLiveReview: false,
+    liveTrading: false,
+  };
 }
 
 export class ResearchLabState extends BaseResearchLabState {
@@ -108,9 +135,10 @@ export class ResearchLabState extends BaseResearchLabState {
     const currentStrategies = payload.state && Array.isArray(payload.state.strategies)
       ? payload.state.strategies
       : [];
-    const [safeImpact, safeEvidence] = await Promise.all([
+    const [safeImpact, safeEvidence, newsIntelligence] = await Promise.all([
       this.readImpact(now),
       this.readEvidence(now),
+      buildNewsIntelligence(now).catch((error) => unavailableNews(now, error)),
     ]);
 
     let impact = safeImpact.impact;
@@ -141,6 +169,12 @@ export class ResearchLabState extends BaseResearchLabState {
     const evidenceStrategies = hydrateStrategiesWithEvidence(currentStrategies, evidence);
     const temporalValidation = buildTemporalValidationReport(evidenceStrategies);
     const costSequenceStress = buildCostSequenceStressReport(evidenceStrategies);
+    const marketProductIntelligence = buildMarketProductIntelligence(now);
+    const institutionalIntelligence = buildInstitutionalIntelligence(
+      payload.benchmarkSuite ?? payload.benchmarkComparison ?? null,
+      payload.committee ?? null,
+      now,
+    );
 
     return Response.json({
       ...payload,
@@ -161,6 +195,17 @@ export class ResearchLabState extends BaseResearchLabState {
         changesTradingDecision: false,
         liveTrading: false,
       },
+      newsIntelligence,
+      marketProductIntelligence,
+      institutionalIntelligence,
+      intelligencePolicy: {
+        newsMayVetoPaperEntry: false,
+        thirdPartyPortfolioMayTriggerTrade: false,
+        unverifiedWinRatesAccepted: false,
+        autonomousParameterMutation: false,
+        advisoryOnlyUntilValidated: true,
+        liveTrading: false,
+      },
       temporalValidation,
       costSequenceStress,
       liveTrading: false,
@@ -175,7 +220,6 @@ export class ResearchLabState extends BaseResearchLabState {
     const response = await super.fetch(request);
 
     if (request.method === "POST" && url.pathname === "/reset") {
-      // Un fallo del ledger shadow no debe revertirlo.
       await Promise.allSettled([
         this.auxiliaryStorage.delete(COMMITTEE_IMPACT_KEY),
         this.auxiliaryStorage.delete(PAPER_EVIDENCE_KEY),
