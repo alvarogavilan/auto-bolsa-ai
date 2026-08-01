@@ -7,7 +7,7 @@ import {
   auditPilotAccountCleanliness,
   enrichReadinessWithAccountCleanliness,
 } from "./pilot-account-cleanliness";
-import { fireDrillPilotDashboard } from "./pilot-dashboard-fire-drill";
+import { manifestPilotDashboard } from "./pilot-dashboard-manifest";
 import { runPilotFireDrill } from "./pilot-fire-drill";
 import { enrichReadinessWithFireDrill } from "./pilot-fire-drill-readiness";
 import { buildPilotOneShotManifest } from "./pilot-one-shot-manifest";
@@ -60,7 +60,7 @@ export default {
     const url = new URL(request.url);
 
     if (request.method === "GET" && url.pathname === "/pilot") {
-      return fireDrillPilotDashboard();
+      return manifestPilotDashboard();
     }
 
     if (request.method === "POST" && url.pathname === "/api/pilot/fire-drill") {
