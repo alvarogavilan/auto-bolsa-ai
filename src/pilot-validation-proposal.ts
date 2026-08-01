@@ -1,8 +1,9 @@
+import { openOrders } from "./kraken";
 import { fetchAllTickers, type KrakenTicker } from "./kraken-markets";
 import { fetchLivePairResolution, type LivePairResolution } from "./live-pair-metadata";
 import type { LiveOrderRequest } from "./live-executor";
 import { krakenSafetySummary } from "./pilot-runtime";
-import type { Env } from "./types";
+import { BOT_STATE_SINGLETON_NAME, type Env } from "./types";
 
 const FEE_RESERVE_PCT = 0.01;
 const MAX_VALIDATION_NOTIONAL_EUR = 5;
@@ -40,6 +41,18 @@ function findTicker(
   return null;
 }
 
+async function fetchAuthenticatedOpenOrderCount(env: Env): Promise<number> {
+  if (!env.KRAKEN_API_KEY || !env.KRAKEN_API_SECRET) {
+    throw new Error("Faltan credenciales Kraken para comprobar órdenes abiertas");
+  }
+  const botState = env.BOT_STATE.get(env.BOT_STATE.idFromName(BOT_STATE_SINGLETON_NAME));
+  const nonceResponse = await botState.fetch("https://bot/kraken/next-nonce", { method: "POST" });
+  if (!nonceResponse.ok) throw new Error(`No se pudo obtener nonce para OpenOrders: HTTP ${nonceResponse.status}`);
+  const body = await nonceResponse.json<{ nonce?: unknown }>();
+  if (typeof body.nonce !== "string" || !body.nonce) throw new Error("Nonce inválido para OpenOrders");
+  return (await openOrders(env.KRAKEN_API_KEY, env.KRAKEN_API_SECRET, body.nonce)).length;
+}
+
 export interface PilotValidationProposal {
   schemaVersion: "pilot-validation-proposal-v1";
   generatedAt: number;
@@ -53,6 +66,7 @@ export interface PilotValidationProposal {
   lotDecimals: number;
   orderMinBase: number;
   eurBalance: number;
+  openOrderCount: 0;
   grossBudgetEur: number;
   feeReservePct: number;
   request: LiveOrderRequest;
@@ -63,6 +77,7 @@ export interface PilotValidationProposal {
 
 export interface PilotValidationProposalDependencies {
   safety: Awaited<ReturnType<typeof krakenSafetySummary>>;
+  openOrderCount: number;
   resolution: LivePairResolution;
   tickers: Record<string, KrakenTicker>;
   pair: string;
@@ -74,7 +89,7 @@ export interface PilotValidationProposalDependencies {
 export function buildPilotValidationProposal(
   dependencies: PilotValidationProposalDependencies,
 ): PilotValidationProposal {
-  const { safety, resolution, tickers, pair, now, idempotencyKey } = dependencies;
+  const { safety, openOrderCount, resolution, tickers, pair, now, idempotencyKey } = dependencies;
   if (!safety.connection.connected) throw new Error("Kraken no está autenticado");
   if (!safety.permissions.auditComplete || !safety.permissions.safePermissions) {
     throw new Error("Los permisos Kraken no están auditados como seguros");
@@ -84,6 +99,10 @@ export function buildPilotValidationProposal(
   if (safety.connection.nonZeroAssetCount !== 1) {
     throw new Error("La cuenta Kraken no está limpia para calibrar: existen activos adicionales o el inventario no es verificable");
   }
+  if (!Number.isInteger(openOrderCount) || openOrderCount < 0) {
+    throw new Error("No se pudo verificar el número de órdenes abiertas en Kraken");
+  }
+  if (openOrderCount !== 0) throw new Error("Existen órdenes abiertas en Kraken; la calibración exige cero");
   if (!idempotencyKey.trim()) throw new Error("Falta idempotencyKey del servidor");
 
   const match = findTicker(tickers, resolution);
@@ -127,6 +146,7 @@ export function buildPilotValidationProposal(
     lotDecimals: resolution.metadata.lotDecimals,
     orderMinBase: resolution.metadata.orderMinBase,
     eurBalance: eurBalance as number,
+    openOrderCount: 0,
     grossBudgetEur: money(grossBudgetEur),
     feeReservePct: FEE_RESERVE_PCT,
     request: {
@@ -143,19 +163,24 @@ export function buildPilotValidationProposal(
   };
 }
 
-/** Construye la propuesta exclusivamente con saldo privado y mercado público obtenidos por el servidor. */
+/**
+ * Las consultas privadas son secuenciales: primero saldo/permisos mediante el
+ * resumen, después OpenOrders con un nonce nuevo de la misma autoridad.
+ */
 export async function buildPilotValidationProposalFromKraken(
   env: Env,
   now = Date.now(),
 ): Promise<PilotValidationProposal> {
   const pair = env.PAIR || "XBTEUR";
-  const [safety, resolution, tickers] = await Promise.all([
-    krakenSafetySummary(env, true),
+  const safety = await krakenSafetySummary(env, true);
+  const openOrderCount = await fetchAuthenticatedOpenOrderCount(env);
+  const [resolution, tickers] = await Promise.all([
     fetchLivePairResolution(pair),
     fetchAllTickers(),
   ]);
   return buildPilotValidationProposal({
     safety,
+    openOrderCount,
     resolution,
     tickers,
     pair,
