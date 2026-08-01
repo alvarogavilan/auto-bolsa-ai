@@ -50,7 +50,6 @@ function dependencies(
 ): PilotValidationProposalDependencies {
   return {
     safety: safety(10),
-    openOrderCount: 0,
     resolution,
     tickers: { XXBTZEUR: ticker },
     pair: "XBTEUR",
@@ -64,7 +63,6 @@ describe("server-built validation proposal", () => {
   it("uses configured pair aliases and never exceeds 5 EUR or half the balance", () => {
     const proposal = buildPilotValidationProposal(dependencies());
     expect(proposal.request.pair).toBe("XBTEUR");
-    expect(proposal.openOrderCount).toBe(0);
     expect(proposal.grossBudgetEur).toBe(5);
     expect(proposal.request.notionalEur).toBeLessThanOrEqual(5);
     expect(proposal.request.notionalEur).toBeLessThanOrEqual(10 * 0.5);
@@ -110,18 +108,6 @@ describe("server-built validation proposal", () => {
       },
       idempotencyKey: "unknown-assets",
     }))).toThrow(/inventario no es verificable/i);
-  });
-
-  it("requires a verified zero-open-order Kraken account", () => {
-    expect(() => buildPilotValidationProposal(dependencies({
-      openOrderCount: 1,
-      idempotencyKey: "open-order",
-    }))).toThrow(/órdenes abiertas/i);
-
-    expect(() => buildPilotValidationProposal(dependencies({
-      openOrderCount: Number.NaN,
-      idempotencyKey: "unknown-open-orders",
-    }))).toThrow(/verificar.*órdenes abiertas/i);
   });
 
   it("blocks an abnormally wide public spread", () => {
