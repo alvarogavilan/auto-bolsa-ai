@@ -103,6 +103,44 @@ const DEMO_SINGLE_TREASURY_CODE = String.raw`
       audit.insertAdjacentHTML('afterbegin', sourceBanner());
     };
   }
+
+  accountScale = function singleTreasuryLiveScale() {
+    return 1;
+  };
+
+  updateSummary = function updateSingleTreasuryLiveSummary(liveRows, expectedOpenPositions) {
+    if (!liveRows.length || liveRows.length !== expectedOpenPositions) return false;
+    const metrics = [...document.querySelectorAll('#summary .metric')];
+    const byLabel = (label) => metrics.find((node) => node.querySelector('span')?.textContent?.trim() === label)?.querySelector('strong');
+    const currentStrategies = Array.isArray(latestLab?.state?.strategies) ? latestLab.state.strategies : [];
+    const currentTreasury = latestLab?.treasuryDepartment?.singleSourceOfTruth === true ? latestLab.treasuryDepartment : null;
+    const initial = num(currentTreasury?.initialBankrollEur) || 100;
+    const realized = currentStrategies.reduce((total, strategy) => total + (Array.isArray(strategy.trades) ? strategy.trades : [])
+      .reduce((sum, trade) => sum + (trade.side === 'sell' && typeof trade.pnlEur === 'number' ? num(trade.pnlEur) : 0), 0), 0);
+    const liveValue = liveRows.reduce((sum, row) => sum + row.value, 0);
+    const investedCost = liveRows.reduce((sum, row) => sum + row.cost, 0);
+    const openPnl = liveRows.reduce((sum, row) => sum + row.openPnl, 0);
+    const account = initial + realized + openPnl;
+    const cash = Math.max(0, account - liveValue);
+    const totalPnl = account - initial;
+    const accountNode = byLabel('Valor de cuenta');
+    const cashNode = byLabel('Saldo disponible');
+    const investedNode = byLabel('Capital invertido');
+    const totalNode = byLabel('PnL total');
+    const openNode = byLabel('Posiciones abiertas');
+    if (accountNode) {
+      accountNode.textContent = eur(account);
+      accountNode.className = totalPnl > 0 ? 'positive' : totalPnl < 0 ? 'negative' : '';
+    }
+    if (cashNode) cashNode.textContent = eur(cash);
+    if (investedNode) investedNode.textContent = eur(investedCost);
+    if (openNode) openNode.textContent = String(expectedOpenPositions);
+    if (totalNode) {
+      totalNode.textContent = eur(totalPnl) + ' · ' + pct(initial > 0 ? totalPnl / initial : 0);
+      totalNode.className = totalPnl > 0 ? 'positive' : totalPnl < 0 ? 'negative' : '';
+    }
+    return true;
+  };
 })();`;
 
 export async function demoDashboard(): Promise<Response> {
