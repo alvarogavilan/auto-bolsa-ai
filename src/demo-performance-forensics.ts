@@ -1,5 +1,8 @@
 export const DEMO_PERFORMANCE_FORENSICS_CODE = String.raw`
 (() => {
+  const MIN_CURRENT_CLOSED_TRADES = 30;
+  const MIN_CURRENT_PROFIT_FACTOR = 1.2;
+
   function summarizePerformance(rows) {
     const wins = rows.filter(row => row.pnl > 0);
     const losses = rows.filter(row => row.pnl < 0);
@@ -58,14 +61,17 @@ export const DEMO_PERFORMANCE_FORENSICS_CODE = String.raw`
       currentReason.pnl += row.pnl;
       exitReasons.set(key, currentReason);
     });
-    return { ...all, complete, historical, current, legacy, grouped, exitReasons };
+    const sampleComplete = current.rows.length >= MIN_CURRENT_CLOSED_TRADES;
+    const qualityPass = sampleComplete
+      && current.net > 0
+      && current.expectancy > 0
+      && current.profitFactor >= MIN_CURRENT_PROFIT_FACTOR;
+    return { ...all, complete, historical, current, legacy, grouped, exitReasons, sampleComplete, qualityPass };
   }
 
   function forensicPanel() {
     const report = performanceForensics();
     const current = report.current;
-    const currentUnacceptable = current.rows.length > 0
-      && (current.net <= 0 || current.winRate < 0.4 || current.profitFactor < 1);
     const currentFactor = Number.isFinite(current.profitFactor) ? current.profitFactor.toFixed(2) : '∞';
     const allFactor = Number.isFinite(report.profitFactor) ? report.profitFactor.toFixed(2) : '∞';
     const laneRows = [...report.grouped.entries()].map(([laneId, value]) =>
@@ -79,20 +85,24 @@ export const DEMO_PERFORMANCE_FORENSICS_CODE = String.raw`
     ).join('');
     const currentBanner = current.rows.length === 0
       ? '<div class="banner warn"><b>Motor actual todavía sin cierres evaluables.</b> Las cifras históricas no sirven para aprobar LIVE.</div>'
-      : '<div class="banner ' + (currentUnacceptable ? 'bad' : 'safe') + '"><b>'
-        + (currentUnacceptable ? 'Motor actual: muestra negativa, no apta para LIVE.' : 'Motor actual: muestra provisional favorable.')
-        + '</b> Solo incluye operaciones con evidencia completa v1.</div>';
+      : !report.sampleComplete
+        ? '<div class="banner warn"><b>Muestra insuficiente: ' + current.rows.length + ' de ' + MIN_CURRENT_CLOSED_TRADES + ' cierres actuales.</b> Ningún resultado se considera favorable antes de completar la muestra mínima.</div>'
+        : '<div class="banner ' + (report.qualityPass ? 'warn' : 'bad') + '"><b>'
+          + (report.qualityPass ? 'Muestra mínima completada con métricas positivas; LIVE continúa bloqueado.' : 'Motor actual: muestra negativa, no apta para LIVE.')
+          + '</b> Se exige expectativa positiva y profit factor mínimo ' + MIN_CURRENT_PROFIT_FACTOR.toFixed(1) + '.</div>';
     return '<article id="paper-performance-forensics" class="item">'
       + '<h3 class="mini-title">Diagnóstico forense del rendimiento</h3>'
       + currentBanner
       + '<h3 class="mini-title" style="margin-top:12px">Motor actual · evidencia completa v1</h3>'
       + '<div class="grid">'
       + metric('Cierres actuales', current.rows.length)
+      + metric('Muestra mínima', MIN_CURRENT_CLOSED_TRADES + ' cierres')
+      + metric('Progreso de muestra', Math.min(current.rows.length, MIN_CURRENT_CLOSED_TRADES) + ' / ' + MIN_CURRENT_CLOSED_TRADES)
       + metric('Ganadas / perdidas actuales', current.wins.length + ' / ' + current.losses.length)
       + metric('Acierto actual', pct(current.winRate), current.winRate >= 0.5 ? 'positive' : 'negative')
       + metric('PnL actual', eur(current.net), cls(current.net))
       + metric('Expectativa actual', eur(current.expectancy), cls(current.expectancy))
-      + metric('Profit factor actual', currentFactor, current.profitFactor >= 1 ? 'positive' : 'negative')
+      + metric('Profit factor actual', currentFactor, current.profitFactor >= MIN_CURRENT_PROFIT_FACTOR ? 'positive' : 'negative')
       + '</div>'
       + '<h3 class="mini-title" style="margin-top:12px">Histórico completo · contexto, no aprobación</h3>'
       + '<div class="grid">'
@@ -111,7 +121,7 @@ export const DEMO_PERFORMANCE_FORENSICS_CODE = String.raw`
       + (laneRows || '<div class="empty">Sin cierres.</div>') + '</div></div>'
       + '<div><h3 class="mini-title">Por causa de salida · histórico completo</h3><div class="list">'
       + (reasonRows || '<div class="empty">Sin cierres.</div>') + '</div></div></div>'
-      + '<div class="banner warn"><b>Interpretación:</b> las operaciones históricas se conservan íntegramente, pero la decisión sobre el motor actual se basa primero en evidencia completa v1. No se alteran operaciones ni se ocultan pérdidas.</div>'
+      + '<div class="banner warn"><b>Interpretación:</b> las operaciones históricas se conservan íntegramente. La evaluación del motor actual requiere al menos ' + MIN_CURRENT_CLOSED_TRADES + ' cierres con evidencia completa v1; una o varias victorias aisladas nunca permiten aprobar LIVE.</div>'
       + '</article>';
   }
 
@@ -123,14 +133,16 @@ export const DEMO_PERFORMANCE_FORENSICS_CODE = String.raw`
       if (previous) previous.remove();
       const report = performanceForensics();
       const current = report.current;
-      const currentNegative = current.rows.length > 0 && (current.net <= 0 || current.winRate < 0.4 || current.profitFactor < 1);
       const currentText = current.rows.length
         ? current.rows.length + ' cierres actuales · ' + current.wins.length + ' ganadas · ' + current.losses.length
           + ' perdidas · acierto ' + pct(current.winRate) + ' · expectativa ' + eur(current.expectancy)
         : 'sin cierres del motor actual con evidencia completa v1';
+      const readinessText = report.sampleComplete
+        ? (report.qualityPass ? 'muestra mínima completa, revisión todavía PAPER' : 'muestra completa pero negativa')
+        : 'muestra insuficiente: ' + current.rows.length + ' / ' + MIN_CURRENT_CLOSED_TRADES;
       summary.insertAdjacentHTML('beforeend', '<div id="paper-performance-forensics-summary" class="banner '
-        + (currentNegative ? 'bad' : 'warn') + '"><b>Calidad del motor actual:</b> ' + currentText
-        + '. Histórico conservado aparte: ' + report.historical.length + ' cierre(s) de legado. Consulte Rendimiento.</div>');
+        + (report.sampleComplete && !report.qualityPass ? 'bad' : 'warn') + '"><b>Calidad del motor actual:</b> ' + currentText
+        + ' · ' + readinessText + '. Histórico conservado aparte: ' + report.historical.length + ' cierre(s) de legado.</div>');
     };
   }
 
