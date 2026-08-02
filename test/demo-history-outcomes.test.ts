@@ -8,22 +8,23 @@ describe("DEMO history outcome badges", () => {
     expect(html).toContain("GANADORA");
     expect(html).toContain("PERDEDORA");
     expect(html).toContain("ABIERTA");
-    expect(html).toContain("history-outcome winner");
-    expect(html).toContain("history-outcome loser");
-    expect(html).toContain("history-outcome open");
+    expect(html).toContain("#history .history-outcome.winner");
+    expect(html).toContain("#history .history-outcome.loser");
+    expect(html).toContain("#history .history-outcome.open");
   });
 
   it("propagates a sell result to its associated buy without inventing outcomes", async () => {
     const html = await (await demoDashboard()).text();
 
-    expect(html).toContain("const buyId = detailValue(card, 'Compra asociada')");
+    expect(html).toContain("const buyId = historyDetailValue(card, 'Compra asociada')");
     expect(html).toContain("const buyCard = byId.get(buyId)");
-    expect(html).toContain("if (buyCard) setOutcome(buyCard, kind, label, pnlText)");
-    expect(html).toContain("if (side.includes('COMPRA')) setOutcome(card, 'open', 'ABIERTA')");
+    expect(html).toContain("if (buyCard) setHistoryOutcome(buyCard, kind, label, pnlText)");
+    expect(html).toContain("if (side.includes('COMPRA')) setHistoryOutcome(card, 'open', 'ABIERTA')");
   });
 
-  it("keeps LIVE and real orders blocked", async () => {
+  it("keeps a single render pipeline and blocks LIVE", async () => {
     const html = await (await demoDashboard()).text();
+    expect(html.match(/<script>/g)?.length).toBe(2);
     expect(html).toContain("LIVE desactivado");
     expect(html).toContain("Órdenes reales bloqueadas");
   });
