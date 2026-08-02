@@ -22,18 +22,20 @@ export const DEMO_HISTORY_OUTCOMES_CODE = `
   };
 
   const setHistoryOutcome = (card, kind, label, valueText = '') => {
-    card.classList.remove('winner', 'loser', 'open');
-    card.classList.add(kind);
+    const nextText = '● ' + label + (valueText ? ' · ' + valueText : '');
     const summaryText = card.querySelector('.order-head > div:nth-child(2)');
     if (!summaryText) return;
     let badge = summaryText.querySelector('.history-outcome');
+    const alreadyCurrent = card.classList.contains(kind) && badge && badge.className === 'history-outcome ' + kind && badge.textContent === nextText;
+    if (alreadyCurrent) return;
+    card.classList.remove('winner', 'loser', 'open');
+    card.classList.add(kind);
     if (!badge) {
       badge = document.createElement('span');
-      badge.className = 'history-outcome';
       summaryText.appendChild(badge);
     }
     badge.className = 'history-outcome ' + kind;
-    badge.textContent = '● ' + label + (valueText ? ' · ' + valueText : '');
+    badge.textContent = nextText;
   };
 
   function decorateHistoryOutcomes() {
@@ -70,12 +72,13 @@ export const DEMO_HISTORY_OUTCOMES_CODE = `
     });
   }
 
-  const historyObserver = new MutationObserver(() => decorateHistoryOutcomes());
   const startHistoryOutcomes = () => {
-    const panel = document.getElementById('history');
-    if (!panel) return;
-    historyObserver.observe(panel, { childList: true, subtree: true });
     decorateHistoryOutcomes();
+    window.setInterval(decorateHistoryOutcomes, 2000);
   };
   window.addEventListener('load', () => setTimeout(startHistoryOutcomes, 250));
+  document.addEventListener('click', (event) => {
+    const target = event.target;
+    if (target instanceof HTMLElement && (target.getAttribute('data-view') === 'history' || target.id === 'refresh')) setTimeout(decorateHistoryOutcomes, 150);
+  });
 `;
