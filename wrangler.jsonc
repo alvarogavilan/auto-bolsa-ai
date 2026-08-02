@@ -6,7 +6,7 @@
   "vars": {
     "TRADING_MODE": "paper",
     "PAIR": "XBTEUR",
-    "INITIAL_CASH_EUR": "50"
+    "INITIAL_CASH_EUR": "100"
   },
   "durable_objects": {
     "bindings": [
