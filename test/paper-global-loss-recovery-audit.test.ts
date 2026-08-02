@@ -77,7 +77,7 @@ describe("global PAPER loss recovery audit", () => {
   it("persists each recovery veto once per observed cycle", () => {
     const strategies = [strategy("a", -0.1, 30, "PAPER BUY vetada por freno global de Tesorería tras 3 pérdidas consecutivas de cartera")];
     const first = advancePaperOpportunityAuditLedger(emptyPaperOpportunityAuditLedger(1), strategies, 100, 101);
-    expect(first.schemaVersion).toBe("paper-opportunity-audit-ledger-v3");
+    expect(first.schemaVersion).toBe("paper-opportunity-audit-ledger-v4");
     expect(first.rejectedByLossRecovery).toBe(1);
     expect(first.rejectedByExposure).toBe(0);
 
