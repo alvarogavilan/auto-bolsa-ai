@@ -2,10 +2,13 @@ import { buildOperationDossiers } from "./operation-dossier";
 import type { LabStrategyState, LabTrade, ResearchLabState } from "./research-lab";
 
 export const MIN_NEGATIVE_PATTERN_SAMPLE = 5;
+export const EARLY_NEGATIVE_PATTERN_LOSS_STREAK = 3;
 
 export interface NegativePatternVeto {
   blocked: boolean;
+  trigger: "none" | "early-loss-streak" | "statistical-negative-pattern";
   sampleSize: number;
+  consecutiveLosses: number;
   netPnlEur: number;
   profitFactor: number | null;
   lane: LabStrategyState["lane"];
@@ -25,7 +28,18 @@ export function evaluateNegativePatternVeto(
 ): NegativePatternVeto {
   const entryReason = normalizedReason(latestEntry?.reason ?? "");
   if (!latestEntry || latestEntry.side !== "buy") {
-    return { blocked: false, sampleSize: 0, netPnlEur: 0, profitFactor: null, lane: strategy.lane, symbol: strategy.symbol, entryReason, liveTrading: false };
+    return {
+      blocked: false,
+      trigger: "none",
+      sampleSize: 0,
+      consecutiveLosses: 0,
+      netPnlEur: 0,
+      profitFactor: null,
+      lane: strategy.lane,
+      symbol: strategy.symbol,
+      entryReason,
+      liveTrading: false,
+    };
   }
 
   const report = buildOperationDossiers(stateBeforeEntry.strategies);
@@ -43,13 +57,26 @@ export function evaluateNegativePatternVeto(
   const grossLoss = exits.filter((exit) => exit.netPnlEur < 0).reduce((sum, exit) => sum + Math.abs(exit.netPnlEur), 0);
   const netPnlEur = exits.reduce((sum, exit) => sum + exit.netPnlEur, 0);
   const profitFactor = grossLoss > 0 ? grossProfit / grossLoss : grossProfit > 0 ? Number.POSITIVE_INFINITY : null;
-  const blocked = matching.length >= MIN_NEGATIVE_PATTERN_SAMPLE
+  const chronological = [...matching].sort((left, right) => (right.exit?.timestamp ?? 0) - (left.exit?.timestamp ?? 0));
+  let consecutiveLosses = 0;
+  for (const operation of chronological) {
+    if ((operation.exit?.netPnlEur ?? 0) >= 0) break;
+    consecutiveLosses += 1;
+  }
+
+  const earlyLossStreak = consecutiveLosses >= EARLY_NEGATIVE_PATTERN_LOSS_STREAK;
+  const statisticalNegativePattern = matching.length >= MIN_NEGATIVE_PATTERN_SAMPLE
     && netPnlEur < 0
     && (profitFactor ?? 0) < 1;
+  const trigger = statisticalNegativePattern
+    ? "statistical-negative-pattern"
+    : earlyLossStreak ? "early-loss-streak" : "none";
 
   return {
-    blocked,
+    blocked: trigger !== "none",
+    trigger,
     sampleSize: matching.length,
+    consecutiveLosses,
     netPnlEur: Math.round(netPnlEur * 1_000_000) / 1_000_000,
     profitFactor: profitFactor === null || !Number.isFinite(profitFactor)
       ? profitFactor
