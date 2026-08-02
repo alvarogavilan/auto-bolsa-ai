@@ -15,6 +15,7 @@ export interface PaperOpportunityAuditLedgerState {
   rejectedByCommittee: number;
   rejectedByExposure: number;
   rejectedByLossRecovery: number;
+  rejectedByEarlyLossStreak: number;
   rejectedByNegativePattern: number;
   rejectedByMarketMinimum: number;
   rejectedByExecution: number;
@@ -49,6 +50,7 @@ export function emptyPaperOpportunityAuditLedger(now = Date.now()): PaperOpportu
     rejectedByCommittee: 0,
     rejectedByExposure: 0,
     rejectedByLossRecovery: 0,
+    rejectedByEarlyLossStreak: 0,
     rejectedByNegativePattern: 0,
     rejectedByMarketMinimum: 0,
     rejectedByExecution: 0,
@@ -84,6 +86,7 @@ export function sanitizePaperOpportunityAuditLedger(value: unknown, now = Date.n
     rejectedByCommittee: number("rejectedByCommittee"),
     rejectedByExposure: number("rejectedByExposure"),
     rejectedByLossRecovery: number("rejectedByLossRecovery"),
+    rejectedByEarlyLossStreak: number("rejectedByEarlyLossStreak"),
     rejectedByNegativePattern: number("rejectedByNegativePattern"),
     rejectedByMarketMinimum: number("rejectedByMarketMinimum"),
     rejectedByExecution: number("rejectedByExecution"),
@@ -107,6 +110,7 @@ function classify(decision: string): keyof Pick<
   | "rejectedByCommittee"
   | "rejectedByExposure"
   | "rejectedByLossRecovery"
+  | "rejectedByEarlyLossStreak"
   | "rejectedByNegativePattern"
   | "rejectedByMarketMinimum"
   | "rejectedByExecution"
@@ -115,6 +119,7 @@ function classify(decision: string): keyof Pick<
   | "rejectedOther"
 > {
   const value = decision.toLowerCase();
+  if (value.includes("racha temprana del patrón")) return "rejectedByEarlyLossStreak";
   if (value.includes("patrón negativo con evidencia suficiente")) return "rejectedByNegativePattern";
   if (value.includes("freno global de tesorería") || value.includes("pérdidas consecutivas de cartera")) return "rejectedByLossRecovery";
   if (value.includes("spread")) return "rejectedBySpread";

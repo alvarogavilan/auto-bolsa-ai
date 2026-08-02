@@ -140,11 +140,10 @@ export function enforcePaperTreasuryEntry(
     const factor = negativePattern.profitFactor === null
       ? "0"
       : Number.isFinite(negativePattern.profitFactor) ? negativePattern.profitFactor.toFixed(2) : "∞";
-    restoreSnapshot(
-      strategy,
-      snapshot,
-      `PAPER BUY vetada por patrón negativo con evidencia suficiente: ${negativePattern.sampleSize} cierres del mismo carril, activo y motivo de entrada; PnL ${negativePattern.netPnlEur.toFixed(4)} €; profit factor ${factor}.`,
-    );
+    const reason = negativePattern.trigger === "early-loss-streak"
+      ? `PAPER BUY vetada por racha temprana del patrón: ${negativePattern.consecutiveLosses} pérdidas consecutivas del mismo carril, activo y motivo de entrada.`
+      : `PAPER BUY vetada por patrón negativo con evidencia suficiente: ${negativePattern.sampleSize} cierres del mismo carril, activo y motivo de entrada; PnL ${negativePattern.netPnlEur.toFixed(4)} €; profit factor ${factor}.`;
+    restoreSnapshot(strategy, snapshot, reason);
     return { newEntryDetected: true, allowed: false, resized: false, decision: null, liveTrading: false };
   }
 
