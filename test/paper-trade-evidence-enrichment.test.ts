@@ -53,7 +53,8 @@ describe("persisted PAPER trade evidence", () => {
 
     enrichNewPaperTrades(value, candles, beforeClose);
     const report = buildOperationDossiers([value], 200_000);
-    const operation = report.operations[0];
+    expect(report.operations).toHaveLength(1);
+    const operation = report.operations[0]!;
     expect(operation.exit?.linkedEntryTradeId).toBe("buy-1");
     expect(operation.exit?.durationMinutes).toBe(2);
     expect(operation.exit?.grossPnlBeforeCostsEur).toBeGreaterThan(operation.exit?.netPnlEur ?? 0);
