@@ -1,7 +1,7 @@
 import type { LabStrategyState } from "./research-lab";
 
 export interface PaperOpportunityAuditLedgerState {
-  schemaVersion: "paper-opportunity-audit-ledger-v3";
+  schemaVersion: "paper-opportunity-audit-ledger-v4";
   initializedAt: number;
   updatedAt: number;
   cyclesObserved: number;
@@ -15,6 +15,7 @@ export interface PaperOpportunityAuditLedgerState {
   rejectedByCommittee: number;
   rejectedByExposure: number;
   rejectedByLossRecovery: number;
+  rejectedByNegativePattern: number;
   rejectedByMarketMinimum: number;
   rejectedByExecution: number;
   rejectedByTechnicalConfirmation: number;
@@ -34,7 +35,7 @@ export interface PaperOpportunityAuditLedgerReport extends Omit<PaperOpportunity
 
 export function emptyPaperOpportunityAuditLedger(now = Date.now()): PaperOpportunityAuditLedgerState {
   return {
-    schemaVersion: "paper-opportunity-audit-ledger-v3",
+    schemaVersion: "paper-opportunity-audit-ledger-v4",
     initializedAt: now,
     updatedAt: now,
     cyclesObserved: 0,
@@ -48,6 +49,7 @@ export function emptyPaperOpportunityAuditLedger(now = Date.now()): PaperOpportu
     rejectedByCommittee: 0,
     rejectedByExposure: 0,
     rejectedByLossRecovery: 0,
+    rejectedByNegativePattern: 0,
     rejectedByMarketMinimum: 0,
     rejectedByExecution: 0,
     rejectedByTechnicalConfirmation: 0,
@@ -82,6 +84,7 @@ export function sanitizePaperOpportunityAuditLedger(value: unknown, now = Date.n
     rejectedByCommittee: number("rejectedByCommittee"),
     rejectedByExposure: number("rejectedByExposure"),
     rejectedByLossRecovery: number("rejectedByLossRecovery"),
+    rejectedByNegativePattern: number("rejectedByNegativePattern"),
     rejectedByMarketMinimum: number("rejectedByMarketMinimum"),
     rejectedByExecution: number("rejectedByExecution"),
     rejectedByTechnicalConfirmation: number("rejectedByTechnicalConfirmation"),
@@ -104,6 +107,7 @@ function classify(decision: string): keyof Pick<
   | "rejectedByCommittee"
   | "rejectedByExposure"
   | "rejectedByLossRecovery"
+  | "rejectedByNegativePattern"
   | "rejectedByMarketMinimum"
   | "rejectedByExecution"
   | "rejectedByTechnicalConfirmation"
@@ -111,6 +115,7 @@ function classify(decision: string): keyof Pick<
   | "rejectedOther"
 > {
   const value = decision.toLowerCase();
+  if (value.includes("patrón negativo con evidencia suficiente")) return "rejectedByNegativePattern";
   if (value.includes("freno global de tesorería") || value.includes("pérdidas consecutivas de cartera")) return "rejectedByLossRecovery";
   if (value.includes("spread")) return "rejectedBySpread";
   if (value.includes("liquidez") || value.includes("profundidad")) return "rejectedByLiquidity";
