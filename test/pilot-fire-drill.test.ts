@@ -66,9 +66,10 @@ describe("pilot fire drill", () => {
     expect(() => new Function(script)).not.toThrow();
   });
 
-  it("keeps src/index.ts unchanged and isolates the new private adapter", () => {
+  it("keeps the core and fire drill isolated behind the PAPER capital wrapper", () => {
     const core = readFileSync(join(ROOT, "src/index.ts"), "utf8");
     const adapter = readFileSync(join(ROOT, "src/index-fire-drill.ts"), "utf8");
+    const paperWrapper = readFileSync(join(ROOT, "src/index-paper-capital.ts"), "utf8");
     const wrangler = readFileSync(join(ROOT, "wrangler.jsonc"), "utf8");
 
     expect(core).toContain('url.pathname === "/api/pilot/submit"');
@@ -80,6 +81,8 @@ describe("pilot fire drill", () => {
     expect(adapter).toContain("if (!isAuthorized(request, env))");
     expect(adapter).toContain("return coreWorker.fetch(request, env)");
     expect(adapter).toContain("return coreWorker.scheduled(controller, env, ctx)");
-    expect(wrangler).toContain('"main": "src/index-fire-drill.ts"');
+    expect(paperWrapper).toContain('from "./index-fire-drill"');
+    expect(paperWrapper).toContain('INITIAL_CASH_EUR: "100"');
+    expect(wrangler).toContain('"main": "src/index-paper-capital.ts"');
   });
 });
