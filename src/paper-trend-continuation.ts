@@ -9,14 +9,22 @@ export interface TrendContinuationResult {
   liveTrading: false;
 }
 
+const PAPER_MINIMUM_USEFUL_ENTRY_EUR = 5;
+
 function money(value: number): number {
   return Math.round(value * 1_000_000) / 1_000_000;
 }
 
-function laneAllocationPct(strategy: LabStrategyState): number {
-  if (strategy.lane === "fast") return 0.06;
-  if (strategy.lane === "intraday") return 0.08;
-  return 0.1;
+function laneTargetBudgetEur(strategy: LabStrategyState): number {
+  if (strategy.lane === "fast") return 5;
+  if (strategy.lane === "intraday") return 7.5;
+  return 10;
+}
+
+function laneRiskPct(strategy: LabStrategyState): number {
+  if (strategy.lane === "fast") return 0.0025;
+  if (strategy.lane === "intraday") return 0.004;
+  return 0.005;
 }
 
 function executionBlocker(strategy: LabStrategyState, gate: FastEntryGate | null, now: number): string | null {
@@ -66,9 +74,15 @@ export function applyPaperTrendContinuationEntry(
     return { entered: false, blocker: "precio actual no disponible", liveTrading: false };
   }
 
-  const grossBudget = Math.min(5, strategy.cashEur * laneAllocationPct(strategy));
-  if (grossBudget < strategy.estimatedOrderMinimumEur) {
-    return { entered: false, blocker: "mínimo del mercado superior al presupuesto conservador", liveTrading: false };
+  const affordable = strategy.cashEur / (1 + strategy.config.feePctEachSide);
+  const riskBudgetEur = strategy.cashEur * laneRiskPct(strategy);
+  const stopBasedMaximum = strategy.config.stopLossPct > 0
+    ? riskBudgetEur / strategy.config.stopLossPct
+    : laneTargetBudgetEur(strategy);
+  const grossBudget = Math.min(laneTargetBudgetEur(strategy), affordable, stopBasedMaximum);
+  const minimumRequired = Math.max(PAPER_MINIMUM_USEFUL_ENTRY_EUR, strategy.estimatedOrderMinimumEur);
+  if (grossBudget < minimumRequired) {
+    return { entered: false, blocker: `presupuesto seguro inferior al mínimo útil de ${minimumRequired.toFixed(2)} €`, liveTrading: false };
   }
   const price = currentPrice * (1 + strategy.config.slippagePctEachSide);
   const feeEur = grossBudget * strategy.config.feePctEachSide;
@@ -76,7 +90,7 @@ export function applyPaperTrendContinuationEntry(
   if (totalCost > strategy.cashEur) return { entered: false, blocker: "saldo PAPER insuficiente", liveTrading: false };
 
   const quantity = grossBudget / price;
-  const reason = `Continuación alcista multitemporal: consenso ${(chart.timeframeAgreementPct * 100).toFixed(0)} %, confianza ${(chart.confidence * 100).toFixed(0)} %, momentum ${(chart.momentum * 100).toFixed(3)} %`;
+  const reason = `Continuación alcista multitemporal: consenso ${(chart.timeframeAgreementPct * 100).toFixed(0)} %, confianza ${(chart.confidence * 100).toFixed(0)} %, momentum ${(chart.momentum * 100).toFixed(3)} %, asignación ${grossBudget.toFixed(2)} €`;
   strategy.cashEur = money(strategy.cashEur - totalCost);
   strategy.position = {
     quantity,
