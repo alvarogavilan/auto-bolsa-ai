@@ -38,7 +38,8 @@ describe("XAU/USD PAPER cycle ledger", () => {
     ledger = appendXauPaperCycle(ledger, instruction(true));
     ledger = appendXauPaperCycle(ledger, instruction(false, ["Cotización XAU/USD caducada."]));
     expect(ledger.metrics).toMatchObject({ cycles: 2, approved: 1, blocked: 1, staleQuotes: 1 });
-    expect(ledger.cycles[0].realOrderSubmission).toBe(false);
+    expect(ledger.cycles).toHaveLength(2);
+    expect(ledger.cycles[0]?.realOrderSubmission).toBe(false);
     expect(ledger.liveTrading).toBe(false);
   });
 
