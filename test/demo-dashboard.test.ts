@@ -39,12 +39,12 @@ describe("standalone PAPER DEMO dashboard", () => {
     expect(html).toContain("function renderSystem()");
   });
 
-  it("normalizes the nine independent research balances to one 50 euro reference account", async () => {
+  it("uses the single 100 euro PAPER treasury instead of summing research balances", async () => {
     const html = await dashboardHtml();
-    expect(html).toContain("const TARGET=50");
-    expect(html).toContain("scale=t.initial?TARGET/t.initial:1");
-    expect(html).toContain("Cuenta equivalente de 50 €");
-    expect(html).toContain("no suma ficticia de nueve carteras");
+    expect(html).toContain("const TARGET=100");
+    expect(html).toContain("singleSourceOfTruth === true");
+    expect(html).toContain("Tesorería PAPER única de 100 €");
+    expect(html).toContain("no suma ficticia de carteras por estrategia");
   });
 
   it("shows current positions and preserves closed losses in the same account value", async () => {
