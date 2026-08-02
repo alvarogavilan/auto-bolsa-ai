@@ -41,7 +41,7 @@ function strategy(decision: string, lastAttemptAt = 100): LabStrategyState {
 }
 
 describe("persistent negative PAPER pattern audit", () => {
-  it("classifies the veto separately from risk, exposure and recovery", () => {
+  it("classifies the statistical veto separately from risk, exposure and recovery", () => {
     const result = advancePaperOpportunityAuditLedger(
       emptyPaperOpportunityAuditLedger(1),
       [strategy("PAPER BUY vetada por patrón negativo con evidencia suficiente: 5 cierres del mismo carril, activo y motivo de entrada")],
@@ -51,11 +51,28 @@ describe("persistent negative PAPER pattern audit", () => {
 
     expect(result.schemaVersion).toBe("paper-opportunity-audit-ledger-v4");
     expect(result.rejectedByNegativePattern).toBe(1);
+    expect(result.rejectedByEarlyLossStreak).toBe(0);
     expect(result.rejectedByRisk).toBe(0);
     expect(result.rejectedByExposure).toBe(0);
     expect(result.rejectedByLossRecovery).toBe(0);
     expect(result.rejectedOther).toBe(0);
     expect(result.liveTrading).toBe(false);
+  });
+
+  it("classifies the early three-loss brake separately from the statistical veto", () => {
+    const result = advancePaperOpportunityAuditLedger(
+      emptyPaperOpportunityAuditLedger(1),
+      [strategy("PAPER BUY vetada por racha temprana del patrón: 3 pérdidas consecutivas del mismo carril, activo y motivo de entrada")],
+      100,
+      101,
+    );
+
+    expect(result.rejectedByEarlyLossStreak).toBe(1);
+    expect(result.rejectedByNegativePattern).toBe(0);
+    expect(result.rejectedByRisk).toBe(0);
+    expect(result.rejectedByExposure).toBe(0);
+    expect(result.rejectedByLossRecovery).toBe(0);
+    expect(result.rejectedOther).toBe(0);
   });
 
   it("migrates prior ledgers without inventing historical vetoes", () => {
@@ -67,6 +84,7 @@ describe("persistent negative PAPER pattern audit", () => {
 
     expect(migrated.schemaVersion).toBe("paper-opportunity-audit-ledger-v4");
     expect(migrated.rejectedByLossRecovery).toBe(4);
+    expect(migrated.rejectedByEarlyLossStreak).toBe(0);
     expect(migrated.rejectedByNegativePattern).toBe(0);
     expect(migrated.cyclesObserved).toBe(9);
   });
