@@ -3,7 +3,7 @@ import { DEMO_LIVE_PRICES_SCRIPT } from "./demo-live-prices";
 
 const PAPER_AUDIT_SCRIPT = `<script>
 (() => {
-  const esc = (value) => String(value ?? '').replace(/[&<>\"']/g, (char) => ({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot',"'":'&#039;'}[char]));
+  const esc = (value) => String(value ?? '').replace(/[&<>\"']/g, (char) => ({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',"'":'&#039;'}[char]));
   const num = (value) => Number.isFinite(Number(value)) ? Number(value) : 0;
   const eur = (value) => new Intl.NumberFormat('es-ES', { style: 'currency', currency: 'EUR', minimumFractionDigits: 2, maximumFractionDigits: 4 }).format(num(value));
   const date = (value) => value ? new Date(num(value)).toLocaleString('es-ES') : '—';
@@ -59,7 +59,7 @@ const PAPER_AUDIT_SCRIPT = `<script>
     const candidate = sampleReady && hasWinner && pnlReady;
     const verdict = candidate ? 'COHORTE CANDIDATA A REVISIÓN' : 'DINERO REAL BLOQUEADO';
     const verdictClass = candidate ? 'ok' : 'bad';
-    return '<div class="head"><div><h2>Evidencia PAPER</h2><div class="muted">El historial anterior se conserva, pero la lógica corregida se juzga en una cohorte independiente.</div></div><span class="status ' + verdictClass + '">' + verdict + '</span></div>' +
+    return '<div class="head"><div><h2>Evidencia PAPER</h2><div class="muted">El historial anterior se conserva y las pérdidas y comisiones cerradas permanecen contabilizadas, pero la lógica corregida se juzga en una cohorte independiente.</div></div><span class="status ' + verdictClass + '">' + verdict + '</span></div>' +
       '<div class="grid">' +
       '<div class="metric"><span>Histórico anterior · cerradas</span><strong>' + num(legacy.closedTrades) + '</strong></div>' +
       '<div class="metric"><span>Histórico anterior · G/P</span><strong>' + num(legacy.wins) + '/' + num(legacy.losses) + '</strong></div>' +
@@ -72,7 +72,7 @@ const PAPER_AUDIT_SCRIPT = `<script>
       (sampleReady ? '✓' : '✗') + ' 5 cierres nuevos · ' +
       (hasWinner ? '✓' : '✗') + ' alguna ganadora neta · ' +
       (pnlReady ? '✓' : '✗') + ' PnL neto positivo. Esto no activa LIVE automáticamente.</div>' +
-      '<div class="banner warn"><b>Resultado global: ' + wins + '/' + losses + '.</b> No se borra ni maquilla. La evaluación futura se basa en la cohorte posterior a la corrección iniciada el ' + date(cohort.startedAt) + '.</div>';
+      '<div class="banner warn"><b>Resultado global: ' + wins + '/' + losses + '.</b> No se borra ni maquilla: el patrón 0 ganadoras permanece visible. La evaluación futura se basa en la cohorte posterior a la corrección iniciada el ' + date(cohort.startedAt) + '.</div>';
   }
 
   function newsMarkup(payload) {
