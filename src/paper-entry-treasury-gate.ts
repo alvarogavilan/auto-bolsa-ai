@@ -84,14 +84,22 @@ export function enforcePaperTreasuryEntry(
   state: ResearchLabState,
   snapshot: PaperEntrySnapshot,
 ): PaperEntryTreasuryGateResult {
-  if (snapshot.position !== null || strategy.position === null) {
+  if (strategy.position === null) {
     return { newEntryDetected: false, allowed: true, resized: false, decision: null, liveTrading: false };
   }
 
+  const previousCostEur = snapshot.position?.costEur ?? 0;
+  const increasedCostEur = strategy.position.costEur - previousCostEur;
   const latest = strategy.trades[0];
-  const requestedGrossEur = latest?.side === "buy"
+  const latestIsNewBuy = latest?.side === "buy"
+    && (snapshot.trades[0]?.id !== latest.id || strategy.trades.length > snapshot.trades.length);
+  if (!latestIsNewBuy && increasedCostEur <= 0.000001) {
+    return { newEntryDetected: false, allowed: true, resized: false, decision: null, liveTrading: false };
+  }
+
+  const requestedGrossEur = latestIsNewBuy && latest
     ? latest.grossEur
-    : strategy.position.costEur / (1 + strategy.config.feePctEachSide);
+    : increasedCostEur / (1 + strategy.config.feePctEachSide);
   const decision = evaluateTreasuryEntry(strategy, stateBeforeEntry(strategy, state, snapshot), requestedGrossEur);
 
   if (!decision.allowed || decision.maximumBudgetEur < 5) {
@@ -111,20 +119,26 @@ export function enforcePaperTreasuryEntry(
       return { newEntryDetected: true, allowed: false, resized: false, decision, liveTrading: false };
     }
     const feeEur = approvedGrossEur * strategy.config.feePctEachSide;
-    const totalCostEur = approvedGrossEur + feeEur;
-    if (totalCostEur > snapshot.cashEur) {
+    const totalIncrementalCostEur = approvedGrossEur + feeEur;
+    if (totalIncrementalCostEur > snapshot.cashEur) {
       restoreSnapshot(strategy, snapshot, "PAPER BUY vetada: saldo insuficiente para el presupuesto aprobado por Tesorería.");
       return { newEntryDetected: true, allowed: false, resized: false, decision, liveTrading: false };
     }
-    const quantity = approvedGrossEur / latest.price;
-    strategy.cashEur = money(snapshot.cashEur - totalCostEur);
-    strategy.position = { ...strategy.position, quantity, costEur: totalCostEur };
+    const addedQuantity = approvedGrossEur / latest.price;
+    const previousQuantity = snapshot.position?.quantity ?? 0;
+    const totalQuantity = previousQuantity + addedQuantity;
+    strategy.cashEur = money(snapshot.cashEur - totalIncrementalCostEur);
+    strategy.position = {
+      ...strategy.position,
+      quantity: totalQuantity,
+      costEur: money(previousCostEur + totalIncrementalCostEur),
+    };
     strategy.performance.totalFeesEur = money(snapshot.performance.totalFeesEur + feeEur);
-    latest.quantity = quantity;
+    latest.quantity = addedQuantity;
     latest.grossEur = approvedGrossEur;
     latest.feeEur = feeEur;
     latest.reason = `${latest.reason}. Tesorería única autorizó ${approvedGrossEur.toFixed(2)} €.`;
-    strategy.equityEur = money(strategy.cashEur + quantity * latest.price);
+    strategy.equityEur = money(strategy.cashEur + totalQuantity * latest.price);
   }
 
   strategy.lastDecision = `${strategy.lastDecision} Autorización Tesorería: ${approvedGrossEur.toFixed(2)} €; exposición previa ${decision.totalOpenExposureEur.toFixed(2)} €.`;
