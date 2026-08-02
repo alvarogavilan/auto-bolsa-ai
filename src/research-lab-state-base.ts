@@ -95,7 +95,10 @@ export class ResearchLabState extends DurableObject<Env> {
         const newsContext = buildNewsDecisionContext(news, strategy.base);
         const executionGate = payload.executionGates[strategy.pairKey] ?? null;
         applyResearchCandles(strategy, candles, now, executionGate, newsContext);
-        applyPaperTrendContinuationEntry(strategy, candles, now, executionGate, newsContext);
+        const continuation = applyPaperTrendContinuationEntry(strategy, candles, now, executionGate, newsContext);
+        if (!continuation.entered && continuation.blocker && strategy.lastDecision === "Sin señal válida para el carril") {
+          strategy.lastDecision = `Continuación PAPER descartada: ${continuation.blocker}`;
+        }
       } catch (error) { recordResearchError(strategy, error, now); }
     }
     state.cycles += 1; state.lastCycleAt = now;
