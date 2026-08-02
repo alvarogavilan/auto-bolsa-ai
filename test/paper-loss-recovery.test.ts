@@ -25,8 +25,9 @@ function intelligence(trend: "bullish" | "bearish" | "sideways", sizeFactor: num
   return {
     news: { vetoNewLong: false, sizeFactor: 1, relevantSignals: 0 } as AppliedIntelligenceContext["news"],
     chart: {
-      schemaVersion: "chart-intelligence-v1",
+      schemaVersion: "chart-intelligence-v2",
       trend,
+      regime: trend === "sideways" ? "range" : "trend",
       momentum: trend === "bullish" ? 0.01 : 0,
       volatilityPct: 0.01,
       support: 90,
@@ -34,6 +35,9 @@ function intelligence(trend: "bullish" | "bearish" | "sideways", sizeFactor: num
       confidence: 0.9,
       sizeFactor,
       vetoNewLong: trend === "bearish",
+      breakoutConfirmed: trend === "bullish",
+      timeframeAgreementPct: trend === "bullish" ? 1 : 0.5,
+      timeframes: [],
       reasons: [],
       liveTrading: false,
     },
