@@ -1,7 +1,7 @@
 import type { LabStrategyState, ResearchLabState } from "./research-lab";
 
 export interface PaperOpportunityDiagnostics {
-  schemaVersion: "paper-opportunity-diagnostics-v2";
+  schemaVersion: "paper-opportunity-diagnostics-v3";
   generatedAt: number;
   strategiesObserved: number;
   activeStrategies: number;
@@ -10,12 +10,19 @@ export interface PaperOpportunityDiagnostics {
   strategiesWithFreshAnalysis: number;
   strategiesOverdue: number;
   strategiesWithoutSuccessfulCycle: number;
+  healthyFlatStrategies: number;
+  overdueFlatStrategies: number;
+  dominantBlocker: string | null;
+  dominantBlockerCount: number;
+  operationalStatus: "positions-open" | "flat-healthy" | "flat-runtime-delayed" | "flat-no-successful-cycles";
+  operationalExplanation: string;
   blockerCounts: Record<string, number>;
   blockersByStrategy: Array<{
     id: string;
     lane: string;
     symbol: string;
     positionOpen: boolean;
+    blockerCategory: string | null;
     lastDecision: string;
     lastSuccessfulAt: number | null;
     freshnessWindowMinutes: number;
@@ -26,8 +33,6 @@ export interface PaperOpportunityDiagnostics {
 
 function classify(decision: string): string {
   const value = decision.toLowerCase();
-  if (value.startsWith("paper buy")) return "entry-opened";
-  if (value.startsWith("paper sell")) return "position-closed";
   if (value.includes("noticias")) return "news-veto";
   if (value.includes("gráfica")) return "chart-veto";
   if (value.includes("ejecución") || value.includes("profundidad")) return "execution-gate";
@@ -43,9 +48,6 @@ function classify(decision: string): string {
 }
 
 function freshnessWindowMs(strategy: LabStrategyState): number {
-  // A strategy is considered healthy for one full expected interval plus a
-  // scheduling/network grace period. This avoids falsely marking 60-minute
-  // swing strategies as stale under the former fixed 20-minute threshold.
   const intervalMs = Math.max(1, strategy.config.intervalMinutes) * 60_000;
   const graceMs = Math.max(10 * 60_000, Math.min(30 * 60_000, intervalMs * 0.5));
   return intervalMs + graceMs;
@@ -56,36 +58,99 @@ function isOverdue(strategy: LabStrategyState, now: number): boolean {
   return now - strategy.lastSuccessfulAt > freshnessWindowMs(strategy);
 }
 
+function dominantBlocker(blockerCounts: Record<string, number>): { category: string | null; count: number } {
+  const ordered = Object.entries(blockerCounts).sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]));
+  return ordered.length === 0 ? { category: null, count: 0 } : { category: ordered[0][0], count: ordered[0][1] };
+}
+
+function explainOperationalStatus(
+  positionsOpen: number,
+  flatStrategies: number,
+  healthyFlatStrategies: number,
+  overdueFlatStrategies: number,
+  withoutSuccessfulCycle: number,
+  blocker: { category: string | null; count: number },
+): { status: PaperOpportunityDiagnostics["operationalStatus"]; explanation: string } {
+  if (positionsOpen > 0) {
+    return {
+      status: "positions-open",
+      explanation: `${positionsOpen} posición(es) PAPER abierta(s); ${flatStrategies} estrategia(s) continúan buscando oportunidades.`,
+    };
+  }
+  if (flatStrategies > 0 && withoutSuccessfulCycle === flatStrategies) {
+    return {
+      status: "flat-no-successful-cycles",
+      explanation: `Las ${flatStrategies} estrategias están planas y todavía no han completado ningún ciclo correcto.`,
+    };
+  }
+  if (overdueFlatStrategies > 0 && healthyFlatStrategies === 0) {
+    return {
+      status: "flat-runtime-delayed",
+      explanation: `No hay posiciones y las ${overdueFlatStrategies} estrategias planas están fuera de su ventana normal de actualización.`,
+    };
+  }
+  const blockerText = blocker.category === null
+    ? "sin un bloqueo dominante identificado"
+    : `con bloqueo dominante ${blocker.category} en ${blocker.count} estrategia(s)`;
+  return {
+    status: "flat-healthy",
+    explanation: `No hay posiciones abiertas, pero ${healthyFlatStrategies} estrategia(s) planas tienen análisis vigente, ${blockerText}.`,
+  };
+}
+
 export function buildPaperOpportunityDiagnostics(
   state: ResearchLabState,
   now = Date.now(),
 ): PaperOpportunityDiagnostics {
   const blockerCounts: Record<string, number> = {};
   const blockersByStrategy = state.strategies.map((strategy) => {
-    const category = classify(strategy.lastDecision);
-    blockerCounts[category] = (blockerCounts[category] ?? 0) + 1;
+    const overdue = isOverdue(strategy, now);
+    const positionOpen = strategy.position !== null;
+    const blockerCategory = positionOpen ? null : classify(strategy.lastDecision);
+    if (blockerCategory !== null) blockerCounts[blockerCategory] = (blockerCounts[blockerCategory] ?? 0) + 1;
     const windowMs = freshnessWindowMs(strategy);
     return {
       id: strategy.id,
       lane: strategy.lane,
       symbol: strategy.symbol,
-      positionOpen: strategy.position !== null,
+      positionOpen,
+      blockerCategory,
       lastDecision: strategy.lastDecision,
       lastSuccessfulAt: strategy.lastSuccessfulAt,
       freshnessWindowMinutes: windowMs / 60_000,
-      overdue: isOverdue(strategy, now),
+      overdue,
     };
   });
+  const positionsOpen = state.strategies.filter((strategy) => strategy.position !== null).length;
+  const positionsFlat = state.strategies.length - positionsOpen;
+  const healthyFlatStrategies = state.strategies.filter((strategy) => strategy.position === null && !isOverdue(strategy, now)).length;
+  const overdueFlatStrategies = state.strategies.filter((strategy) => strategy.position === null && isOverdue(strategy, now)).length;
+  const strategiesWithoutSuccessfulCycle = state.strategies.filter((strategy) => strategy.lastSuccessfulAt === null).length;
+  const dominant = dominantBlocker(blockerCounts);
+  const operational = explainOperationalStatus(
+    positionsOpen,
+    positionsFlat,
+    healthyFlatStrategies,
+    overdueFlatStrategies,
+    strategiesWithoutSuccessfulCycle,
+    dominant,
+  );
   return {
-    schemaVersion: "paper-opportunity-diagnostics-v2",
+    schemaVersion: "paper-opportunity-diagnostics-v3",
     generatedAt: now,
     strategiesObserved: state.strategies.length,
     activeStrategies: state.strategies.filter((strategy) => strategy.status === "active").length,
-    positionsOpen: state.strategies.filter((strategy) => strategy.position !== null).length,
-    positionsFlat: state.strategies.filter((strategy) => strategy.position === null).length,
+    positionsOpen,
+    positionsFlat,
     strategiesWithFreshAnalysis: state.strategies.filter((strategy) => !isOverdue(strategy, now)).length,
     strategiesOverdue: state.strategies.filter((strategy) => isOverdue(strategy, now)).length,
-    strategiesWithoutSuccessfulCycle: state.strategies.filter((strategy) => strategy.lastSuccessfulAt === null).length,
+    strategiesWithoutSuccessfulCycle,
+    healthyFlatStrategies,
+    overdueFlatStrategies,
+    dominantBlocker: dominant.category,
+    dominantBlockerCount: dominant.count,
+    operationalStatus: operational.status,
+    operationalExplanation: operational.explanation,
     blockerCounts,
     blockersByStrategy,
     liveTrading: false,
