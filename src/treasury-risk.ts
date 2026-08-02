@@ -146,7 +146,8 @@ export function buildTreasuryReport(state: ResearchLabState | null): Record<stri
   return {
     schemaVersion: "paper-treasury-department-v2",
     snapshotSchemaVersion,
-    department: "Tesorería PAPER única",
+    department: "Treasury & Portfolio Risk",
+    operationalModel: "Tesorería PAPER única",
     ...snapshotValues,
     reserveCashPct: PAPER_RESERVE_CASH_PCT,
     maximumAggregateExposurePct: PAPER_MAXIMUM_AGGREGATE_EXPOSURE_PCT,
