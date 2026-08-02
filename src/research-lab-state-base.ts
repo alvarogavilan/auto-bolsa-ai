@@ -5,6 +5,7 @@ import { fetchOhlc } from "./kraken";
 import type { MarketUniverse } from "./market-universe";
 import { buildNewsDecisionContext } from "./news-decision-context";
 import { buildNewsIntelligence } from "./news-intelligence";
+import { buildPaperOpportunityDiagnostics } from "./paper-opportunity-diagnostics";
 import { applyPaperTrendContinuationEntry } from "./paper-trend-continuation";
 import {
   applyResearchCandles,
@@ -78,7 +79,15 @@ export class ResearchLabState extends DurableObject<Env> {
     return { schemaVersion: "fast-entry-execution-gates-v1", requiredForNewFastEntries: true, safetyExitsRemainAllowed: true, fastStrategyCount: fastStrategies.length, gatesAvailable: strategies.filter((strategy) => strategy.gateAvailable).length, entriesCurrentlyAllowed: strategies.filter((strategy) => strategy.entryAllowed).length, strategies, liveTrading: false };
   }
   private buildAnalysis(state: StoredResearchLabState, gates: FastExecutionGates, benchmarks: PaperBenchmarkMap, now: number): Record<string, unknown> {
-    return { summary: summarizeResearchLab(state, now), shadowLiveDemo: buildShadowLiveDemo(state, gates, benchmarks, now), fastExecutionGates: this.executionGateSummary(state, gates, now), benchmarkComparison: buildBenchmarkComparison(state.strategies, benchmarks), benchmarkSuite: buildBenchmarkSuite(state.strategies, benchmarks), committee: buildResearchCommitteeReport(state, gates, benchmarks, now) };
+    return {
+      summary: summarizeResearchLab(state, now),
+      opportunityDiagnostics: buildPaperOpportunityDiagnostics(state, now),
+      shadowLiveDemo: buildShadowLiveDemo(state, gates, benchmarks, now),
+      fastExecutionGates: this.executionGateSummary(state, gates, now),
+      benchmarkComparison: buildBenchmarkComparison(state.strategies, benchmarks),
+      benchmarkSuite: buildBenchmarkSuite(state.strategies, benchmarks),
+      committee: buildResearchCommitteeReport(state, gates, benchmarks, now),
+    };
   }
   private async tick(payload: ResearchLabTickPayload): Promise<Response> {
     const now = Date.now();
