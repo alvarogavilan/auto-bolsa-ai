@@ -2,6 +2,7 @@ import type { Candle } from "./types";
 import type { MarketCandidate, MarketUniverse, ResearchLaneId } from "./market-universe";
 import type { NewsDecisionContext } from "./news-decision-context";
 import { interpretChart, type ChartIntelligence } from "./chart-intelligence";
+import { reconcileResearchLabRoster } from "./research-lab-roster-reconciliation";
 import {
   applyResearchCandles as applyBaseResearchCandles,
   initializeResearchLab as initializeBaseResearchLab,
@@ -61,11 +62,8 @@ export function initializeResearchLab(universe: MarketUniverse, now = Date.now()
 }
 
 export function reconcileResearchLab(state: ResearchLabState, universe: MarketUniverse, now = Date.now()): ResearchLabState {
-  const desired = initializeResearchLab(universe, now);
-  const goldStrategies = desired.strategies.filter((strategy) => strategy.base.toUpperCase() === "XAUT");
-  const known = new Set(state.strategies.map((strategy) => strategy.id));
-  for (const strategy of goldStrategies) if (!known.has(strategy.id)) { state.strategies.push(strategy); known.add(strategy.id); }
-  return state;
+  const adaptedUniverse = withTokenizedGold(universe);
+  return reconcileResearchLabRoster(state, adaptedUniverse, now).state;
 }
 
 function laneMaximumAllocation(lane: ResearchLaneId): number {
