@@ -19,6 +19,9 @@ import {
 
 export { isStrategyDue, recordResearchError, summarizeResearchLab, type FastEntryGate, type ResearchLabState };
 
+const PAPER_CAPITAL_PER_STRATEGY_EUR = 100;
+const PAPER_MINIMUM_USEFUL_ENTRY_EUR = 5;
+
 export interface AppliedIntelligenceContext {
   news: NewsDecisionContext | null;
   chart: ChartIntelligence;
@@ -57,19 +60,31 @@ function withTokenizedGold(universe: MarketUniverse): MarketUniverse {
   };
 }
 
+function normalizePaperCapital(state: ResearchLabState): ResearchLabState {
+  for (const strategy of state.strategies) {
+    const delta = Math.max(0, PAPER_CAPITAL_PER_STRATEGY_EUR - strategy.initialCashEur);
+    if (delta <= 0) continue;
+    strategy.initialCashEur += delta;
+    strategy.cashEur += delta;
+    strategy.equityEur += delta;
+    strategy.peakEquityEur += delta;
+  }
+  return state;
+}
+
 export function initializeResearchLab(universe: MarketUniverse, now = Date.now()): ResearchLabState {
-  return initializeBaseResearchLab(withTokenizedGold(universe), now);
+  return normalizePaperCapital(initializeBaseResearchLab(withTokenizedGold(universe), now));
 }
 
 export function reconcileResearchLab(state: ResearchLabState, universe: MarketUniverse, now = Date.now()): ResearchLabState {
   const adaptedUniverse = withTokenizedGold(universe);
-  return reconcileResearchLabRoster(state, adaptedUniverse, now).state;
+  return normalizePaperCapital(reconcileResearchLabRoster(state, adaptedUniverse, now).state);
 }
 
-function laneMaximumAllocation(lane: ResearchLaneId): number {
-  if (lane === "fast") return 0.08;
-  if (lane === "intraday") return 0.14;
-  return 0.2;
+function laneMaximumBudgetEur(lane: ResearchLaneId): number {
+  if (lane === "fast") return 5;
+  if (lane === "intraday") return 7.5;
+  return 10;
 }
 
 function clamp(value: number, minimum: number, maximum: number): number {
@@ -109,7 +124,8 @@ function adaptivePaperBudget(strategy: LabStrategyState, cashBefore: number, int
   budget: number; allocationPct: number; riskBudgetEur: number; evidenceFactor: number; costFactor: number; intelligenceFactor: number;
 } {
   const equity = Math.max(0, cashBefore);
-  const maximumAllocation = equity * laneMaximumAllocation(strategy.lane);
+  const affordable = cashBefore / (1 + strategy.config.feePctEachSide);
+  const maximumAllocation = Math.min(affordable, laneMaximumBudgetEur(strategy.lane));
   const accountRiskPct = strategy.lane === "fast" ? 0.0025 : strategy.lane === "intraday" ? 0.004 : 0.005;
   const riskBudgetEur = equity * accountRiskPct;
   const stopBasedMaximum = strategy.config.stopLossPct > 0 ? riskBudgetEur / strategy.config.stopLossPct : maximumAllocation;
@@ -123,10 +139,13 @@ function adaptivePaperBudget(strategy: LabStrategyState, cashBefore: number, int
   const drawdownFactor = clamp(1 - strategy.maxDrawdownPct * 8, 0.5, 1);
   const newsFactor = intelligence.news?.sizeFactor ?? 0.8;
   const intelligenceFactor = clamp(newsFactor * intelligence.chart.sizeFactor, 0, 1.15);
-  const rawBudget = Math.min(maximumAllocation, stopBasedMaximum) * evidenceFactor * costFactor * drawdownFactor * intelligenceFactor;
-  const affordable = cashBefore / (1 + strategy.config.feePctEachSide);
-  const minimum = intelligenceFactor === 0 ? 0 : Math.min(affordable, strategy.estimatedOrderMinimumEur);
-  const budget = intelligenceFactor === 0 ? 0 : clamp(rawBudget, minimum, Math.min(affordable, maximumAllocation));
+  const riskCappedMaximum = Math.min(maximumAllocation, stopBasedMaximum);
+  const rawBudget = riskCappedMaximum * evidenceFactor * costFactor * drawdownFactor * intelligenceFactor;
+  const canPlaceUsefulOrder = intelligenceFactor > 0
+    && riskCappedMaximum >= PAPER_MINIMUM_USEFUL_ENTRY_EUR
+    && maximumAllocation >= Math.max(PAPER_MINIMUM_USEFUL_ENTRY_EUR, strategy.estimatedOrderMinimumEur);
+  const minimum = Math.max(PAPER_MINIMUM_USEFUL_ENTRY_EUR, strategy.estimatedOrderMinimumEur);
+  const budget = canPlaceUsefulOrder ? clamp(rawBudget, minimum, riskCappedMaximum) : 0;
   return { budget, allocationPct: equity > 0 ? budget / equity : 0, riskBudgetEur, evidenceFactor, costFactor, intelligenceFactor };
 }
 
@@ -146,7 +165,9 @@ function resizeLatestPaperBuy(strategy: LabStrategyState, cashBefore: number, in
     strategy.equityEur = cashBefore;
     strategy.lastDecision = recoveryBlocker
       ? `PAPER BUY vetada por ${recoveryBlocker}.`
-      : `PAPER BUY vetada por inteligencia: noticias=${intelligence.news?.vetoNewLong ?? false}; gráfica=${intelligence.chart.vetoNewLong}.`;
+      : sizing.budget <= 0
+        ? `PAPER BUY vetada: no alcanza el tamaño útil mínimo de ${PAPER_MINIMUM_USEFUL_ENTRY_EUR.toFixed(0)} € respetando riesgo, costes y saldo.`
+        : `PAPER BUY vetada por inteligencia: noticias=${intelligence.news?.vetoNewLong ?? false}; gráfica=${intelligence.chart.vetoNewLong}.`;
     return;
   }
   if (!Number.isFinite(sizing.budget) || Math.abs(sizing.budget - originalGross) < 0.000001) return;
@@ -159,7 +180,7 @@ function resizeLatestPaperBuy(strategy: LabStrategyState, cashBefore: number, in
   latest.quantity = quantity;
   latest.grossEur = sizing.budget;
   latest.feeEur = fee;
-  latest.reason = `${latest.reason}. Asignación PAPER adaptativa ${(sizing.allocationPct * 100).toFixed(1)} %; riesgo ${sizing.riskBudgetEur.toFixed(4)} €; evidencia ${(sizing.evidenceFactor * 100).toFixed(0)} %; costes ${(sizing.costFactor * 100).toFixed(0)} %; noticias+gráfica ${(sizing.intelligenceFactor * 100).toFixed(0)} %. Tendencia ${intelligence.chart.trend}; señales noticia ${intelligence.news?.relevantSignals ?? 0}.`;
+  latest.reason = `${latest.reason}. Asignación PAPER adaptativa ${(sizing.allocationPct * 100).toFixed(1)} %; importe ${sizing.budget.toFixed(2)} €; riesgo ${sizing.riskBudgetEur.toFixed(4)} €; evidencia ${(sizing.evidenceFactor * 100).toFixed(0)} %; costes ${(sizing.costFactor * 100).toFixed(0)} %; noticias+gráfica ${(sizing.intelligenceFactor * 100).toFixed(0)} %. Tendencia ${intelligence.chart.trend}; señales noticia ${intelligence.news?.relevantSignals ?? 0}.`;
   strategy.performance.totalFeesEur = Math.round((strategy.performance.totalFeesEur - originalGross * strategy.config.feePctEachSide + fee) * 1_000_000) / 1_000_000;
   strategy.equityEur = Math.round((strategy.cashEur + quantity * latest.price) * 1_000_000) / 1_000_000;
   strategy.lastDecision = `PAPER BUY dimensionada por comité: ${latest.reason}`;
