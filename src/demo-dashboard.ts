@@ -86,11 +86,6 @@ export async function demoDashboard(): Promise<Response> {
     .replace("const TARGET=50;", "const TARGET=100;")
     .replace("Cuenta equivalente de 50 €, separada del capital técnico multi-estrategia.", "Tesorería PAPER única de 100 €, con PnL histórico íntegro y carteras por estrategia solo comparativas.")
     .replace("Cuenta equivalente de 50 €; no suma ficticia de nueve carteras.", "Tesorería PAPER única de 100 €; no suma ficticia de carteras por estrategia.")
-    .replace("NO APTO PARA REAL", "NO APTO LIVE")
-    .replace("Posiciones abiertas y cerradas", "Posiciones vigentes · Posiciones abiertas y cerradas")
-    .replace("Mismo estado contable de Resumen, sin bloques heredados.", "Estado exacto de la Tesorería única mostrada en Resumen; las posiciones antiguas inferiores a 5 € se identifican como legado.")
-    .replace("Cerradas · G/P", "Cerradas · G/P netas")
-    .replace("JSON.stringify", "String")
     .replace("</body>", `${DEMO_SINGLE_TREASURY_CODE}${liveScript}</body>`);
 
   const headers = new Headers(response.headers);
