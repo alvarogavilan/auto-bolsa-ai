@@ -21,7 +21,12 @@ function strategyWithLosses(losses: number, roundTripCostPct = 0.008): LabStrate
   } as LabStrategyState;
 }
 
-function intelligence(trend: "bullish" | "bearish" | "sideways", sizeFactor: number): AppliedIntelligenceContext {
+function intelligence(
+  trend: "bullish" | "bearish" | "sideways",
+  sizeFactor: number,
+  timeframeAgreementPct = trend === "bullish" ? 1 : 0.5,
+  breakoutConfirmed = trend === "bullish",
+): AppliedIntelligenceContext {
   return {
     news: { vetoNewLong: false, sizeFactor: 1, relevantSignals: 0 } as AppliedIntelligenceContext["news"],
     chart: {
@@ -35,8 +40,8 @@ function intelligence(trend: "bullish" | "bearish" | "sideways", sizeFactor: num
       confidence: 0.9,
       sizeFactor,
       vetoNewLong: trend === "bearish",
-      breakoutConfirmed: trend === "bullish",
-      timeframeAgreementPct: trend === "bullish" ? 1 : 0.5,
+      breakoutConfirmed,
+      timeframeAgreementPct,
       timeframes: [],
       reasons: [],
       liveTrading: false,
@@ -45,15 +50,25 @@ function intelligence(trend: "bullish" | "bearish" | "sideways", sizeFactor: num
 }
 
 describe("PAPER loss recovery gate", () => {
-  it("blocks ordinary entries after four consecutive losses", () => {
-    expect(paperLossRecoveryBlocker(strategyWithLosses(4), intelligence("sideways", 0.7))).toContain("modo recuperación");
+  it("activates the brake after two consecutive losses", () => {
+    expect(paperLossRecoveryBlocker(strategyWithLosses(2), intelligence("sideways", 0.7))).toContain("freno PAPER");
   });
 
-  it("allows an exceptional bullish and cost-efficient setup after four losses", () => {
-    expect(paperLossRecoveryBlocker(strategyWithLosses(4), intelligence("bullish", 1.05))).toBeNull();
+  it("does not brake before the second consecutive loss", () => {
+    expect(paperLossRecoveryBlocker(strategyWithLosses(1), intelligence("sideways", 0.7))).toBeNull();
   });
 
-  it("uses a stricter cost threshold after eight losses without a win", () => {
-    expect(paperLossRecoveryBlocker(strategyWithLosses(8, 0.016), intelligence("bullish", 1.1))).toContain("modo recuperación");
+  it("requires a confirmed breakout and strong timeframe agreement during recovery", () => {
+    expect(paperLossRecoveryBlocker(strategyWithLosses(2), intelligence("bullish", 1.05, 0.6, true))).toContain("freno PAPER");
+    expect(paperLossRecoveryBlocker(strategyWithLosses(2), intelligence("bullish", 1.05, 0.9, false))).toContain("freno PAPER");
+  });
+
+  it("allows only an exceptional bullish and cost-efficient setup after two losses", () => {
+    expect(paperLossRecoveryBlocker(strategyWithLosses(2), intelligence("bullish", 1.05, 0.9, true))).toBeNull();
+  });
+
+  it("becomes stricter after four losses without a win", () => {
+    expect(paperLossRecoveryBlocker(strategyWithLosses(4, 0.01), intelligence("bullish", 1.05, 0.95, true))).toContain("freno PAPER");
+    expect(paperLossRecoveryBlocker(strategyWithLosses(4, 0.006), intelligence("bullish", 1.12, 0.95, true))).toBeNull();
   });
 });

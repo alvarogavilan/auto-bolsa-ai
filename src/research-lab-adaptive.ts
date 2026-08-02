@@ -22,6 +22,7 @@ export { isStrategyDue, recordResearchError, summarizeResearchLab, type FastEntr
 
 const PAPER_CAPITAL_PER_STRATEGY_EUR = 100;
 const PAPER_MINIMUM_USEFUL_ENTRY_EUR = 5;
+const PAPER_RECOVERY_LOSS_STREAK = 2;
 
 export interface AppliedIntelligenceContext {
   news: NewsDecisionContext | null;
@@ -103,22 +104,24 @@ export function paperLossRecoveryBlocker(
   intelligence: AppliedIntelligenceContext,
 ): string | null {
   const recent = recentClosedTrades(strategy, 12);
-  if (recent.length < 4) return null;
+  if (recent.length < PAPER_RECOVERY_LOSS_STREAK) return null;
 
   const wins = recent.filter((trade) => (trade.pnlEur ?? 0) > 0).length;
   const consecutiveLosses = recent.findIndex((trade) => (trade.pnlEur ?? 0) > 0);
   const losingStreak = consecutiveLosses === -1 ? recent.length : consecutiveLosses;
-  if (losingStreak < 4) return null;
+  if (losingStreak < PAPER_RECOVERY_LOSS_STREAK) return null;
 
+  const severeRecovery = losingStreak >= 4 && wins === 0;
   const expectedMove = Math.max(strategy.config.takeProfitPct, 0.0001);
   const costRatio = strategy.estimatedTakerRoundTripCostPct / expectedMove;
-  const bullishChart = intelligence.chart.trend === "bullish";
-  const strongChart = intelligence.chart.sizeFactor >= (losingStreak >= 8 && wins === 0 ? 1.05 : 0.95);
-  const exceptionalCosts = costRatio <= (losingStreak >= 8 && wins === 0 ? 0.3 : 0.45);
+  const bullishChart = intelligence.chart.trend === "bullish" && intelligence.chart.breakoutConfirmed === true;
+  const strongChart = intelligence.chart.sizeFactor >= (severeRecovery ? 1.1 : 1.02)
+    && intelligence.chart.timeframeAgreementPct >= (severeRecovery ? 0.9 : 0.75);
+  const exceptionalCosts = costRatio <= (severeRecovery ? 0.2 : 0.3);
   const newsSafe = intelligence.news?.vetoNewLong !== true;
 
   if (bullishChart && strongChart && exceptionalCosts && newsSafe) return null;
-  return `modo recuperación tras ${losingStreak} pérdidas consecutivas: exige tendencia alcista fuerte, costes muy inferiores al objetivo y ausencia de veto informativo`;
+  return `freno PAPER tras ${losingStreak} pérdidas consecutivas: solo admite ruptura alcista confirmada, acuerdo temporal alto, costes excepcionalmente bajos y ausencia de veto informativo`;
 }
 
 function adaptivePaperBudget(strategy: LabStrategyState, cashBefore: number, intelligence: AppliedIntelligenceContext): {
