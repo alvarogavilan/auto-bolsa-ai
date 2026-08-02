@@ -7,6 +7,8 @@ import type {
 } from "./research-lab";
 import { evaluateTreasuryEntry, type TreasuryDecision } from "./treasury-risk";
 
+const GLOBAL_PAPER_LOSS_STREAK_LIMIT = 3;
+
 export interface PaperEntrySnapshot {
   cashEur: number;
   equityEur: number;
@@ -79,6 +81,40 @@ function stateBeforeEntry(
   };
 }
 
+interface ClosedPaperTrade {
+  timestamp: number;
+  pnlEur: number;
+}
+
+function recentGlobalClosedTrades(state: ResearchLabState, maximum = 20): ClosedPaperTrade[] {
+  return state.strategies
+    .flatMap((item) => item.trades)
+    .filter((trade): trade is LabTrade & { pnlEur: number } => (
+      trade.side === "sell"
+      && typeof trade.pnlEur === "number"
+      && Number.isFinite(trade.pnlEur)
+    ))
+    .map((trade) => ({ timestamp: trade.timestamp, pnlEur: trade.pnlEur }))
+    .sort((left, right) => right.timestamp - left.timestamp)
+    .slice(0, maximum);
+}
+
+export function globalPaperLosingStreak(state: ResearchLabState): number {
+  const recent = recentGlobalClosedTrades(state);
+  const firstNonLoss = recent.findIndex((trade) => trade.pnlEur >= 0);
+  return firstNonLoss === -1 ? recent.length : firstNonLoss;
+}
+
+function exceptionalGlobalRecoveryEntry(strategy: LabStrategyState, latest: LabTrade | undefined): boolean {
+  if (!latest || latest.side !== "buy") return false;
+  const reason = latest.reason.toLowerCase();
+  const confirmedContinuation = reason.includes("ruptura") || reason.includes("continuación");
+  const expectedMove = Math.max(strategy.config.takeProfitPct, 0.0001);
+  const costRatio = strategy.estimatedTakerRoundTripCostPct / expectedMove;
+  const noKnownVeto = !strategy.lastDecision.toLowerCase().includes("veto");
+  return confirmedContinuation && costRatio <= 0.2 && noKnownVeto;
+}
+
 export function enforcePaperTreasuryEntry(
   strategy: LabStrategyState,
   state: ResearchLabState,
@@ -97,10 +133,24 @@ export function enforcePaperTreasuryEntry(
     return { newEntryDetected: false, allowed: true, resized: false, decision: null, liveTrading: false };
   }
 
+  const preEntryState = stateBeforeEntry(strategy, state, snapshot);
+  const globalLosingStreak = globalPaperLosingStreak(preEntryState);
+  if (
+    globalLosingStreak >= GLOBAL_PAPER_LOSS_STREAK_LIMIT
+    && !exceptionalGlobalRecoveryEntry(strategy, latest)
+  ) {
+    restoreSnapshot(
+      strategy,
+      snapshot,
+      `PAPER BUY vetada por freno global de Tesorería tras ${globalLosingStreak} pérdidas consecutivas de cartera. Solo se admite una ruptura o continuación confirmada con costes excepcionalmente bajos.`,
+    );
+    return { newEntryDetected: true, allowed: false, resized: false, decision: null, liveTrading: false };
+  }
+
   const requestedGrossEur = latestIsNewBuy && latest
     ? latest.grossEur
     : increasedCostEur / (1 + strategy.config.feePctEachSide);
-  const decision = evaluateTreasuryEntry(strategy, stateBeforeEntry(strategy, state, snapshot), requestedGrossEur);
+  const decision = evaluateTreasuryEntry(strategy, preEntryState, requestedGrossEur);
 
   if (!decision.allowed || decision.maximumBudgetEur < 5) {
     restoreSnapshot(
