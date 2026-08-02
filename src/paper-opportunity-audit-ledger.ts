@@ -1,7 +1,7 @@
 import type { LabStrategyState } from "./research-lab";
 
 export interface PaperOpportunityAuditLedgerState {
-  schemaVersion: "paper-opportunity-audit-ledger-v1";
+  schemaVersion: "paper-opportunity-audit-ledger-v2";
   initializedAt: number;
   updatedAt: number;
   cyclesObserved: number;
@@ -19,6 +19,7 @@ export interface PaperOpportunityAuditLedgerState {
   rejectedByTechnicalConfirmation: number;
   rejectedWithoutBaseSignal: number;
   rejectedOther: number;
+  skippedPositionAlreadyOpen: number;
   seenBuyTradeIds: string[];
   liveTrading: false;
 }
@@ -32,7 +33,7 @@ export interface PaperOpportunityAuditLedgerReport extends Omit<PaperOpportunity
 
 export function emptyPaperOpportunityAuditLedger(now = Date.now()): PaperOpportunityAuditLedgerState {
   return {
-    schemaVersion: "paper-opportunity-audit-ledger-v1",
+    schemaVersion: "paper-opportunity-audit-ledger-v2",
     initializedAt: now,
     updatedAt: now,
     cyclesObserved: 0,
@@ -50,6 +51,7 @@ export function emptyPaperOpportunityAuditLedger(now = Date.now()): PaperOpportu
     rejectedByTechnicalConfirmation: 0,
     rejectedWithoutBaseSignal: 0,
     rejectedOther: 0,
+    skippedPositionAlreadyOpen: 0,
     seenBuyTradeIds: [],
     liveTrading: false,
   };
@@ -82,6 +84,7 @@ export function sanitizePaperOpportunityAuditLedger(value: unknown, now = Date.n
     rejectedByTechnicalConfirmation: number("rejectedByTechnicalConfirmation"),
     rejectedWithoutBaseSignal: number("rejectedWithoutBaseSignal"),
     rejectedOther: number("rejectedOther"),
+    skippedPositionAlreadyOpen: number("skippedPositionAlreadyOpen"),
     seenBuyTradeIds: Array.isArray(raw.seenBuyTradeIds)
       ? raw.seenBuyTradeIds.filter((id): id is string => typeof id === "string").slice(-2_000)
       : [],
@@ -117,6 +120,11 @@ function classify(decision: string): keyof Pick<
   return "rejectedOther";
 }
 
+function isOpenPositionNonOpportunity(strategy: LabStrategyState): boolean {
+  return strategy.position !== null
+    || strategy.lastDecision.toLowerCase().includes("posición ya abierta");
+}
+
 export function advancePaperOpportunityAuditLedger(
   current: PaperOpportunityAuditLedgerState,
   strategies: LabStrategyState[],
@@ -136,6 +144,10 @@ export function advancePaperOpportunityAuditLedger(
     if (unseenBuyIds.length > 0) {
       unseenBuyIds.forEach((id) => seen.add(id));
       newBuys += unseenBuyIds.length;
+      continue;
+    }
+    if (isOpenPositionNonOpportunity(strategy)) {
+      next.skippedPositionAlreadyOpen += 1;
       continue;
     }
     const category = classify(strategy.lastDecision);
