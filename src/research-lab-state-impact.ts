@@ -7,6 +7,7 @@ import {
 } from "./committee-shadow-impact";
 import { buildCostSequenceStressReport } from "./cost-sequence-stress";
 import type { ResearchCommitteeReport } from "./decision-committee";
+import { buildEconomicSignificanceReport } from "./economic-significance";
 import { buildInstitutionalIntelligence } from "./institutional-intelligence";
 import { buildMarketProductIntelligence } from "./market-product-intelligence";
 import { buildNewsIntelligence, type NewsIntelligenceReport } from "./news-intelligence";
@@ -85,6 +86,7 @@ export class ResearchLabState extends BaseResearchLabState {
     const marketProductIntelligence = buildMarketProductIntelligence(now);
     const institutionalIntelligence = buildInstitutionalIntelligence(payload.benchmarkSuite ?? payload.benchmarkComparison ?? null, payload.committee ?? null, now);
     const organizationalIntelligence = buildOrganizationalIntelligence(now);
+    const economicSignificance = buildEconomicSignificanceReport(payload.state ?? null, now);
     return Response.json({
       ...payload,
       committeeImpact: buildCommitteeShadowImpactReport(impact, now),
@@ -92,12 +94,13 @@ export class ResearchLabState extends BaseResearchLabState {
       paperEvidenceLedger: buildPaperEvidenceLedgerReport(evidence, now),
       paperEvidenceLedgerStatus: { available: evidenceError === null, error: evidenceError, persistedOnThisRequest: shouldPersistSnapshot && evidenceError === null, failOpenForPaper: true, changesTradingDecision: false, liveTrading: false },
       recoveryCohort: buildRecoveryCohort(payload.state),
+      economicSignificance,
       treasuryDepartment: buildTreasuryReport(payload.state ?? null),
       newsIntelligence,
       marketProductIntelligence,
       institutionalIntelligence,
       organizationalIntelligence,
-      intelligencePolicy: { newsMayVetoPaperEntry: true, newsMayResizePaperEntry: true, chartMayVetoPaperEntry: true, chartMayResizePaperEntry: true, treasuryMayVetoPaperEntry: true, treasuryCapsAllocation: true, thirdPartyPortfolioMayTriggerTrade: false, unverifiedWinRatesAccepted: false, autonomousParameterMutation: false, liveTrading: false },
+      intelligencePolicy: { newsMayVetoPaperEntry: true, newsMayResizePaperEntry: true, chartMayVetoPaperEntry: true, chartMayResizePaperEntry: true, treasuryMayVetoPaperEntry: true, treasuryCapsAllocation: true, thirdPartyPortfolioMayTriggerTrade: false, unverifiedWinRatesAccepted: false, autonomousParameterMutation: false, microWinsCountAsEvidence: false, liveTrading: false },
       temporalValidation,
       costSequenceStress,
       liveTrading: false,
