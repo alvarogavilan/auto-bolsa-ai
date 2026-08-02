@@ -64,6 +64,35 @@ function clamp(value: number, minimum: number, maximum: number): number {
   return Math.min(maximum, Math.max(minimum, value));
 }
 
+function recentClosedTrades(strategy: LabStrategyState, maximum = 12) {
+  return strategy.trades
+    .filter((trade) => trade.side === "sell" && typeof trade.pnlEur === "number")
+    .slice(0, maximum);
+}
+
+export function paperLossRecoveryBlocker(
+  strategy: LabStrategyState,
+  intelligence: AppliedIntelligenceContext,
+): string | null {
+  const recent = recentClosedTrades(strategy, 12);
+  if (recent.length < 4) return null;
+
+  const wins = recent.filter((trade) => (trade.pnlEur ?? 0) > 0).length;
+  const consecutiveLosses = recent.findIndex((trade) => (trade.pnlEur ?? 0) > 0);
+  const losingStreak = consecutiveLosses === -1 ? recent.length : consecutiveLosses;
+  if (losingStreak < 4) return null;
+
+  const expectedMove = Math.max(strategy.config.takeProfitPct, 0.0001);
+  const costRatio = strategy.estimatedTakerRoundTripCostPct / expectedMove;
+  const bullishChart = intelligence.chart.trend === "bullish";
+  const strongChart = intelligence.chart.sizeFactor >= (losingStreak >= 8 && wins === 0 ? 1.05 : 0.95);
+  const exceptionalCosts = costRatio <= (losingStreak >= 8 && wins === 0 ? 0.3 : 0.45);
+  const newsSafe = intelligence.news?.vetoNewLong !== true;
+
+  if (bullishChart && strongChart && exceptionalCosts && newsSafe) return null;
+  return `modo recuperación tras ${losingStreak} pérdidas consecutivas: exige tendencia alcista fuerte, costes muy inferiores al objetivo y ausencia de veto informativo`;
+}
+
 function adaptivePaperBudget(strategy: LabStrategyState, cashBefore: number, intelligence: AppliedIntelligenceContext): {
   budget: number; allocationPct: number; riskBudgetEur: number; evidenceFactor: number; costFactor: number; intelligenceFactor: number;
 } {
@@ -72,9 +101,10 @@ function adaptivePaperBudget(strategy: LabStrategyState, cashBefore: number, int
   const accountRiskPct = strategy.lane === "fast" ? 0.0025 : strategy.lane === "intraday" ? 0.004 : 0.005;
   const riskBudgetEur = equity * accountRiskPct;
   const stopBasedMaximum = strategy.config.stopLossPct > 0 ? riskBudgetEur / strategy.config.stopLossPct : maximumAllocation;
-  const recentClosed = strategy.trades.filter((trade) => trade.side === "sell" && typeof trade.pnlEur === "number").slice(0, 12);
+  const recentClosed = recentClosedTrades(strategy, 12);
   const recentNet = recentClosed.reduce((sum, trade) => sum + (trade.pnlEur ?? 0), 0);
-  const evidenceFactor = recentClosed.length < 4 ? 0.72 : recentNet > 0 ? 1 : recentNet === 0 ? 0.75 : 0.55;
+  const recentWins = recentClosed.filter((trade) => (trade.pnlEur ?? 0) > 0).length;
+  const evidenceFactor = recentClosed.length < 4 ? 0.72 : recentWins === 0 ? 0.35 : recentNet > 0 ? 1 : recentNet === 0 ? 0.75 : 0.55;
   const expectedMove = Math.max(strategy.config.takeProfitPct, 0.0001);
   const costRatio = strategy.estimatedTakerRoundTripCostPct / expectedMove;
   const costFactor = clamp(1 - costRatio * 0.65, 0.45, 1);
@@ -92,16 +122,19 @@ function resizeLatestPaperBuy(strategy: LabStrategyState, cashBefore: number, in
   const position = strategy.position;
   const latest = strategy.trades[0];
   if (!position || !latest || latest.side !== "buy") return;
+  const recoveryBlocker = paperLossRecoveryBlocker(strategy, intelligence);
   const sizing = adaptivePaperBudget(strategy, cashBefore, intelligence);
   const originalGross = latest.grossEur;
-  if (sizing.budget <= 0 || intelligence.news?.vetoNewLong || intelligence.chart.vetoNewLong) {
+  if (recoveryBlocker || sizing.budget <= 0 || intelligence.news?.vetoNewLong || intelligence.chart.vetoNewLong) {
     strategy.cashEur = cashBefore;
     strategy.position = null;
     strategy.trades.shift();
     strategy.performance.buys = Math.max(0, strategy.performance.buys - 1);
     strategy.performance.totalFeesEur = Math.max(0, strategy.performance.totalFeesEur - originalGross * strategy.config.feePctEachSide);
     strategy.equityEur = cashBefore;
-    strategy.lastDecision = `PAPER BUY vetada por inteligencia: noticias=${intelligence.news?.vetoNewLong ?? false}; gráfica=${intelligence.chart.vetoNewLong}.`;
+    strategy.lastDecision = recoveryBlocker
+      ? `PAPER BUY vetada por ${recoveryBlocker}.`
+      : `PAPER BUY vetada por inteligencia: noticias=${intelligence.news?.vetoNewLong ?? false}; gráfica=${intelligence.chart.vetoNewLong}.`;
     return;
   }
   if (!Number.isFinite(sizing.budget) || Math.abs(sizing.budget - originalGross) < 0.000001) return;
