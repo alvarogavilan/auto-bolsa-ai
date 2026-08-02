@@ -16,6 +16,17 @@ describe("DEMO single PAPER treasury", () => {
     expect(html).not.toContain("Cuenta equivalente de 50 €");
   });
 
+  it("forces live cards and summary to use the same unscaled 100 EUR treasury", async () => {
+    const html = await (await demoDashboard()).text();
+
+    expect(html).toContain("accountScale = function singleTreasuryLiveScale()");
+    expect(html).toContain("return 1;");
+    expect(html).toContain("updateSingleTreasuryLiveSummary");
+    expect(html).toContain("initial + realized + openPnl");
+    expect(html).toContain("account - liveValue");
+    expect(html).toContain("liveRows.reduce((sum, row) => sum + row.cost, 0)");
+  });
+
   it("labels inherited micropositions without deleting or resizing them", async () => {
     const html = await (await demoDashboard()).text();
 
