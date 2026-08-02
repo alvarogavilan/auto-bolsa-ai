@@ -42,7 +42,7 @@ function universe(): MarketUniverse {
   return {
     schemaVersion: "kraken-eur-market-universe-v1",
     generatedAt: 1_800_000_000_000,
-    capitalEur: 50,
+    capitalEur: 100,
     maximumPaperAllocationEur: 10,
     feeModel: {
       version: "kraken-spot-tier0-2026-07",
@@ -70,8 +70,8 @@ describe("PAPER buy-and-hold benchmark", () => {
 
     expect(benchmark.allocatedEur).toBe(10);
     expect(benchmark.buyFeeEur).toBe(0.04);
-    expect(benchmark.retainedCashEur).toBe(39.96);
-    expect(benchmark.equityEur).toBeLessThan(50);
+    expect(benchmark.retainedCashEur).toBe(89.96);
+    expect(benchmark.equityEur).toBeLessThan(100);
     expect(benchmark.netReturnPct).toBeLessThan(0);
     expect(benchmark.liveTrading).toBe(false);
   });
