@@ -9,6 +9,13 @@ import {
   KRAKEN_PRIVATE_LEASE_RENEW_PATH,
   KRAKEN_PRIVATE_LEASE_TTL_MS,
 } from "./kraken-private-lease";
+import { createXauPaperCycleLedger, type XauPaperCycleLedger } from "./xau-usd-cycle-ledger";
+import {
+  runPersistentXauPaperCycle,
+  XAU_PAPER_LEDGER_KEY,
+  type XauPaperStateStore,
+} from "./xau-usd-persistent-orchestrator";
+import type { XauPaperRuntimeInput } from "./xau-usd-paper-runtime";
 import type { Env } from "./types";
 
 const KRAKEN_EFFECTIVE_FEES_KEY = "kraken-effective-fees-v1";
@@ -58,6 +65,50 @@ export class BotState extends BaseBotState {
     super(ctx, env);
     this.feeContext = ctx;
     this.feeEnv = env;
+  }
+
+  private xauStore(): XauPaperStateStore {
+    return {
+      get: async (key) => (await this.feeContext.storage.get<string>(key)) ?? null,
+      put: async (key, value) => { await this.feeContext.storage.put(key, value); },
+    };
+  }
+
+  private async xauLedger(): Promise<XauPaperCycleLedger> {
+    const raw = await this.feeContext.storage.get<string>(XAU_PAPER_LEDGER_KEY);
+    if (!raw) return createXauPaperCycleLedger();
+    try {
+      return JSON.parse(raw) as XauPaperCycleLedger;
+    } catch {
+      return createXauPaperCycleLedger();
+    }
+  }
+
+  private async xauStatusResponse(): Promise<Response> {
+    return Response.json(
+      {
+        ...(await this.xauLedger()),
+        mode: "paper",
+        liveTrading: false,
+        realOrderSubmission: false,
+        persistenceAuthority: "BotState",
+      },
+      { headers: { "Cache-Control": "no-store" } },
+    );
+  }
+
+  private async xauCycleResponse(request: Request): Promise<Response> {
+    let input: XauPaperRuntimeInput;
+    try {
+      input = await request.json<XauPaperRuntimeInput>();
+    } catch {
+      return Response.json({ error: "Invalid XAU PAPER payload" }, { status: 400 });
+    }
+    const result = await runPersistentXauPaperCycle(this.xauStore(), input);
+    return Response.json(result, {
+      status: result.instruction.allowed ? 200 : 202,
+      headers: { "Cache-Control": "no-store" },
+    });
   }
 
   private async acquirePrivateLease(owner: string, now = Date.now()): Promise<{
@@ -249,6 +300,12 @@ export class BotState extends BaseBotState {
 
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
+    if (request.method === "GET" && url.pathname === "/xau/status") {
+      return this.xauStatusResponse();
+    }
+    if (request.method === "POST" && url.pathname === "/xau/cycle") {
+      return this.xauCycleResponse(request);
+    }
     if (request.method === "POST" && url.pathname === KRAKEN_PRIVATE_LEASE_ACQUIRE_PATH) {
       return this.privateLeaseAcquireResponse(request);
     }
