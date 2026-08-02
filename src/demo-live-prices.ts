@@ -84,31 +84,40 @@ export const DEMO_LIVE_PRICES_SCRIPT = `<script>
     }
     if (spreadNode) spreadNode.textContent = ticker.ask > 0 ? pct((ticker.ask - ticker.bid) / ticker.bid) : '—';
     card.setAttribute('data-live-updated', String(Date.now()));
-    return { value, openPnl };
+    return { value, cost, openPnl };
   }
 
-  function updateSummary(liveRows) {
-    if (!liveRows.length) return;
+  function updateSummary(liveRows, expectedOpenPositions) {
+    if (!liveRows.length || liveRows.length !== expectedOpenPositions) return false;
     const metrics = [...document.querySelectorAll('#summary .metric')];
     const byLabel = (label) => metrics.find((node) => node.querySelector('span')?.textContent?.trim() === label)?.querySelector('strong');
     const strategies = Array.isArray(latestLab?.state?.strategies) ? latestLab.state.strategies : [];
     const initial = strategies.reduce((sum, item) => sum + num(item.initialCashEur), 0);
     const scale = initial > 0 ? 50 / initial : 1;
+
+    // Fuente única contable: efectivo disponible + valor liquidable de posiciones abiertas.
+    // equityEur ya contiene el efectivo/posición de cada estrategia y no debe volver a sumarse.
     const cash = strategies.reduce((sum, item) => sum + num(item.cashEur), 0) * scale;
     const liveValue = liveRows.reduce((sum, row) => sum + row.value, 0) * scale;
-    const closedOnlyEquity = strategies.filter((item) => !item.position).reduce((sum, item) => sum + num(item.equityEur), 0) * scale;
-    const account = cash + liveValue + closedOnlyEquity;
+    const investedCost = liveRows.reduce((sum, row) => sum + row.cost, 0) * scale;
+    const account = cash + liveValue;
     const totalPnl = account - 50;
+
     const accountNode = byLabel('Valor de cuenta');
+    const cashNode = byLabel('Saldo disponible');
+    const investedNode = byLabel('Capital invertido');
     const totalNode = byLabel('PnL total');
     if (accountNode) {
       accountNode.textContent = eur(account);
       accountNode.className = totalPnl > 0 ? 'positive' : totalPnl < 0 ? 'negative' : '';
     }
+    if (cashNode) cashNode.textContent = eur(cash);
+    if (investedNode) investedNode.textContent = eur(investedCost);
     if (totalNode) {
       totalNode.textContent = eur(totalPnl) + ' · ' + pct(totalPnl / 50);
       totalNode.className = totalPnl > 0 ? 'positive' : totalPnl < 0 ? 'negative' : '';
     }
+    return true;
   }
 
   async function pollLivePrices() {
@@ -125,12 +134,13 @@ export const DEMO_LIVE_PRICES_SCRIPT = `<script>
       if (result.status !== 'fulfilled') { failures += 1; continue; }
       const row = updateCard(result.value.strategy, result.value.ticker);
       if (row) liveRows.push(row);
+      else failures += 1;
     }
-    updateSummary(liveRows);
+    const summaryUpdated = updateSummary(liveRows, strategies.length);
     if (status) {
       const now = new Date().toLocaleTimeString('es-ES');
       status.className = 'banner ' + (failures ? 'warn' : 'safe');
-      status.innerHTML = '<b>Precio vivo Kraken:</b> ' + liveRows.length + ' posición(es) actualizadas a las ' + now + ' · refresco cada ' + (POLL_MS / 1000).toFixed(1) + ' s' + (failures ? ' · ' + failures + ' fallo(s)' : '') + '. El PnL usa el bid, es decir, el precio conservador de salida.';
+      status.innerHTML = '<b>Precio vivo Kraken:</b> ' + liveRows.length + '/' + strategies.length + ' posición(es) actualizadas a las ' + now + ' · refresco cada ' + (POLL_MS / 1000).toFixed(1) + ' s' + (failures ? ' · ' + failures + ' fallo(s); el resumen conserva el último valor completo' : '') + '. El PnL usa el bid, es decir, el precio conservador de salida.' + (summaryUpdated ? '' : ' No se recalcula la cuenta con datos parciales.');
     }
   }
 
