@@ -1,5 +1,6 @@
 import { standaloneDemoDashboard } from "./demo-dashboard-standalone";
 import { DEMO_FLATLINE_WATCHDOG_CODE, DEMO_FLATLINE_WATCHDOG_STYLE } from "./demo-flatline-watchdog";
+import { DEMO_GLOBAL_LOSS_RECOVERY_CODE } from "./demo-global-loss-recovery";
 import { DEMO_HISTORY_EVIDENCE_INTEGRITY_CODE } from "./demo-history-evidence-integrity";
 import { DEMO_HISTORY_OUTCOMES_CODE, DEMO_HISTORY_OUTCOMES_STYLE } from "./demo-history-outcomes";
 import { DEMO_LIVE_PRICES_SCRIPT } from "./demo-live-prices";
@@ -148,7 +149,7 @@ export async function demoDashboard(): Promise<Response> {
   const response = standaloneDemoDashboard();
   const liveScript = DEMO_LIVE_PRICES_SCRIPT.replace(
     "})();\n</script>",
-    `${DEMO_SINGLE_TREASURY_CODE}\n${DEMO_HISTORY_EVIDENCE_INTEGRITY_CODE}\n${DEMO_HISTORY_OUTCOMES_CODE}\n${DEMO_OPERATION_DOSSIERS_CODE}\n${DEMO_PERFORMANCE_FORENSICS_CODE}\n${DEMO_ZERO_POSITION_DIAGNOSTICS_CODE}\n${DEMO_FLATLINE_WATCHDOG_CODE}\n})();\n</script>`,
+    `${DEMO_SINGLE_TREASURY_CODE}\n${DEMO_HISTORY_EVIDENCE_INTEGRITY_CODE}\n${DEMO_HISTORY_OUTCOMES_CODE}\n${DEMO_OPERATION_DOSSIERS_CODE}\n${DEMO_PERFORMANCE_FORENSICS_CODE}\n${DEMO_ZERO_POSITION_DIAGNOSTICS_CODE}\n${DEMO_FLATLINE_WATCHDOG_CODE}\n${DEMO_GLOBAL_LOSS_RECOVERY_CODE}\n})();\n</script>`,
   );
   let html = await response.text();
   html = html
