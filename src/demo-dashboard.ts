@@ -3,7 +3,7 @@ import { DEMO_LIVE_PRICES_SCRIPT } from "./demo-live-prices";
 
 const PAPER_AUDIT_SCRIPT = `<script>
 (() => {
-  const esc = (value) => String(value ?? '').replace(/[&<>\"']/g, (char) => ({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',"'":'&#039;'}[char]));
+  const esc = (value) => String(value ?? '').replace(/[&<>\"']/g, (char) => ({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot',"'":'&#039;'}[char]));
   const num = (value) => Number.isFinite(Number(value)) ? Number(value) : 0;
   const eur = (value) => new Intl.NumberFormat('es-ES', { style: 'currency', currency: 'EUR', minimumFractionDigits: 2, maximumFractionDigits: 4 }).format(num(value));
   const date = (value) => value ? new Date(num(value)).toLocaleString('es-ES') : '—';
@@ -43,10 +43,36 @@ const PAPER_AUDIT_SCRIPT = `<script>
 
   function evidenceMarkup(payload, trades) {
     const report = payload.paperEvidenceLedger || {};
+    const cohort = payload.recoveryCohort || {};
+    const legacy = cohort.legacy || {};
+    const corrected = cohort.correctedLogic || {};
     const sells = trades.filter(({trade}) => trade.side === 'sell' && Number.isFinite(Number(trade.pnlEur)));
     const wins = sells.filter(({trade}) => num(trade.pnlEur) > 0).length;
     const losses = sells.filter(({trade}) => num(trade.pnlEur) < 0).length;
-    return '<div class="head"><div><h2>Evidencia PAPER</h2><div class="muted">Fuente única reconstruida desde ventas persistidas y PnL neto; las pérdidas y comisiones cerradas permanecen contabilizadas.</div></div><span class="status ok">ACTIVA</span></div><div class="grid"><div class="metric"><span>Movimientos retenidos</span><strong>' + (num(report.totalMovements) || trades.length) + '</strong></div><div class="metric"><span>Ciclos cerrados</span><strong>' + sells.length + '</strong></div><div class="metric"><span>Ganadas netas</span><strong class="positive">' + wins + '</strong></div><div class="metric"><span>Perdidas netas</span><strong class="negative">' + losses + '</strong></div></div><div class="banner warn"><b>0/' + sells.length + ' no se maquilla.</b> Si todas son negativas, el historial confirma operación por operación el patrón 0 ganadoras y la estrategia continúa NO APTA LIVE.</div>';
+    const correctedClosed = num(corrected.closedTrades);
+    const correctedWins = num(corrected.wins);
+    const correctedLosses = num(corrected.losses);
+    const correctedPnl = num(corrected.netPnlEur);
+    const sampleReady = correctedClosed >= 5;
+    const hasWinner = correctedWins >= 1;
+    const pnlReady = correctedPnl > 0;
+    const candidate = sampleReady && hasWinner && pnlReady;
+    const verdict = candidate ? 'COHORTE CANDIDATA A REVISIÓN' : 'DINERO REAL BLOQUEADO';
+    const verdictClass = candidate ? 'ok' : 'bad';
+    return '<div class="head"><div><h2>Evidencia PAPER</h2><div class="muted">El historial anterior se conserva, pero la lógica corregida se juzga en una cohorte independiente.</div></div><span class="status ' + verdictClass + '">' + verdict + '</span></div>' +
+      '<div class="grid">' +
+      '<div class="metric"><span>Histórico anterior · cerradas</span><strong>' + num(legacy.closedTrades) + '</strong></div>' +
+      '<div class="metric"><span>Histórico anterior · G/P</span><strong>' + num(legacy.wins) + '/' + num(legacy.losses) + '</strong></div>' +
+      '<div class="metric"><span>Lógica corregida · cerradas</span><strong>' + correctedClosed + '</strong></div>' +
+      '<div class="metric"><span>Lógica corregida · G/P</span><strong class="' + (correctedWins ? 'positive' : '') + '">' + correctedWins + '/' + correctedLosses + '</strong></div>' +
+      '<div class="metric"><span>PnL neto cohorte corregida</span><strong class="' + (correctedPnl > 0 ? 'positive' : correctedPnl < 0 ? 'negative' : '') + '">' + eur(correctedPnl) + '</strong></div>' +
+      '<div class="metric"><span>Movimientos retenidos</span><strong>' + (num(report.totalMovements) || trades.length) + '</strong></div>' +
+      '</div>' +
+      '<div class="banner ' + verdictClass + '"><b>' + verdict + '.</b> Requisitos mínimos visibles: ' +
+      (sampleReady ? '✓' : '✗') + ' 5 cierres nuevos · ' +
+      (hasWinner ? '✓' : '✗') + ' alguna ganadora neta · ' +
+      (pnlReady ? '✓' : '✗') + ' PnL neto positivo. Esto no activa LIVE automáticamente.</div>' +
+      '<div class="banner warn"><b>Resultado global: ' + wins + '/' + losses + '.</b> No se borra ni maquilla. La evaluación futura se basa en la cohorte posterior a la corrección iniciada el ' + date(cohort.startedAt) + '.</div>';
   }
 
   function newsMarkup(payload) {
