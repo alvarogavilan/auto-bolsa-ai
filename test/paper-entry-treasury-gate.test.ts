@@ -18,8 +18,8 @@ function strategy(id: string, costEur = 0): LabStrategyState {
     equityEur: 100,
     peakEquityEur: 100,
     maxDrawdownPct: 0,
-    position: costEur > 0 ? { quantity: costEur, entryPrice: 1, entryTime: 1, costEur, stopLoss: 0.98, takeProfit: 1.04 } : null,
-    config: { id: "fast", intervalMinutes: 5, fastPeriod: 5, slowPeriod: 13, rsiPeriod: 7, buyRsiMinimum: 46, buyRsiMaximum: 62, sellRsi: 68, stopLossPct: 0.02, takeProfitPct: 0.04, cooldownMinutes: 20, maximumHoldingMinutes: 180, feePctEachSide: 0.004, slippagePctEachSide: 0.001 },
+    position: costEur > 0 ? { quantity: costEur, entryPrice: 1, entryTime: 1, costEur, stopLoss: 0.98, takeProfit: 1.08 } : null,
+    config: { id: "fast", intervalMinutes: 5, fastPeriod: 5, slowPeriod: 13, rsiPeriod: 7, buyRsiMinimum: 46, buyRsiMaximum: 62, sellRsi: 68, stopLossPct: 0.02, takeProfitPct: 0.08, cooldownMinutes: 20, maximumHoldingMinutes: 180, feePctEachSide: 0.004, slippagePctEachSide: 0.001 },
     estimatedOrderMinimumEur: 1,
     estimatedTakerRoundTripCostPct: 0.01,
     lastClosedCandleTime: null,
@@ -46,7 +46,7 @@ function state(strategies: LabStrategyState[]): ResearchLabState {
 function mutateEntry(item: LabStrategyState, grossEur: number): void {
   const feeEur = grossEur * item.config.feePctEachSide;
   item.cashEur -= grossEur + feeEur;
-  item.position = { quantity: grossEur, entryPrice: 1, entryTime: 2, costEur: grossEur + feeEur, stopLoss: 0.98, takeProfit: 1.04 };
+  item.position = { quantity: grossEur, entryPrice: 1, entryTime: 2, costEur: grossEur + feeEur, stopLoss: 0.98, takeProfit: 1.08 };
   item.performance.buys += 1;
   item.performance.totalFeesEur += feeEur;
   item.trades.unshift({ id: `${item.id}-new`, side: "buy", timestamp: 2, price: 1, quantity: grossEur, grossEur, feeEur, reason: "candidate" });

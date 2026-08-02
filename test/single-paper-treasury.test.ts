@@ -14,7 +14,7 @@ function strategy(id: string, lane: "fast" | "intraday" | "swing", costEur = 0, 
         entryTime: 1_000,
         costEur,
         stopLoss: 0.98,
-        takeProfit: 1.04,
+        takeProfit: 1.08,
       }
     : null;
   return {
@@ -40,7 +40,7 @@ function strategy(id: string, lane: "fast" | "intraday" | "swing", costEur = 0, 
       buyRsiMaximum: 62,
       sellRsi: 68,
       stopLossPct: 0.02,
-      takeProfitPct: 0.04,
+      takeProfitPct: 0.08,
       cooldownMinutes: 20,
       maximumHoldingMinutes: 180,
       feePctEachSide: 0.004,
