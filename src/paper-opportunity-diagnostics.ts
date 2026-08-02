@@ -60,7 +60,8 @@ function isOverdue(strategy: LabStrategyState, now: number): boolean {
 
 function dominantBlocker(blockerCounts: Record<string, number>): { category: string | null; count: number } {
   const ordered = Object.entries(blockerCounts).sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]));
-  return ordered.length === 0 ? { category: null, count: 0 } : { category: ordered[0][0], count: ordered[0][1] };
+  const first = ordered[0];
+  return first ? { category: first[0], count: first[1] } : { category: null, count: 0 };
 }
 
 function explainOperationalStatus(
