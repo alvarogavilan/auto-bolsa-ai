@@ -4,6 +4,7 @@ import worker, {
   LiveExecutorState,
 } from "./index-fire-drill";
 import { BOT_STATE_SINGLETON_NAME, type Env } from "./types";
+import { buildNativeXauPaperInput } from "./xau-native-paper-feed";
 
 export { BotState, ResearchLabState, LiveExecutorState };
 
@@ -29,41 +30,49 @@ async function xauStatus(env: Env): Promise<Record<string, unknown>> {
 async function xauReadinessResponse(env: Env): Promise<Response> {
   const runtimeEnv = paperRuntimeEnv(env);
   const status = await xauStatus(runtimeEnv);
-  const feedConfigured = Boolean(runtimeEnv.XAU_PAPER_FEED_URL?.trim());
+  const externalFeedConfigured = Boolean(runtimeEnv.XAU_PAPER_FEED_URL?.trim());
   const metrics = status.metrics && typeof status.metrics === "object"
     ? status.metrics as Record<string, unknown>
     : {};
   const cycles = typeof metrics.cycles === "number" ? metrics.cycles : 0;
 
   return Response.json({
-    schemaVersion: "xau-usd-paper-readiness-v1",
+    schemaVersion: "xau-usd-paper-readiness-v2",
     market: "XAU/USD",
     mode: "paper",
-    operational: feedConfigured,
-    feedConfigured,
-    feedStatus: feedConfigured ? "configured" : "missing",
-    automaticCycleEnabled: feedConfigured,
+    operational: true,
+    marketObservationEnabled: true,
+    feedMode: externalFeedConfigured ? "external" : "native-kraken-xaut-proxy",
+    externalFeedConfigured,
+    automaticCycleEnabled: true,
     cron: "*/5 * * * *",
     cyclesObserved: cycles,
     status,
-    blockers: feedConfigured
+    tradingReady: externalFeedConfigured,
+    blockers: externalFeedConfigured
       ? []
-      : ["Falta configurar XAU_PAPER_FEED_URL; el cron no puede recibir evidencia real XAU/USD."],
+      : ["El feed nativo observa mercado con XAUT/USD de Kraken, pero mantiene veto PAPER hasta recibir DXY, rendimientos reales y calendario macro frescos."],
     liveTrading: false,
     realOrderSubmission: false,
   }, { headers: { "Cache-Control": "no-store" } });
 }
 
+async function xauPayload(env: Env): Promise<string> {
+  if (env.XAU_PAPER_FEED_URL) {
+    const response = await fetch(env.XAU_PAPER_FEED_URL, { headers: { Accept: "application/json" } });
+    if (!response.ok) throw new Error(`XAU feed HTTP ${response.status}`);
+    return response.text();
+  }
+  return JSON.stringify(await buildNativeXauPaperInput());
+}
+
 async function runConfiguredXauCycle(env: Env): Promise<void> {
-  if (!env.XAU_PAPER_FEED_URL) return;
-  const response = await fetch(env.XAU_PAPER_FEED_URL, { headers: { Accept: "application/json" } });
-  if (!response.ok) throw new Error(`XAU feed HTTP ${response.status}`);
-  const payload = await response.text();
-  await botState(env).fetch("https://bot/xau/cycle", {
+  const response = await botState(env).fetch("https://bot/xau/cycle", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: payload,
+    body: await xauPayload(env),
   });
+  if (!response.ok && response.status !== 202) throw new Error(`XAU cycle HTTP ${response.status}`);
 }
 
 export default {
