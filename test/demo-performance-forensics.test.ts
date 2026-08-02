@@ -16,7 +16,7 @@ describe("DEMO PAPER performance forensics", () => {
     expect(html).toContain("Operaciones cerradas totales");
     expect(html).toContain("Históricas / legado");
     expect(html).toContain("Por causa de salida · histórico completo");
-    expect(html).toContain("No se alteran operaciones ni se ocultan pérdidas");
+    expect(html).toContain("las operaciones históricas se conservan íntegramente");
   });
 
   it("requires a meaningful current-engine sample before any favorable interpretation", async () => {
