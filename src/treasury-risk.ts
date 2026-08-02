@@ -106,7 +106,8 @@ export function evaluateTreasuryEntry(
   const normalizedRequest = money(Math.max(0, Math.min(requestedBudgetEur, targetBudgetEur)));
   const maximumBudgetEur = snapshot.allocatableCashEur >= normalizedRequest ? normalizedRequest : 0;
   const netEdge = evaluatePaperMinimumNetEdge(strategy, normalizedRequest);
-  const ratio = Number.isFinite(netEdge.rewardToCostRatio) ? netEdge.rewardToCostRatio.toFixed(2) : "∞";
+  const costRatio = Number.isFinite(netEdge.rewardToCostRatio) ? netEdge.rewardToCostRatio.toFixed(2) : "∞";
+  const riskRatio = Number.isFinite(netEdge.rewardToRiskRatio) ? netEdge.rewardToRiskRatio.toFixed(2) : "∞";
   const reasons: string[] = [
     `Banca PAPER operativa única: ${PAPER_OPERATIONAL_BANKROLL_EUR.toFixed(2)} €`,
     `Reserva mínima de efectivo ${(PAPER_RESERVE_CASH_PCT * 100).toFixed(0)} %`,
@@ -114,7 +115,7 @@ export function evaluateTreasuryEntry(
     `Asignación objetivo del carril: ${targetBudgetEur.toFixed(2)} €`,
     `Capital comprometido: ${snapshot.committedCapitalEur.toFixed(2)} €`,
     `Capital todavía asignable: ${snapshot.allocatableCashEur.toFixed(2)} €`,
-    `Ventaja neta esperada: ${netEdge.expectedNetProfitEur.toFixed(4)} €; relación beneficio/coste ${ratio}`,
+    `Ventaja neta esperada: ${netEdge.expectedNetProfitEur.toFixed(4)} € (${(netEdge.expectedNetReturnPct * 100).toFixed(2)} %); beneficio/coste ${costRatio}; beneficio/riesgo ${riskRatio}`,
   ];
 
   if (snapshot.overAllocated) reasons.push("Veto: la exposición existente ya supera el límite de Tesorería");
@@ -123,7 +124,7 @@ export function evaluateTreasuryEntry(
   if (snapshot.allocatableCashEur < normalizedRequest) reasons.push("Veto: la banca única no dispone de capital asignable suficiente");
   if (strategy.maxDrawdownPct >= 0.05) reasons.push("Veto: estrategia detenida por drawdown máximo");
   if (!netEdge.allowed) reasons.push(
-    `Veto: beneficio neto esperado insuficiente después de costes; mínimo ${netEdge.minimumExpectedNetProfitEur.toFixed(2)} € y relación beneficio/coste ${netEdge.minimumRewardToCostRatio.toFixed(2)}`,
+    `Veto: oportunidad demasiado pequeña para el capital arriesgado; exige retorno neto mínimo ${(netEdge.minimumExpectedNetReturnPct * 100).toFixed(0)} %, beneficio/coste ${netEdge.minimumRewardToCostRatio.toFixed(2)} y beneficio/riesgo ${netEdge.minimumRewardToRiskRatio.toFixed(2)}`,
   );
 
   const allowed = !snapshot.overAllocated
