@@ -52,6 +52,20 @@ function mutateEntry(item: LabStrategyState, grossEur: number): void {
   item.trades.unshift({ id: `${item.id}-new`, side: "buy", timestamp: 2, price: 1, quantity: grossEur, grossEur, feeEur, reason: "candidate" });
 }
 
+function increasePosition(item: LabStrategyState, grossEur: number): void {
+  if (!item.position) throw new Error("position required");
+  const feeEur = grossEur * item.config.feePctEachSide;
+  item.cashEur -= grossEur + feeEur;
+  item.position = {
+    ...item.position,
+    quantity: item.position.quantity + grossEur,
+    costEur: item.position.costEur + grossEur + feeEur,
+  };
+  item.performance.buys += 1;
+  item.performance.totalFeesEur += feeEur;
+  item.trades.unshift({ id: `${item.id}-increase`, side: "buy", timestamp: 2, price: 1, quantity: grossEur, grossEur, feeEur, reason: "increase" });
+}
+
 describe("transactional PAPER treasury gate", () => {
   it("allows a useful 5 EUR entry and records treasury authorization", () => {
     const candidate = strategy("candidate");
@@ -80,6 +94,31 @@ describe("transactional PAPER treasury gate", () => {
     expect(enforcePaperTreasuryEntry(blocked, saturated, blockedBefore).allowed).toBe(false);
     expect(blocked.position).toBeNull();
     expect(blocked.lastDecision).toContain("Tesorería única");
+  });
+
+  it("applies the same treasury gate to increases of an existing position", () => {
+    const candidate = strategy("candidate", 5);
+    const lab = state([candidate, strategy("existing", 20), strategy("other", 5)]);
+    const before = capturePaperEntrySnapshot(candidate);
+    increasePosition(candidate, 5);
+
+    const result = enforcePaperTreasuryEntry(candidate, lab, before);
+    expect(result.newEntryDetected).toBe(true);
+    expect(result.allowed).toBe(true);
+    expect(candidate.position?.costEur).toBeCloseTo(10.02, 6);
+    expect(candidate.lastDecision).toContain("Autorización Tesorería");
+  });
+
+  it("rolls back testimonial increases without touching the inherited position", () => {
+    const inherited = strategy("legacy", 0.0655);
+    const lab = state([inherited]);
+    const before = capturePaperEntrySnapshot(inherited);
+    increasePosition(inherited, 1);
+
+    const result = enforcePaperTreasuryEntry(inherited, lab, before);
+    expect(result.allowed).toBe(false);
+    expect(inherited.position?.costEur).toBe(0.0655);
+    expect(inherited.trades).toHaveLength(1);
   });
 
   it("does not rewrite inherited small positions", () => {
