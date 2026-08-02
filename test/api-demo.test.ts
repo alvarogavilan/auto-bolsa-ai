@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 
 const ROOT = process.cwd();
 const source = readFileSync(join(ROOT, "src/index-fire-drill.ts"), "utf8");
+const paperWrapper = readFileSync(join(ROOT, "src/index-paper-capital.ts"), "utf8");
 const wrangler = readFileSync(join(ROOT, "wrangler.jsonc"), "utf8");
 
 describe("GET /api/demo", () => {
@@ -32,11 +33,13 @@ describe("GET /api/demo", () => {
     expect(source).not.toContain("LIVE_TRADING_ENABLED");
   });
 
-  it("mantiene el adaptador del simulacro, Durable Objects y cron", () => {
+  it("mantiene el adaptador del simulacro, Durable Objects, cron y capital PAPER", () => {
     expect(source).toContain("export { BotState, ResearchLabState, LiveExecutorState }");
     expect(source).toContain("return coreWorker.fetch(request, env)");
     expect(source).toContain("return coreWorker.scheduled(controller, env, ctx)");
-    expect(wrangler).toContain('"main": "src/index-fire-drill.ts"');
+    expect(paperWrapper).toContain('from "./index-fire-drill"');
+    expect(paperWrapper).toContain('INITIAL_CASH_EUR: "100"');
+    expect(wrangler).toContain('"main": "src/index-paper-capital.ts"');
     expect(wrangler).toContain('"TRADING_MODE": "paper"');
     expect(wrangler).toContain('"*/5 * * * *"');
   });

@@ -7,12 +7,15 @@ const ROOT = process.cwd();
 const read = (path: string): string => readFileSync(join(ROOT, path), "utf8");
 
 describe("production fire-drill gate", () => {
-  it("deploys the adapter while preserving the original Worker as the core", () => {
+  it("deploys the PAPER wrapper while preserving fire drill and core isolation", () => {
     const wrangler = read("wrangler.jsonc");
+    const paperWrapper = read("src/index-paper-capital.ts");
     const adapter = read("src/index-fire-drill.ts");
     const core = read("src/index.ts");
 
-    expect(wrangler).toContain('"main": "src/index-fire-drill.ts"');
+    expect(wrangler).toContain('"main": "src/index-paper-capital.ts"');
+    expect(paperWrapper).toContain('from "./index-fire-drill"');
+    expect(paperWrapper).toContain('INITIAL_CASH_EUR: "100"');
     expect(adapter).toContain('from "./index"');
     expect(adapter).toContain('url.pathname === "/api/pilot/readiness"');
     expect(adapter).toContain('url.pathname === "/api/pilot/refresh-kraken"');
