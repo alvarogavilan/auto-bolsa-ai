@@ -62,7 +62,10 @@ export const DEMO_HISTORY_OUTCOMES_CODE = `
 
       const buyId = historyDetailValue(card, 'Compra asociada');
       const buyCard = byId.get(buyId);
-      if (buyCard) setHistoryOutcome(buyCard, kind, label, pnlText);
+      if (buyCard) {
+        const entryLabel = pnl > 0 ? 'ENTRADA DE GANADORA' : pnl < 0 ? 'ENTRADA DE PERDEDORA' : 'ENTRADA CERRADA';
+        setHistoryOutcome(buyCard, kind, entryLabel, pnlText);
+      }
     });
 
     cards.forEach((card) => {
