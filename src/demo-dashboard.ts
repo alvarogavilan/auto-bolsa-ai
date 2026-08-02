@@ -12,33 +12,64 @@ const DEMO_SINGLE_TREASURY_CODE = String.raw`
     ? lab.treasuryDepartment
     : null;
 
+  function positionAccounting() {
+    const open = strategies.filter(strategy => strategy.position);
+    const committed = open.reduce((sum, strategy) => sum + n(strategy.position && strategy.position.costEur), 0);
+    const marketValue = open.reduce((sum, strategy) => sum + Math.max(0, n(strategy.equityEur) - n(strategy.cashEur)), 0);
+    const realized = strategies.reduce((total, strategy) => total + (Array.isArray(strategy.trades) ? strategy.trades : [])
+      .reduce((sum, trade) => sum + (trade.side === 'sell' && typeof trade.pnlEur === 'number' ? n(trade.pnlEur) : 0), 0), 0);
+    const unrealized = marketValue - committed;
+    const initial = n(treasury() && treasury().initialBankrollEur) || TARGET;
+    const equity = Math.max(0, initial + realized + unrealized);
+    return {
+      initial,
+      equity,
+      cash: Math.max(0, equity - marketValue),
+      invested: committed,
+      marketValue,
+      realized,
+      unrealized,
+      openPositions: open.length,
+    };
+  }
+
   const baseNorm = norm;
   norm = function treasuryNorm() {
     const fallback = baseNorm();
     const current = treasury();
     if (!current) return fallback;
-    const initial = n(current.initialBankrollEur) || TARGET;
-    const equity = n(current.equityEur);
+    const accounting = positionAccounting();
+    const treasuryCommitted = n(current.committedCapitalEur);
+    const treasuryEquity = n(current.equityEur);
+    const mismatch = Math.abs(treasuryCommitted - accounting.invested) > 0.01
+      || Math.abs(treasuryEquity - accounting.equity) > 0.01;
     return {
       ...fallback,
       scale: 1,
-      equity,
-      cash: n(current.freeCashEur),
-      invested: n(current.committedCapitalEur),
-      realized: n(current.realizedPnlEur),
-      unrealized: n(current.unrealizedPnlEur),
-      total: equity - initial,
+      equity: accounting.equity,
+      cash: accounting.cash,
+      invested: accounting.invested,
+      realized: accounting.realized,
+      unrealized: accounting.unrealized,
+      total: accounting.equity - accounting.initial,
       treasury: current,
+      treasuryMismatchReconciled: mismatch,
+      marketValue: accounting.marketValue,
     };
   };
 
   function sourceBanner() {
     const current = treasury();
     if (!current) return '<div class="banner warn"><b>Fuente contable:</b> Tesorería no disponible; se muestra el fallback técnico sin sumar carteras.</div>';
-    return '<div class="banner"><b>Fuente contable única:</b> '
+    const accounting = positionAccounting();
+    const mismatch = Math.abs(n(current.committedCapitalEur) - accounting.invested) > 0.01
+      || Math.abs(n(current.equityEur) - accounting.equity) > 0.01;
+    return '<div class="banner' + (mismatch ? ' warn' : '') + '"><b>Fuente contable única:</b> '
       + esc(current.operationalModel || 'Tesorería PAPER única')
       + ' · esquema ' + esc(current.snapshotSchemaVersion || current.schemaVersion || 'no expuesto')
-      + ' · banca inicial ' + eur(current.initialBankrollEur)
+      + ' · banca inicial ' + eur(accounting.initial)
+      + ' · capital comprometido reconciliado con ' + accounting.openPositions + ' posiciones: ' + eur(accounting.invested)
+      + (mismatch ? ' · se corrigió una desincronización del snapshot usando las posiciones y trades persistidos.' : '')
       + ' · balances por estrategia solo comparativos.</div>';
   }
 
