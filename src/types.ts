@@ -14,12 +14,14 @@ export interface Env {
    * LIVE_TRADING_ENABLED permanece ausente/false.
    */
   LIVE_EXECUTOR: DurableObjectNamespace;
+  XAU_PAPER_STATE: DurableObjectNamespace;
   TRADING_MODE: string;
   PAIR: string;
   INITIAL_CASH_EUR: string;
   ADMIN_TOKEN?: string;
   KRAKEN_API_KEY?: string;
   KRAKEN_API_SECRET?: string;
+  XAU_PAPER_FEED_URL?: string;
   // Interruptor estructural del ejecutor LIVE. Debe permanecer ausente o "false"
   // hasta una activación manual posterior, separada y explícita.
   LIVE_TRADING_ENABLED?: string;
