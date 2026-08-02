@@ -79,7 +79,7 @@ describe("standalone PAPER DEMO dashboard", () => {
     expect(html).toContain("Resultado bruto");
     expect(html).toContain("Costes ida/vuelta");
     expect(html).toContain("Resultado neto");
-    expect(html).toContain("el patrón 0 ganadoras");
+    expect(html).toContain("el histórico completo permanece visible");
   });
 
   it("keeps LIVE visibly and structurally disabled", async () => {
