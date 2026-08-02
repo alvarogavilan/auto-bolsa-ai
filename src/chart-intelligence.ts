@@ -21,11 +21,15 @@ function average(values: number[]): number {
 export function interpretChart(candles: Candle[]): ChartIntelligence {
   const closes = candles.map((candle) => candle.close).filter(Number.isFinite);
   const recent = closes.slice(-20);
-  const last = recent.at(-1) ?? 0;
   const fast = average(recent.slice(-5));
   const slow = average(recent);
   const momentum = slow > 0 ? (fast - slow) / slow : 0;
-  const returns = recent.slice(1).map((value, index) => recent[index] > 0 ? (value - recent[index]) / recent[index] : 0);
+  const returns: number[] = [];
+  for (let index = 1; index < recent.length; index += 1) {
+    const previous = recent[index - 1] ?? 0;
+    const current = recent[index] ?? previous;
+    returns.push(previous > 0 ? (current - previous) / previous : 0);
+  }
   const volatilityPct = Math.sqrt(average(returns.map((value) => value * value)));
   const support = recent.length ? Math.min(...recent) : null;
   const resistance = recent.length ? Math.max(...recent) : null;
