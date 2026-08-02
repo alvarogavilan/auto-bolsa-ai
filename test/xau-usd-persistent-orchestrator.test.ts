@@ -3,10 +3,10 @@ import { runPersistentXauPaperCycle, type XauPaperStateStore } from "../src/xau-
 import type { XauPaperRuntimeInput } from "../src/xau-usd-paper-runtime";
 
 class MemoryStore implements XauPaperStateStore {
-  value: string | null = null;
+  values = new Map<string, string>();
   puts = 0;
-  async get(): Promise<string | null> { return this.value; }
-  async put(_key: string, value: string): Promise<void> { this.value = value; this.puts += 1; }
+  async get(key: string): Promise<string | null> { return this.values.get(key) ?? null; }
+  async put(key: string, value: string): Promise<void> { this.values.set(key, value); this.puts += 1; }
 }
 
 function input(now = 1_000): XauPaperRuntimeInput {
@@ -33,15 +33,17 @@ function input(now = 1_000): XauPaperRuntimeInput {
 }
 
 describe("persistent XAU/USD PAPER orchestrator", () => {
-  it("persists an approved cycle and restores the ledger", async () => {
+  it("persists an approved cycle, ledger and PAPER position", async () => {
     const store = new MemoryStore();
     const first = await runPersistentXauPaperCycle(store, input());
     expect(first.persisted).toBe(true);
     expect(first.duplicate).toBe(false);
     expect(first.ledger.metrics).toMatchObject({ cycles: 1, approved: 1 });
+    expect(first.positionBook.open?.side).toBe("buy");
     const second = await runPersistentXauPaperCycle(store, input(2_000));
     expect(second.ledger.metrics).toMatchObject({ cycles: 2, approved: 2 });
-    expect(store.puts).toBe(2);
+    expect(second.positionBook.metrics.opened).toBe(1);
+    expect(store.puts).toBe(4);
   });
 
   it("does not duplicate an identical cycle", async () => {
@@ -51,14 +53,16 @@ describe("persistent XAU/USD PAPER orchestrator", () => {
     expect(duplicate.duplicate).toBe(true);
     expect(duplicate.persisted).toBe(false);
     expect(duplicate.ledger.metrics.cycles).toBe(1);
-    expect(store.puts).toBe(1);
+    expect(store.puts).toBe(2);
   });
 
   it("recovers safely from corrupted persisted state", async () => {
     const store = new MemoryStore();
-    store.value = "not-json";
+    store.values.set("xau-usd:paper-cycle-ledger:v1", "not-json");
+    store.values.set("xau-usd:paper-position-book:v1", "not-json");
     const result = await runPersistentXauPaperCycle(store, input());
     expect(result.ledger.metrics.cycles).toBe(1);
+    expect(result.positionBook.metrics.opened).toBe(1);
     expect(result.liveTrading).toBe(false);
     expect(result.realOrderSubmission).toBe(false);
   });
