@@ -61,6 +61,11 @@ function strategyWithTrades(trades: LabTrade[]): LabStrategyState {
   };
 }
 
+function requireOperation<T>(value: T | undefined): T {
+  if (value === undefined) throw new Error("Expected operation dossier");
+  return value;
+}
+
 describe("paper operation dossiers", () => {
   it("pairs buys and sells chronologically and counts one result per closed operation", () => {
     const report = buildOperationDossiers([strategyWithTrades([
@@ -87,12 +92,13 @@ describe("paper operation dossiers", () => {
       { id: "open-buy", side: "buy", timestamp: 100_000, price: 100, quantity: 0.1, grossEur: 10, feeEur: 0.04, reason: "entrada abierta" },
     ])], 200_000);
 
+    const operation = requireOperation(report.operations[0]);
     expect(report.closed).toBe(0);
     expect(report.open).toBe(1);
     expect(report.operations).toHaveLength(1);
-    expect(report.operations[0].status).toBe("open");
-    expect(report.operations[0].entry.tradeId).toBe("open-buy");
-    expect(report.operations[0].exit).toBeNull();
+    expect(operation.status).toBe("open");
+    expect(operation.entry.tradeId).toBe("open-buy");
+    expect(operation.exit).toBeNull();
   });
 
   it("classifies micro-wins separately from economically significant wins", () => {
@@ -101,9 +107,10 @@ describe("paper operation dossiers", () => {
       { id: "sell", side: "sell", timestamp: 160_000, price: 101, quantity: 0.1, grossEur: 10.1, feeEur: 0.0404, reason: "salida", pnlEur: 0.000028 },
     ])], 200_000);
 
+    const operation = requireOperation(report.operations[0]);
     expect(report.significantWins).toBe(0);
     expect(report.microWins).toBe(1);
-    expect(report.operations[0].exit?.economicallySignificant).toBe(false);
-    expect(report.operations[0].exit?.diagnosis).toBe("winner");
+    expect(operation.exit?.economicallySignificant).toBe(false);
+    expect(operation.exit?.diagnosis).toBe("winner");
   });
 });
