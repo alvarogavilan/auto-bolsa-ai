@@ -79,9 +79,12 @@ describe("persistent PAPER opportunity audit ledger", () => {
   });
 
   it("does not count an already-open position as a rejected opportunity", () => {
-    const open = strategy("open", "Continuación PAPER descartada: posición ya abierta", 30, ["buy-open"]);
+    const open = strategy("open", "PAPER BUY autorizada", 20, ["buy-open"]);
     open.position = { quantity: 5, entryPrice: 1, entryTime: 20, costEur: 5.02, stopLoss: 0.98, takeProfit: 1.04 };
     const seeded = advancePaperOpportunityAuditLedger(emptyPaperOpportunityAuditLedger(1), [open], 20, 21);
+    open.lastAttemptAt = 30;
+    open.lastSuccessfulAt = 30;
+    open.lastDecision = "Continuación PAPER descartada: posición ya abierta";
     const next = advancePaperOpportunityAuditLedger(seeded, [open], 30, 31);
     expect(next.skippedPositionAlreadyOpen).toBe(1);
     expect(next.rejectedOther).toBe(0);
