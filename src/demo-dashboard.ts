@@ -6,7 +6,11 @@ const PAPER_AUDIT_SCRIPT = `<script>
   const esc = (value) => String(value ?? '').replace(/[&<>\"']/g, (char) => ({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',"'":'&#039;'}[char]));
   const num = (value) => Number.isFinite(Number(value)) ? Number(value) : 0;
   const eur = (value) => new Intl.NumberFormat('es-ES', { style: 'currency', currency: 'EUR', minimumFractionDigits: 2, maximumFractionDigits: 4 }).format(num(value));
-  const date = (value) => value ? new Date(num(value)).toLocaleString('es-ES') : '—';
+  const date = (value) => {
+    if (value === null || value === undefined || value === '') return '—';
+    const parsed = typeof value === 'number' || /^\\d+$/.test(String(value)) ? new Date(Number(value)) : new Date(String(value));
+    return Number.isNaN(parsed.getTime()) ? '—' : parsed.toLocaleString('es-ES');
+  };
 
   function allTrades(strategies) {
     return strategies.flatMap((strategy) => (Array.isArray(strategy.trades) ? strategy.trades : []).map((trade) => ({ strategy, trade })))
@@ -35,10 +39,11 @@ const PAPER_AUDIT_SCRIPT = `<script>
   }
 
   function historyMarkup(trades) {
-    return '<div class="head"><div><h2>Historial completo</h2><div class="muted">' + trades.length + ' órdenes PAPER persistidas. Cada compra y venta conserva su explicación.</div></div></div><div class="list">' + trades.map(({strategy, trade}) => {
+    const items = trades.map(({strategy, trade}) => {
       const buy = trade.side === 'buy';
       return '<details class="item"><summary><div class="order-head"><span class="side ' + (buy ? 'buy' : 'sell') + '">' + (buy ? 'COMPRA' : 'VENTA') + '</span><div><b>' + esc(strategy.symbol) + '</b><div class="sub">' + esc(trade.reason || 'Sin explicación') + '</div></div><time class="sub">' + date(trade.timestamp) + '</time></div></summary><div class="kvs"><div class="kv"><span>Precio</span><strong>' + eur(trade.price) + '</strong></div><div class="kv"><span>Cantidad</span><strong>' + esc(trade.quantity) + '</strong></div><div class="kv"><span>Importe</span><strong>' + eur(trade.grossEur) + '</strong></div><div class="kv"><span>Comisión</span><strong class="negative">' + eur(trade.feeEur) + '</strong></div><div class="kv"><span>PnL neto</span><strong class="' + (num(trade.pnlEur) > 0 ? 'positive' : num(trade.pnlEur) < 0 ? 'negative' : '') + '">' + (typeof trade.pnlEur === 'number' ? eur(trade.pnlEur) : 'Abierta') + '</strong></div></div></details>';
-    }).join('') + '</div>';
+    }).join('');
+    return '<div class="head"><div><h2>Historial completo</h2><div class="muted">' + trades.length + ' órdenes PAPER persistidas. Cada compra y venta conserva su explicación.</div></div></div><div class="list">' + (items || '<div class="empty">Sin operaciones PAPER persistidas en la fuente única actual.</div>') + '</div>';
   }
 
   function evidenceMarkup(payload, trades) {
@@ -72,7 +77,7 @@ const PAPER_AUDIT_SCRIPT = `<script>
       (sampleReady ? '✓' : '✗') + ' 5 cierres nuevos · ' +
       (hasWinner ? '✓' : '✗') + ' alguna ganadora neta · ' +
       (pnlReady ? '✓' : '✗') + ' PnL neto positivo. Esto no activa LIVE automáticamente.</div>' +
-      '<div class="banner warn"><b>Resultado global: ' + wins + '/' + losses + '.</b> No se borra ni maquilla: el patrón 0 ganadoras permanece visible. La evaluación futura se basa en la cohorte posterior a la corrección iniciada el ' + date(cohort.startedAt) + '.</div>';
+      '<div class="banner warn"><b>Resultado global: ' + wins + '/' + losses + '.</b> No se borra ni maquilla: el histórico completo permanece visible. La evaluación futura se basa en la cohorte posterior a la corrección iniciada el ' + date(cohort.startedAt) + '.</div>';
   }
 
   function newsMarkup(payload) {
@@ -94,7 +99,7 @@ const PAPER_AUDIT_SCRIPT = `<script>
       const history = document.getElementById('history');
       const evidence = document.getElementById('evidence');
       const news = ensureNewsPanel();
-      if (history && trades.length) history.innerHTML = historyMarkup(trades);
+      if (history) history.innerHTML = historyMarkup(trades);
       if (evidence) evidence.innerHTML = evidenceMarkup(payload, trades);
       if (news) news.innerHTML = newsMarkup(payload);
     } catch {
