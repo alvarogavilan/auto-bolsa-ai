@@ -83,16 +83,16 @@ function candles(count = 50): Candle[] {
 }
 
 describe("multi-horizon PAPER lab", () => {
-  it("locks a maximum of three independent strategies per lane for fourteen days", () => {
+  it("uses every available strategy up to the configured lane limits for fourteen days", () => {
     const now = 1_800_000_000_000;
     const state = initializeResearchLab(universe(), now);
 
-    expect(state.strategies).toHaveLength(9);
+    expect(state.strategies).toHaveLength(15);
     expect(state.cohortLockedUntil - state.initializedAt).toBe(14 * 24 * 60 * 60_000);
     expect(state.strategies.every((strategy) => strategy.initialCashEur === 50)).toBe(true);
-    expect(state.strategies.filter((strategy) => strategy.lane === "fast")).toHaveLength(3);
-    expect(state.strategies.filter((strategy) => strategy.lane === "intraday")).toHaveLength(3);
-    expect(state.strategies.filter((strategy) => strategy.lane === "swing")).toHaveLength(3);
+    expect(state.strategies.filter((strategy) => strategy.lane === "fast")).toHaveLength(5);
+    expect(state.strategies.filter((strategy) => strategy.lane === "intraday")).toHaveLength(5);
+    expect(state.strategies.filter((strategy) => strategy.lane === "swing")).toHaveLength(5);
     expect(state.liveTrading).toBe(false);
   });
 
@@ -139,7 +139,7 @@ describe("multi-horizon PAPER lab", () => {
 
     expect(summary.independentVirtualCapitalPerStrategyEur).toBe(50);
     expect(summary.strategiesAreComparableNotAdditive).toBe(true);
-    expect(summary.provisionalLeaderboard).toHaveLength(9);
+    expect(summary.provisionalLeaderboard).toHaveLength(15);
     expect(summary.eligibleForLiveReview).toBe(false);
     expect(summary.liveTrading).toBe(false);
   });
@@ -176,10 +176,6 @@ describe("multi-horizon PAPER lab", () => {
     expect(strategy.trades).toHaveLength(1);
     const firstTradeId = strategy.trades[0]!.id;
 
-    // Simulate a retried/duplicated tick delivering the exact same closed
-    // candle again (e.g. a re-run cron invocation) before the next candle
-    // is due: it must be recognised as already processed and must never
-    // create a second trade for the same operation.
     applyResearchCandles(strategy, buySignalCandles(), now, gate);
     expect(strategy.performance.buys).toBe(1);
     expect(strategy.trades).toHaveLength(1);
