@@ -11,6 +11,7 @@ import { buildEconomicSignificanceReport } from "./economic-significance";
 import { buildInstitutionalIntelligence } from "./institutional-intelligence";
 import { buildMarketProductIntelligence } from "./market-product-intelligence";
 import { buildNewsIntelligence, type NewsIntelligenceReport } from "./news-intelligence";
+import { buildOperationDossiers } from "./operation-dossier";
 import { buildOrganizationalIntelligence } from "./organizational-intelligence";
 import {
   applyPaperEvidenceSnapshot,
@@ -87,6 +88,7 @@ export class ResearchLabState extends BaseResearchLabState {
     const institutionalIntelligence = buildInstitutionalIntelligence(payload.benchmarkSuite ?? payload.benchmarkComparison ?? null, payload.committee ?? null, now);
     const organizationalIntelligence = buildOrganizationalIntelligence(now);
     const economicSignificance = buildEconomicSignificanceReport(payload.state ?? null, now);
+    const operationDossiers = buildOperationDossiers(currentStrategies, now);
     return Response.json({
       ...payload,
       committeeImpact: buildCommitteeShadowImpactReport(impact, now),
@@ -95,6 +97,7 @@ export class ResearchLabState extends BaseResearchLabState {
       paperEvidenceLedgerStatus: { available: evidenceError === null, error: evidenceError, persistedOnThisRequest: shouldPersistSnapshot && evidenceError === null, failOpenForPaper: true, changesTradingDecision: false, liveTrading: false },
       recoveryCohort: buildRecoveryCohort(payload.state),
       economicSignificance,
+      operationDossiers,
       treasuryDepartment: buildTreasuryReport(payload.state ?? null),
       newsIntelligence,
       marketProductIntelligence,
