@@ -6,40 +6,44 @@ import { demoDashboard } from "../src/demo-dashboard";
 const ROOT = process.cwd();
 
 describe("full decision timeline in the DEMO dashboard", () => {
-  it("renders a decision timeline fed by a public, admin-free endpoint", async () => {
+  it("renders a decision timeline sourced from the committee impact report already in /api/lab", async () => {
     const html = await (await demoDashboard()).text();
 
     expect(html).toContain("Cronología de decisiones");
     expect(html).toContain("decisionTimelineList");
     expect(html).toContain("function renderDecisionTimeline");
-    expect(html).toContain("function loadDecisionTimeline");
-    expect(html).toContain("fetch('/api/decisions'");
+    expect(html).toContain("lab.committeeImpact");
+    expect(html).toContain("report.recentEntries");
+    // /api/decisions returns the single-pair engine's raw signal ledger
+    // (SignalEvidenceEntry), which has no symbol, decision or votes — using
+    // it here produced "Evaluación" / "Sin decisión" / "0 votos registrados"
+    // on every row. The timeline must not depend on it.
+    expect(html).not.toContain("fetch('/api/decisions'");
   });
 
-  it("shows the full six-vote committee detail per evaluated trade", async () => {
+  it("shows the full committee vote detail per evaluated trade, from the real vote shape", async () => {
     const html = await (await demoDashboard()).text();
 
     expect(html).toContain("Comité por operación");
     expect(html).toContain("committeeVoteDetail");
-    expect(html).toContain("function renderCommitteeVoteDetail");
     expect(html).toContain("entry.votes");
   });
 
-  it("shows a purely informational readiness/manifest card without new Kraken calls", async () => {
+  it("never renders an empty-looking entry: shows symbol, lane, verdict and outcome, or one explicit empty state", async () => {
     const html = await (await demoDashboard()).text();
 
-    expect(html).toContain("Piloto: readiness y manifiesto");
-    expect(html).toContain("function renderPilotInfo");
-    expect(html).toContain("eligibleForLiveReview");
-    expect(html).not.toContain("krakenSafetySummary");
-    expect(html).not.toContain("buildPilotOneShotManifest");
-    expect(html).not.toContain("buildPilotRuntimeReadiness");
+    expect(html).toContain("entry.symbol");
+    expect(html).toContain("entry.verdict");
+    expect(html).toContain("outcomeLabel(entry.outcome)");
+    expect(html).toContain("Aún no hay operaciones evaluadas por el comité.");
   });
 
-  it("keeps auto-refresh independent from the core demo loading loop", async () => {
+  it("refreshes the decision timeline as part of the normal render cycle, with no separate fetch to maintain", async () => {
     const html = await (await demoDashboard()).text();
 
-    expect(html).toContain("loadDecisionTimeline();setInterval(loadDecisionTimeline,15000);");
+    expect(html).toContain("renderDecisionTimeline()");
+    expect(html).toMatch(/function render\(\)\{[^}]*renderDecisionTimeline\(\)/);
+    expect(html).not.toContain("function loadDecisionTimeline");
     expect(html).not.toContain("/api/pilot/submit");
     expect(html).not.toContain("LIVE_TRADING_ENABLED");
   });
