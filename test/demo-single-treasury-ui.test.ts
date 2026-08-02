@@ -2,15 +2,17 @@ import { describe, expect, it } from "vitest";
 import { demoDashboard } from "../src/demo-dashboard";
 
 describe("DEMO single PAPER treasury", () => {
-  it("uses the 100 EUR treasury as the visual source of truth", async () => {
+  it("uses the 100 EUR treasury and reconciles every open position", async () => {
     const html = await (await demoDashboard()).text();
 
     expect(html).toContain("const TARGET=100;");
     expect(html).toContain("Tesorería PAPER única de 100 €");
     expect(html).toContain("singleSourceOfTruth === true");
-    expect(html).toContain("current.equityEur");
-    expect(html).toContain("current.freeCashEur");
-    expect(html).toContain("current.committedCapitalEur");
+    expect(html).toContain("function positionAccounting()");
+    expect(html).toContain("strategy.position.costEur");
+    expect(html).toContain("initial + realized + unrealized");
+    expect(html).toContain("equity - marketValue");
+    expect(html).toContain("capital comprometido reconciliado");
     expect(html).not.toContain("Cuenta equivalente de 50 €");
   });
 
