@@ -20,6 +20,11 @@ function initialRiskDistance(position: LabPosition): number {
   return Math.max(0, position.entryPrice - position.stopLoss);
 }
 
+/**
+ * Moves a PAPER stop only in the profitable direction. Activation waits for
+ * one initial risk unit, then protects true net break-even plus part of the
+ * gain while allowing the target to expand. It never loosens an existing stop.
+ */
 export function managePaperProfitLock(
   position: LabPosition,
   strategy: Pick<LabStrategyState, "config">,
