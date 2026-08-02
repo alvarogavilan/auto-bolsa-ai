@@ -12,15 +12,13 @@
     "bindings": [
       { "name": "BOT_STATE", "class_name": "BotState" },
       { "name": "RESEARCH_LAB", "class_name": "ResearchLabState" },
-      { "name": "LIVE_EXECUTOR", "class_name": "LiveExecutorState" },
-      { "name": "XAU_PAPER_STATE", "class_name": "XauPaperState" }
+      { "name": "LIVE_EXECUTOR", "class_name": "LiveExecutorState" }
     ]
   },
   "migrations": [
     { "tag": "v1", "new_sqlite_classes": ["BotState"] },
     { "tag": "v2", "new_sqlite_classes": ["ResearchLabState"] },
-    { "tag": "v3", "new_sqlite_classes": ["LiveExecutorState"] },
-    { "tag": "v5", "new_sqlite_classes": ["XauPaperState"] }
+    { "tag": "v3", "new_sqlite_classes": ["LiveExecutorState"] }
   ],
   "triggers": { "crons": ["*/5 * * * *"] }
 }
