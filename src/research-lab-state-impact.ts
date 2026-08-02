@@ -22,16 +22,38 @@ import {
 import type { ResearchLabState as StoredResearchLabState } from "./research-lab";
 import { ResearchLabState as BaseResearchLabState } from "./research-lab-state-base";
 import { buildTemporalValidationReport } from "./temporal-validation";
+import { buildTreasuryReport } from "./treasury-risk";
 import type { Env } from "./types";
 
 const COMMITTEE_IMPACT_KEY = "committee-shadow-impact-v1";
 const PAPER_EVIDENCE_KEY = "paper-trade-evidence-v1";
+const RECOVERY_COHORT_STARTED_AT = Date.parse("2026-08-02T00:46:35Z");
 interface LabResponsePayload { initialized?: boolean; state?: StoredResearchLabState; committee?: ResearchCommitteeReport; benchmarkSuite?: unknown; benchmarkComparison?: unknown; [key: string]: unknown; }
 interface SafeImpactRead { impact: CommitteeShadowImpactState; error: string | null; }
 interface SafeEvidenceRead { ledger: PaperEvidenceLedgerState; error: string | null; }
 function validCommittee(value: unknown): value is ResearchCommitteeReport { return Boolean(value && typeof value === "object" && (value as ResearchCommitteeReport).schemaVersion === "paper-research-committee-v1" && Array.isArray((value as ResearchCommitteeReport).reports)); }
 function unavailableNews(now: number, error: unknown): NewsIntelligenceReport {
   return { schemaVersion: "global-news-intelligence-v2", generatedAt: now, refreshTargetSeconds: 60, sourcesConfigured: 10, sourcesAvailable: 0, signals: [], breakingSignals: 0, highImpactSignals: 0, coverage: { regions: ["US", "EU", "UK", "GLOBAL"], topics: ["monetary-policy", "inflation", "geopolitics", "war", "sanctions", "political-speech", "regulation", "cybersecurity", "exchange-incident", "energy", "shipping", "etf", "other"], primarySourcesOnly: true, impossibleToGuaranteeTotalWorldCoverage: true }, sourceStatus: [{ id: "department", label: "Departamento mundial de noticias", available: false, items: 0, latencyMs: 0, error: error instanceof Error ? error.message : "NEWS_INTELLIGENCE_FAILED" }], changesTradingDecision: false, advisoryOnly: true, eligibleForLiveReview: false, liveTrading: false };
+}
+function buildRecoveryCohort(state: StoredResearchLabState | undefined): Record<string, unknown> {
+  const sells = (state?.strategies ?? []).flatMap((strategy) => strategy.trades.map((trade) => ({ strategy: strategy.id, trade }))).filter(({ trade }) => trade.side === "sell" && typeof trade.pnlEur === "number");
+  const legacy = sells.filter(({ trade }) => trade.timestamp < RECOVERY_COHORT_STARTED_AT);
+  const recovery = sells.filter(({ trade }) => trade.timestamp >= RECOVERY_COHORT_STARTED_AT);
+  const summarize = (items: typeof sells) => ({
+    closedTrades: items.length,
+    wins: items.filter(({ trade }) => (trade.pnlEur ?? 0) > 0).length,
+    losses: items.filter(({ trade }) => (trade.pnlEur ?? 0) < 0).length,
+    netPnlEur: items.reduce((sum, { trade }) => sum + (trade.pnlEur ?? 0), 0),
+  });
+  return {
+    schemaVersion: "paper-recovery-cohort-v1",
+    startedAt: RECOVERY_COHORT_STARTED_AT,
+    legacy: summarize(legacy),
+    correctedLogic: summarize(recovery),
+    legacyResultsPreserved: true,
+    correctedLogicJudgedSeparately: true,
+    liveTrading: false,
+  };
 }
 
 export class ResearchLabState extends BaseResearchLabState {
@@ -69,11 +91,13 @@ export class ResearchLabState extends BaseResearchLabState {
       committeeImpactStatus: { available: impactError === null, error: impactError, failOpenForPaper: true, changesTradingDecision: false, liveTrading: false },
       paperEvidenceLedger: buildPaperEvidenceLedgerReport(evidence, now),
       paperEvidenceLedgerStatus: { available: evidenceError === null, error: evidenceError, persistedOnThisRequest: shouldPersistSnapshot && evidenceError === null, failOpenForPaper: true, changesTradingDecision: false, liveTrading: false },
+      recoveryCohort: buildRecoveryCohort(payload.state),
+      treasuryDepartment: buildTreasuryReport(payload.state ?? null),
       newsIntelligence,
       marketProductIntelligence,
       institutionalIntelligence,
       organizationalIntelligence,
-      intelligencePolicy: { newsMayVetoPaperEntry: true, newsMayResizePaperEntry: true, chartMayVetoPaperEntry: true, chartMayResizePaperEntry: true, thirdPartyPortfolioMayTriggerTrade: false, unverifiedWinRatesAccepted: false, autonomousParameterMutation: false, liveTrading: false },
+      intelligencePolicy: { newsMayVetoPaperEntry: true, newsMayResizePaperEntry: true, chartMayVetoPaperEntry: true, chartMayResizePaperEntry: true, treasuryMayVetoPaperEntry: true, treasuryCapsAllocation: true, thirdPartyPortfolioMayTriggerTrade: false, unverifiedWinRatesAccepted: false, autonomousParameterMutation: false, liveTrading: false },
       temporalValidation,
       costSequenceStress,
       liveTrading: false,
