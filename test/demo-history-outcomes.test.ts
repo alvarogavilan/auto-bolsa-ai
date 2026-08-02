@@ -13,13 +13,14 @@ describe("DEMO history outcome badges", () => {
     expect(html).toContain("#history .history-outcome.open");
   });
 
-  it("propagates a sell result to its associated buy without inventing outcomes", async () => {
+  it("labels the associated buy as the entry leg, not as a second closed trade", async () => {
     const html = await (await demoDashboard()).text();
 
+    expect(html).toContain("ENTRADA DE GANADORA");
+    expect(html).toContain("ENTRADA DE PERDEDORA");
     expect(html).toContain("const buyId = historyDetailValue(card, 'Compra asociada')");
-    expect(html).toContain("const buyCard = byId.get(buyId)");
-    expect(html).toContain("if (buyCard) setHistoryOutcome(buyCard, kind, label, pnlText)");
-    expect(html).toContain("if (side.includes('COMPRA')) setHistoryOutcome(card, 'open', 'ABIERTA')");
+    expect(html).toContain("setHistoryOutcome(buyCard, kind, entryLabel, pnlText)");
+    expect(html).not.toContain("setHistoryOutcome(buyCard, kind, label, pnlText)");
   });
 
   it("keeps a single render pipeline and blocks LIVE", async () => {
