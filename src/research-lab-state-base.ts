@@ -5,6 +5,7 @@ import { fetchOhlc } from "./kraken";
 import type { MarketUniverse } from "./market-universe";
 import { buildNewsDecisionContext } from "./news-decision-context";
 import { buildNewsIntelligence } from "./news-intelligence";
+import { applyPaperTrendContinuationEntry } from "./paper-trend-continuation";
 import {
   applyResearchCandles,
   initializeResearchLab,
@@ -92,12 +93,14 @@ export class ResearchLabState extends DurableObject<Env> {
         if (typeof currentPrice !== "number" || !Number.isFinite(currentPrice) || currentPrice <= 0) throw new Error("Kraken OHLC current price unavailable for benchmark");
         benchmarks[strategy.id] = updateBuyHoldBenchmark(benchmarks[strategy.id] ?? null, strategy, currentPrice, now);
         const newsContext = buildNewsDecisionContext(news, strategy.base);
-        applyResearchCandles(strategy, candles, now, payload.executionGates[strategy.pairKey] ?? null, newsContext);
+        const executionGate = payload.executionGates[strategy.pairKey] ?? null;
+        applyResearchCandles(strategy, candles, now, executionGate, newsContext);
+        applyPaperTrendContinuationEntry(strategy, candles, now, executionGate, newsContext);
       } catch (error) { recordResearchError(strategy, error, now); }
     }
     state.cycles += 1; state.lastCycleAt = now;
     await Promise.all([this.write(state), this.ctx.storage.put(EXECUTION_GATES_KEY, payload.executionGates), this.ctx.storage.put(BENCHMARKS_KEY, benchmarks)]);
-    return Response.json({ initialized: true, dueStrategiesProcessed: due.length, state, newsAppliedToPaper: true, ...this.buildAnalysis(state, payload.executionGates, benchmarks, now), liveTrading: false });
+    return Response.json({ initialized: true, dueStrategiesProcessed: due.length, state, newsAppliedToPaper: true, trendContinuationAppliedToPaper: true, ...this.buildAnalysis(state, payload.executionGates, benchmarks, now), liveTrading: false });
   }
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
@@ -105,7 +108,7 @@ export class ResearchLabState extends DurableObject<Env> {
       const [state, executionGates, benchmarks] = await Promise.all([this.read(), this.readExecutionGates(), this.readBenchmarks()]);
       if (!state) return Response.json({ initialized: false, mode: "paper", message: "El laboratorio se inicializará con el próximo mapa de mercados válido.", eligibleForLiveReview: false, liveTrading: false });
       const now = Date.now();
-      return Response.json({ initialized: true, state, newsAppliedToPaper: true, ...this.buildAnalysis(state, executionGates, benchmarks, now), liveTrading: false });
+      return Response.json({ initialized: true, state, newsAppliedToPaper: true, trendContinuationAppliedToPaper: true, ...this.buildAnalysis(state, executionGates, benchmarks, now), liveTrading: false });
     }
     if (request.method === "POST" && url.pathname === "/tick") {
       let body: unknown; try { body = await request.json(); } catch { return Response.json({ error: "INVALID_RESEARCH_LAB_JSON", liveTrading: false }, { status: 400 }); }
