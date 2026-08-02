@@ -2,6 +2,7 @@ import type { Candle } from "./types";
 import type { MarketCandidate, MarketUniverse, ResearchLaneId } from "./market-universe";
 import type { NewsDecisionContext } from "./news-decision-context";
 import { interpretChart, type ChartIntelligence } from "./chart-intelligence";
+import { applyNetTakeProfitToPosition, projectedNetPnlAtRawPrice } from "./paper-net-exit";
 import { reconcileResearchLabRoster } from "./research-lab-roster-reconciliation";
 import {
   applyResearchCandles as applyBaseResearchCandles,
@@ -183,7 +184,10 @@ function resizeLatestPaperBuy(strategy: LabStrategyState, cashBefore: number, in
   latest.reason = `${latest.reason}. Asignación PAPER adaptativa ${(sizing.allocationPct * 100).toFixed(1)} %; importe ${sizing.budget.toFixed(2)} €; riesgo ${sizing.riskBudgetEur.toFixed(4)} €; evidencia ${(sizing.evidenceFactor * 100).toFixed(0)} %; costes ${(sizing.costFactor * 100).toFixed(0)} %; noticias+gráfica ${(sizing.intelligenceFactor * 100).toFixed(0)} %. Tendencia ${intelligence.chart.trend}; señales noticia ${intelligence.news?.relevantSignals ?? 0}.`;
   strategy.performance.totalFeesEur = Math.round((strategy.performance.totalFeesEur - originalGross * strategy.config.feePctEachSide + fee) * 1_000_000) / 1_000_000;
   strategy.equityEur = Math.round((strategy.cashEur + quantity * latest.price) * 1_000_000) / 1_000_000;
-  strategy.lastDecision = `PAPER BUY dimensionada por comité: ${latest.reason}`;
+  const economics = applyNetTakeProfitToPosition(strategy);
+  strategy.lastDecision = economics
+    ? `PAPER BUY dimensionada por comité: ${latest.reason}. Equilibrio bruto ${economics.breakEvenRawPrice.toFixed(6)}; take profit neto ${economics.rawTriggerPrice.toFixed(6)} para ${(economics.targetNetReturnPct * 100).toFixed(2)} % neto.`
+    : `PAPER BUY dimensionada por comité: ${latest.reason}`;
 }
 
 function snapshotFinancialState(strategy: LabStrategyState): FinancialSnapshot {
@@ -208,11 +212,10 @@ function restoreTinyRsiExit(strategy: LabStrategyState, before: FinancialSnapsho
   const latest = strategy.trades[0];
   const position = before.position;
   if (!position || !latest || latest.side !== "sell" || latest.reason !== "RSI de salida del carril") return false;
-  const pnl = latest.pnlEur;
-  if (typeof pnl !== "number" || pnl <= 0 || position.costEur <= 0) return false;
-  const netReturnPct = pnl / position.costEur;
+  const netPnlAtMarket = projectedNetPnlAtRawPrice(position, strategy, currentPrice);
+  const netReturnPct = position.costEur > 0 ? netPnlAtMarket / position.costEur : 0;
   const minimum = minimumDiscretionaryNetExitPct(strategy);
-  if (netReturnPct >= minimum) return false;
+  if (netPnlAtMarket > 0 && netReturnPct >= minimum) return false;
 
   strategy.cashEur = before.cashEur;
   strategy.position = { ...position };
@@ -222,11 +225,13 @@ function restoreTinyRsiExit(strategy: LabStrategyState, before: FinancialSnapsho
   strategy.peakEquityEur = before.peakEquityEur;
   strategy.maxDrawdownPct = before.maxDrawdownPct;
   strategy.equityEur = Math.round((before.cashEur + position.quantity * currentPrice) * 1_000_000) / 1_000_000;
-  strategy.lastDecision = `Salida RSI aplazada: beneficio neto ${(netReturnPct * 100).toFixed(3)} % inferior al mínimo ${(minimum * 100).toFixed(2)} % exigido tras costes. Stop, take profit, cruce bajista y tiempo máximo siguen activos.`;
+  const economics = applyNetTakeProfitToPosition(strategy);
+  strategy.lastDecision = `Salida RSI aplazada: PnL neto proyectado ${netPnlAtMarket.toFixed(6)} € (${(netReturnPct * 100).toFixed(3)} %) inferior al mínimo ${(minimum * 100).toFixed(2)} % después de comisión y slippage.${economics ? ` Equilibrio bruto ${economics.breakEvenRawPrice.toFixed(6)}.` : ""} Stop, take profit neto, cruce bajista y tiempo máximo siguen activos.`;
   return true;
 }
 
 export function applyResearchCandles(strategy: LabStrategyState, candles: Candle[], now = Date.now(), fastEntryGate: FastEntryGate | null = null, news: NewsDecisionContext | null = null): LabStrategyState {
+  applyNetTakeProfitToPosition(strategy);
   const cashBefore = strategy.cashEur;
   const buysBefore = strategy.performance.buys;
   const financialBefore = snapshotFinancialState(strategy);
@@ -237,5 +242,6 @@ export function applyResearchCandles(strategy: LabStrategyState, candles: Candle
     restoreTinyRsiExit(result, financialBefore, currentPrice);
   }
   if (result.performance.buys > buysBefore && result.position) resizeLatestPaperBuy(result, cashBefore, { news, chart });
+  applyNetTakeProfitToPosition(result);
   return result;
 }
