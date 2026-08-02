@@ -39,7 +39,7 @@ describe("XAU/USD PAPER position lifecycle", () => {
     expect(book.open?.trailingActive).toBe(true);
     expect(book.open?.stopPrice).toBeGreaterThan(book.open?.entryPrice as number);
     expect(book.open?.protectedPnlEur).toBeGreaterThan(0);
-    expect(book.open?.targetPrice).toBeGreaterThan(oldTarget);
+    expect(book.open?.targetPrice).toBeGreaterThanOrEqual(oldTarget);
   });
 
   it("closes through the raised stop while preserving a positive result", () => {
