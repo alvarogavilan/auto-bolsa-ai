@@ -33,10 +33,24 @@ export const DEMO_GLOBAL_LOSS_RECOVERY_CODE = String.raw`
       rejectedHistorical: ledger && typeof ledger.rejectedByLossRecovery === 'number'
         ? ledger.rejectedByLossRecovery
         : 0,
+      rejectedByNegativePattern: ledger && typeof ledger.rejectedByNegativePattern === 'number'
+        ? ledger.rejectedByNegativePattern
+        : 0,
+      auditedCycles: ledger && typeof ledger.cyclesObserved === 'number'
+        ? ledger.cyclesObserved
+        : 0,
+      ledgerSchema: ledger && ledger.schemaVersion ? String(ledger.schemaVersion) : 'no disponible',
       recoveryCondition: diagnostics && diagnostics.recoveryCondition
         ? String(diagnostics.recoveryCondition)
         : 'Solo ruptura o continuación confirmada con costes excepcionalmente bajos; un cierre no perdedor reinicia la racha.',
     };
+  }
+
+  function negativePatternText(status) {
+    return 'Vetos por patrón negativo: ' + status.rejectedByNegativePattern
+      + ' · ciclos auditados: ' + status.auditedCycles
+      + ' · esquema ' + esc(status.ledgerSchema)
+      + '. Exige coincidencia exacta de carril, activo y motivo, al menos 5 cierres comparables, PnL negativo y profit factor inferior a 1.';
   }
 
   function globalLossRecoveryBanner() {
@@ -48,6 +62,7 @@ export const DEMO_GLOBAL_LOSS_RECOVERY_CODE = String.raw`
     return '<div id="global-loss-recovery-status" class="banner ' + level + '"><b>' + headline + '</b> '
       + 'Racha actual: ' + status.currentLosingStreak + ' / ' + status.activationThreshold
       + ' · vetos históricos por recuperación: ' + status.rejectedHistorical
+      + ' · vetos por patrón negativo: ' + status.rejectedByNegativePattern
       + ' · ' + esc(status.recoveryCondition)
       + ' Las salidas de seguridad y la gestión de posiciones abiertas continúan activas; LIVE permanece bloqueado.</div>';
   }
@@ -73,7 +88,10 @@ export const DEMO_GLOBAL_LOSS_RECOVERY_CODE = String.raw`
         + (status.active ? 'bad' : 'warn') + '"><b>Recuperación global PAPER:</b> racha '
         + status.currentLosingStreak + ' / ' + status.activationThreshold
         + ' · rechazadas específicamente por recuperación: ' + status.rejectedHistorical
-        + ' · no se mezcla con exposición ni riesgo.</div>');
+        + ' · no se mezcla con exposición ni riesgo.</div>'
+        + '<div id="negative-pattern-veto-audit" class="banner '
+        + (status.rejectedByNegativePattern > 0 ? 'warn' : 'safe') + '"><b>Filtro estadístico PAPER:</b> '
+        + negativePatternText(status) + ' No altera cierres, stops, posiciones abiertas ni el historial.</div>');
     };
   }
 })();`;
