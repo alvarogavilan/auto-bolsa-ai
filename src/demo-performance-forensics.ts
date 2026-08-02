@@ -1,5 +1,20 @@
 export const DEMO_PERFORMANCE_FORENSICS_CODE = String.raw`
 (() => {
+  function summarizePerformance(rows) {
+    const wins = rows.filter(row => row.pnl > 0);
+    const losses = rows.filter(row => row.pnl < 0);
+    const flats = rows.filter(row => row.pnl === 0);
+    const net = rows.reduce((sum, row) => sum + row.pnl, 0);
+    const grossProfit = wins.reduce((sum, row) => sum + row.pnl, 0);
+    const grossLoss = Math.abs(losses.reduce((sum, row) => sum + row.pnl, 0));
+    const avgWin = wins.length ? grossProfit / wins.length : 0;
+    const avgLoss = losses.length ? grossLoss / losses.length : 0;
+    const expectancy = rows.length ? net / rows.length : 0;
+    const profitFactor = grossLoss > 0 ? grossProfit / grossLoss : grossProfit > 0 ? Infinity : 0;
+    const winRate = rows.length ? wins.length / rows.length : 0;
+    return { rows, wins, losses, flats, net, grossProfit, grossLoss, avgWin, avgLoss, expectancy, profitFactor, winRate };
+  }
+
   function performanceForensics() {
     const closed = typeof pairs === 'function' ? pairs().filter(item => item && item.sell) : [];
     const rows = closed.map(item => {
@@ -14,27 +29,20 @@ export const DEMO_PERFORMANCE_FORENSICS_CODE = String.raw`
         evidenceComplete,
       };
     });
-    const wins = rows.filter(row => row.pnl > 0);
-    const losses = rows.filter(row => row.pnl < 0);
-    const flats = rows.filter(row => row.pnl === 0);
-    const net = rows.reduce((sum, row) => sum + row.pnl, 0);
-    const grossProfit = wins.reduce((sum, row) => sum + row.pnl, 0);
-    const grossLoss = Math.abs(losses.reduce((sum, row) => sum + row.pnl, 0));
-    const avgWin = wins.length ? grossProfit / wins.length : 0;
-    const avgLoss = losses.length ? grossLoss / losses.length : 0;
-    const expectancy = rows.length ? net / rows.length : 0;
-    const profitFactor = grossLoss > 0 ? grossProfit / grossLoss : grossProfit > 0 ? Infinity : 0;
     const complete = rows.filter(row => row.evidenceComplete);
     const historical = rows.filter(row => !row.evidenceComplete);
+    const all = summarizePerformance(rows);
+    const current = summarizePerformance(complete);
+    const legacy = summarizePerformance(historical);
     const grouped = new Map();
     rows.forEach(row => {
       const key = row.lane;
-      const current = grouped.get(key) || { closed: 0, wins: 0, losses: 0, pnl: 0 };
-      current.closed += 1;
-      current.wins += row.pnl > 0 ? 1 : 0;
-      current.losses += row.pnl < 0 ? 1 : 0;
-      current.pnl += row.pnl;
-      grouped.set(key, current);
+      const currentLane = grouped.get(key) || { closed: 0, wins: 0, losses: 0, pnl: 0 };
+      currentLane.closed += 1;
+      currentLane.wins += row.pnl > 0 ? 1 : 0;
+      currentLane.losses += row.pnl < 0 ? 1 : 0;
+      currentLane.pnl += row.pnl;
+      grouped.set(key, currentLane);
     });
     const exitReasons = new Map();
     rows.forEach(row => {
@@ -45,19 +53,21 @@ export const DEMO_PERFORMANCE_FORENSICS_CODE = String.raw`
         : reason.includes('cruce') ? 'Cruce bajista'
         : reason.includes('objetivo') || reason.includes('take profit') ? 'Objetivo'
         : 'Otros';
-      const current = exitReasons.get(key) || { count: 0, pnl: 0 };
-      current.count += 1;
-      current.pnl += row.pnl;
-      exitReasons.set(key, current);
+      const currentReason = exitReasons.get(key) || { count: 0, pnl: 0 };
+      currentReason.count += 1;
+      currentReason.pnl += row.pnl;
+      exitReasons.set(key, currentReason);
     });
-    return { rows, wins, losses, flats, net, grossProfit, grossLoss, avgWin, avgLoss, expectancy, profitFactor, complete, historical, grouped, exitReasons };
+    return { ...all, complete, historical, current, legacy, grouped, exitReasons };
   }
 
   function forensicPanel() {
     const report = performanceForensics();
-    const winRate = report.rows.length ? report.wins.length / report.rows.length : 0;
-    const unacceptable = report.rows.length > 0 && (report.net <= 0 || winRate < 0.4 || report.profitFactor < 1);
-    const factor = Number.isFinite(report.profitFactor) ? report.profitFactor.toFixed(2) : '∞';
+    const current = report.current;
+    const currentUnacceptable = current.rows.length > 0
+      && (current.net <= 0 || current.winRate < 0.4 || current.profitFactor < 1);
+    const currentFactor = Number.isFinite(current.profitFactor) ? current.profitFactor.toFixed(2) : '∞';
+    const allFactor = Number.isFinite(report.profitFactor) ? report.profitFactor.toFixed(2) : '∞';
     const laneRows = [...report.grouped.entries()].map(([laneId, value]) =>
       '<div class="item"><b>' + esc(lane(laneId)) + '</b><div class="sub">'
       + value.closed + ' cerradas · ' + value.wins + ' G / ' + value.losses + ' P · PnL ' + eur(value.pnl)
@@ -67,28 +77,41 @@ export const DEMO_PERFORMANCE_FORENSICS_CODE = String.raw`
       '<div class="item"><b>' + esc(reason) + '</b><div class="sub">'
       + value.count + ' cierre(s) · PnL ' + eur(value.pnl) + '</div></div>'
     ).join('');
+    const currentBanner = current.rows.length === 0
+      ? '<div class="banner warn"><b>Motor actual todavía sin cierres evaluables.</b> Las cifras históricas no sirven para aprobar LIVE.</div>'
+      : '<div class="banner ' + (currentUnacceptable ? 'bad' : 'safe') + '"><b>'
+        + (currentUnacceptable ? 'Motor actual: muestra negativa, no apta para LIVE.' : 'Motor actual: muestra provisional favorable.')
+        + '</b> Solo incluye operaciones con evidencia completa v1.</div>';
     return '<article id="paper-performance-forensics" class="item">'
       + '<h3 class="mini-title">Diagnóstico forense del rendimiento</h3>'
-      + '<div class="banner ' + (unacceptable ? 'bad' : 'safe') + '"><b>'
-      + (unacceptable ? 'Muestra negativa: no apta para LIVE.' : 'Muestra provisional favorable.')
-      + '</b> No se alteran operaciones ni se ocultan pérdidas.</div>'
+      + currentBanner
+      + '<h3 class="mini-title" style="margin-top:12px">Motor actual · evidencia completa v1</h3>'
       + '<div class="grid">'
-      + metric('Operaciones cerradas', report.rows.length)
-      + metric('Ganadas / perdidas', report.wins.length + ' / ' + report.losses.length)
-      + metric('Tasa de acierto', pct(winRate), winRate >= 0.5 ? 'positive' : 'negative')
-      + metric('PnL neto cerrado', eur(report.net), cls(report.net))
-      + metric('Expectativa por operación', eur(report.expectancy), cls(report.expectancy))
-      + metric('Profit factor', factor, report.profitFactor >= 1 ? 'positive' : 'negative')
-      + metric('Ganancia media', eur(report.avgWin), report.avgWin > 0 ? 'positive' : '')
-      + metric('Pérdida media', eur(report.avgLoss), report.avgLoss > 0 ? 'negative' : '')
+      + metric('Cierres actuales', current.rows.length)
+      + metric('Ganadas / perdidas actuales', current.wins.length + ' / ' + current.losses.length)
+      + metric('Acierto actual', pct(current.winRate), current.winRate >= 0.5 ? 'positive' : 'negative')
+      + metric('PnL actual', eur(current.net), cls(current.net))
+      + metric('Expectativa actual', eur(current.expectancy), cls(current.expectancy))
+      + metric('Profit factor actual', currentFactor, current.profitFactor >= 1 ? 'positive' : 'negative')
+      + '</div>'
+      + '<h3 class="mini-title" style="margin-top:12px">Histórico completo · contexto, no aprobación</h3>'
+      + '<div class="grid">'
+      + metric('Operaciones cerradas totales', report.rows.length)
+      + metric('Ganadas / perdidas totales', report.wins.length + ' / ' + report.losses.length)
+      + metric('Tasa de acierto total', pct(report.winRate), report.winRate >= 0.5 ? 'positive' : 'negative')
+      + metric('PnL neto total', eur(report.net), cls(report.net))
+      + metric('Expectativa total', eur(report.expectancy), cls(report.expectancy))
+      + metric('Profit factor total', allFactor, report.profitFactor >= 1 ? 'positive' : 'negative')
+      + metric('Ganancia media total', eur(report.avgWin), report.avgWin > 0 ? 'positive' : '')
+      + metric('Pérdida media total', eur(report.avgLoss), report.avgLoss > 0 ? 'negative' : '')
       + metric('Evidencia completa nueva', report.complete.length)
       + metric('Históricas / legado', report.historical.length)
       + '</div>'
-      + '<div class="section-stack" style="margin-top:12px"><div><h3 class="mini-title">Por carril</h3><div class="list">'
+      + '<div class="section-stack" style="margin-top:12px"><div><h3 class="mini-title">Por carril · histórico completo</h3><div class="list">'
       + (laneRows || '<div class="empty">Sin cierres.</div>') + '</div></div>'
-      + '<div><h3 class="mini-title">Por causa de salida</h3><div class="list">'
+      + '<div><h3 class="mini-title">Por causa de salida · histórico completo</h3><div class="list">'
       + (reasonRows || '<div class="empty">Sin cierres.</div>') + '</div></div></div>'
-      + '<div class="banner warn"><b>Interpretación:</b> las operaciones históricas anteriores a la evidencia v1 se conservan, pero se separan de las operaciones nuevas para evaluar si el motor actual mejora de verdad.</div>'
+      + '<div class="banner warn"><b>Interpretación:</b> las operaciones históricas se conservan íntegramente, pero la decisión sobre el motor actual se basa primero en evidencia completa v1. No se alteran operaciones ni se ocultan pérdidas.</div>'
       + '</article>';
   }
 
@@ -99,12 +122,15 @@ export const DEMO_PERFORMANCE_FORENSICS_CODE = String.raw`
       const previous = document.getElementById('paper-performance-forensics-summary');
       if (previous) previous.remove();
       const report = performanceForensics();
-      const rate = report.rows.length ? report.wins.length / report.rows.length : 0;
+      const current = report.current;
+      const currentNegative = current.rows.length > 0 && (current.net <= 0 || current.winRate < 0.4 || current.profitFactor < 1);
+      const currentText = current.rows.length
+        ? current.rows.length + ' cierres actuales · ' + current.wins.length + ' ganadas · ' + current.losses.length
+          + ' perdidas · acierto ' + pct(current.winRate) + ' · expectativa ' + eur(current.expectancy)
+        : 'sin cierres del motor actual con evidencia completa v1';
       summary.insertAdjacentHTML('beforeend', '<div id="paper-performance-forensics-summary" class="banner '
-        + (report.rows.length && (report.net <= 0 || rate < 0.4) ? 'bad' : 'warn') + '"><b>Calidad cerrada:</b> '
-        + report.rows.length + ' operaciones · ' + report.wins.length + ' ganadas · ' + report.losses.length
-        + ' perdidas · acierto ' + pct(rate) + ' · expectativa ' + eur(report.expectancy)
-        + '. Consulte Rendimiento para el desglose histórico frente al motor actual.</div>');
+        + (currentNegative ? 'bad' : 'warn') + '"><b>Calidad del motor actual:</b> ' + currentText
+        + '. Histórico conservado aparte: ' + report.historical.length + ' cierre(s) de legado. Consulte Rendimiento.</div>');
     };
   }
 
