@@ -3,18 +3,17 @@ import worker, {
   ResearchLabState,
   LiveExecutorState,
 } from "./index-fire-drill";
-import { XauPaperState } from "./xau-usd-paper-state";
-import type { Env } from "./types";
+import { BOT_STATE_SINGLETON_NAME, type Env } from "./types";
 
-export { BotState, ResearchLabState, LiveExecutorState, XauPaperState };
+export { BotState, ResearchLabState, LiveExecutorState };
 
 function paperRuntimeEnv(env: Env): Env {
   if (env.INITIAL_CASH_EUR) return env;
   return { ...env, INITIAL_CASH_EUR: "100" };
 }
 
-function xauState(env: Env): DurableObjectStub {
-  return env.XAU_PAPER_STATE.get(env.XAU_PAPER_STATE.idFromName("auto-bolsa-ai-xau-paper"));
+function botState(env: Env): DurableObjectStub {
+  return env.BOT_STATE.get(env.BOT_STATE.idFromName(BOT_STATE_SINGLETON_NAME));
 }
 
 function authorized(request: Request, env: Env): boolean {
@@ -26,7 +25,7 @@ async function runConfiguredXauCycle(env: Env): Promise<void> {
   const response = await fetch(env.XAU_PAPER_FEED_URL, { headers: { Accept: "application/json" } });
   if (!response.ok) throw new Error(`XAU feed HTTP ${response.status}`);
   const payload = await response.text();
-  await xauState(env).fetch("https://xau/cycle", {
+  await botState(env).fetch("https://bot/xau/cycle", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: payload,
@@ -37,11 +36,11 @@ export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const path = new URL(request.url).pathname;
     if (request.method === "GET" && path === "/api/xau/status") {
-      return xauState(paperRuntimeEnv(env)).fetch("https://xau/status");
+      return botState(paperRuntimeEnv(env)).fetch("https://bot/xau/status");
     }
     if (request.method === "POST" && path === "/api/xau/cycle") {
       if (!authorized(request, paperRuntimeEnv(env))) return new Response("Unauthorized", { status: 401 });
-      return xauState(paperRuntimeEnv(env)).fetch("https://xau/cycle", {
+      return botState(paperRuntimeEnv(env)).fetch("https://bot/xau/cycle", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: await request.text(),
