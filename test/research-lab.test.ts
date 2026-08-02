@@ -43,7 +43,7 @@ function universe(): MarketUniverse {
   return {
     schemaVersion: "kraken-eur-market-universe-v1",
     generatedAt: 1_000,
-    capitalEur: 50,
+    capitalEur: 100,
     maximumPaperAllocationEur: 10,
     feeModel: {
       version: "kraken-spot-tier0-2026-07",
@@ -89,7 +89,7 @@ describe("multi-horizon PAPER lab", () => {
 
     expect(state.strategies).toHaveLength(15);
     expect(state.cohortLockedUntil - state.initializedAt).toBe(14 * 24 * 60 * 60_000);
-    expect(state.strategies.every((strategy) => strategy.initialCashEur === 50)).toBe(true);
+    expect(state.strategies.every((strategy) => strategy.initialCashEur === 100)).toBe(true);
     expect(state.strategies.filter((strategy) => strategy.lane === "fast")).toHaveLength(5);
     expect(state.strategies.filter((strategy) => strategy.lane === "intraday")).toHaveLength(5);
     expect(state.strategies.filter((strategy) => strategy.lane === "swing")).toHaveLength(5);
@@ -137,7 +137,7 @@ describe("multi-horizon PAPER lab", () => {
       provisionalLeaderboard: unknown[];
     };
 
-    expect(summary.independentVirtualCapitalPerStrategyEur).toBe(50);
+    expect(summary.independentVirtualCapitalPerStrategyEur).toBe(100);
     expect(summary.strategiesAreComparableNotAdditive).toBe(true);
     expect(summary.provisionalLeaderboard).toHaveLength(15);
     expect(summary.eligibleForLiveReview).toBe(false);

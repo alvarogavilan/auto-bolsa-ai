@@ -1,0 +1,1 @@
+La alineación a 100 EUR se aplica solo a nuevas estrategias PAPER. No modifica operaciones, posiciones, PnL ni historiales ya persistidos. La Tesorería única sigue siendo la única autoridad contable. LIVE y órdenes reales permanecen desactivados.

@@ -41,7 +41,7 @@ function universe(): MarketUniverse {
   return {
     schemaVersion: "kraken-eur-market-universe-v1",
     generatedAt: 1_000,
-    capitalEur: 50,
+    capitalEur: 100,
     maximumPaperAllocationEur: 10,
     feeModel: {
       version: "kraken-spot-tier0-2026-07",
@@ -106,7 +106,7 @@ describe("shadow-live demo", () => {
     const state = initializeResearchLab(universe(), now);
     const strategy = state.strategies.find((item) => item.lane === "fast")!;
     state.strategies = [strategy];
-    strategy.cashEur = 39.96;
+    strategy.cashEur = 89.96;
     strategy.position = {
       quantity: 0.099,
       entryPrice: 101,
@@ -128,7 +128,7 @@ describe("shadow-live demo", () => {
     const state = initializeResearchLab(universe(), now);
     const strategy = state.strategies.find((item) => item.lane === "intraday")!;
     state.strategies = [strategy];
-    strategy.equityEur = 51;
+    strategy.equityEur = 102;
     const benchmark = initializeBuyHoldBenchmark(strategy, 100, now);
     benchmark.netReturnPct = 0.25;
 
