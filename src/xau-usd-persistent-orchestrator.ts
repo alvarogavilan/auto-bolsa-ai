@@ -1,4 +1,10 @@
 import { appendXauPaperCycle, createXauPaperCycleLedger, type XauPaperCycleLedger } from "./xau-usd-cycle-ledger";
+import {
+  applyXauPaperPositionCycle,
+  parseXauPaperPositionBook,
+  XAU_PAPER_POSITION_KEY,
+  type XauPaperPositionBook,
+} from "./xau-usd-paper-position";
 import { buildXauUsdPaperInstruction, type XauPaperRuntimeInput, type XauPaperInstruction } from "./xau-usd-paper-runtime";
 
 export const XAU_PAPER_LEDGER_KEY = "xau-usd:paper-cycle-ledger:v1";
@@ -9,9 +15,10 @@ export interface XauPaperStateStore {
 }
 
 export interface XauPersistentCycleResult {
-  schemaVersion: "xau-usd-persistent-cycle-v1";
+  schemaVersion: "xau-usd-persistent-cycle-v2";
   instruction: XauPaperInstruction;
   ledger: XauPaperCycleLedger;
+  positionBook: XauPaperPositionBook;
   persisted: boolean;
   duplicate: boolean;
   liveTrading: false;
@@ -37,6 +44,7 @@ export async function runPersistentXauPaperCycle(
 ): Promise<XauPersistentCycleResult> {
   const instruction = buildXauUsdPaperInstruction(input);
   const current = parseLedger(await store.get(XAU_PAPER_LEDGER_KEY));
+  const currentPositionBook = parseXauPaperPositionBook(await store.get(XAU_PAPER_POSITION_KEY));
   const duplicate = current.cycles.some((cycle) =>
     cycle.observedAt === instruction.createdAt
     && cycle.instruction.quoteSource === instruction.quoteSource
@@ -45,9 +53,10 @@ export async function runPersistentXauPaperCycle(
 
   if (duplicate) {
     return {
-      schemaVersion: "xau-usd-persistent-cycle-v1",
+      schemaVersion: "xau-usd-persistent-cycle-v2",
       instruction,
       ledger: current,
+      positionBook: currentPositionBook,
       persisted: false,
       duplicate: true,
       liveTrading: false,
@@ -56,11 +65,14 @@ export async function runPersistentXauPaperCycle(
   }
 
   const ledger = appendXauPaperCycle(current, instruction);
+  const positionBook = applyXauPaperPositionCycle(currentPositionBook, instruction, input);
   await store.put(XAU_PAPER_LEDGER_KEY, JSON.stringify(ledger));
+  await store.put(XAU_PAPER_POSITION_KEY, JSON.stringify(positionBook));
   return {
-    schemaVersion: "xau-usd-persistent-cycle-v1",
+    schemaVersion: "xau-usd-persistent-cycle-v2",
     instruction,
     ledger,
+    positionBook,
     persisted: true,
     duplicate: false,
     liveTrading: false,
