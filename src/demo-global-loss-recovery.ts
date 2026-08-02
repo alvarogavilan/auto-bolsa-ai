@@ -31,6 +31,7 @@ export const DEMO_GLOBAL_LOSS_RECOVERY_CODE = String.raw`
       activationThreshold,
       active,
       rejectedHistorical: ledger && typeof ledger.rejectedByLossRecovery === 'number' ? ledger.rejectedByLossRecovery : 0,
+      rejectedByEarlyLossStreak: ledger && typeof ledger.rejectedByEarlyLossStreak === 'number' ? ledger.rejectedByEarlyLossStreak : 0,
       rejectedByNegativePattern: ledger && typeof ledger.rejectedByNegativePattern === 'number' ? ledger.rejectedByNegativePattern : 0,
       auditedCycles: ledger && typeof ledger.cyclesObserved === 'number' ? ledger.cyclesObserved : 0,
       ledgerSchema: ledger && ledger.schemaVersion ? String(ledger.schemaVersion) : 'no disponible',
@@ -41,10 +42,11 @@ export const DEMO_GLOBAL_LOSS_RECOVERY_CODE = String.raw`
   }
 
   function negativePatternText(status) {
-    return 'Vetos por patrón negativo: ' + status.rejectedByNegativePattern
+    return 'Vetos tempranos por 3 pérdidas consecutivas: ' + status.rejectedByEarlyLossStreak
+      + ' · vetos estadísticos por patrón negativo: ' + status.rejectedByNegativePattern
       + ' · ciclos auditados: ' + status.auditedCycles
       + ' · esquema ' + esc(status.ledgerSchema)
-      + '. Exige coincidencia exacta de carril, activo y motivo, al menos 5 cierres comparables, PnL negativo y profit factor inferior a 1.';
+      + '. El freno temprano exige coincidencia exacta de carril, activo y motivo; el veto estadístico exige además al menos 5 cierres comparables, PnL negativo y profit factor inferior a 1.';
   }
 
   function globalLossRecoveryBanner() {
@@ -54,7 +56,8 @@ export const DEMO_GLOBAL_LOSS_RECOVERY_CODE = String.raw`
     return '<div id="global-loss-recovery-status" class="banner ' + level + '"><b>' + headline + '</b> '
       + 'Racha actual: ' + status.currentLosingStreak + ' / ' + status.activationThreshold
       + ' · vetos históricos por recuperación: ' + status.rejectedHistorical
-      + ' · vetos por patrón negativo: ' + status.rejectedByNegativePattern
+      + ' · vetos tempranos de patrón: ' + status.rejectedByEarlyLossStreak
+      + ' · vetos estadísticos de patrón: ' + status.rejectedByNegativePattern
       + ' · ' + esc(status.recoveryCondition)
       + ' Las salidas de seguridad y la gestión de posiciones abiertas continúan activas; LIVE permanece bloqueado.</div>';
   }
@@ -82,8 +85,8 @@ export const DEMO_GLOBAL_LOSS_RECOVERY_CODE = String.raw`
         + ' · rechazadas específicamente por recuperación: ' + status.rejectedHistorical
         + ' · no se mezcla con exposición ni riesgo.</div>'
         + '<div id="negative-pattern-veto-audit" class="banner '
-        + (status.rejectedByNegativePattern > 0 ? 'warn' : 'safe') + '"><b>Filtro estadístico PAPER:</b> '
-        + negativePatternText(status) + ' No altera cierres, stops, posiciones abiertas ni el historial.</div>');
+        + (status.rejectedByEarlyLossStreak > 0 || status.rejectedByNegativePattern > 0 ? 'warn' : 'safe') + '"><b>Filtros de patrones PAPER:</b> '
+        + negativePatternText(status) + ' No alteran cierres, stops, posiciones abiertas ni el historial.</div>');
     };
   }
 })();
