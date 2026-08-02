@@ -1,5 +1,6 @@
 import { selectMarketObservation } from "./market-evidence";
 import type { MarketCandidate, MarketUniverse, ResearchLaneId } from "./market-universe";
+import { PAPER_ROSTER_LIMITS } from "./paper-roster-policy";
 import { calculateIndicators } from "./strategy";
 import type { Candle, Indicators } from "./types";
 
@@ -231,7 +232,7 @@ function createStrategy(lane: ResearchLaneId, candidate: MarketCandidate, now: n
 export function initializeResearchLab(universe: MarketUniverse, now = Date.now()): ResearchLabState {
   const strategies: LabStrategyState[] = [];
   for (const lane of ["fast", "intraday", "swing"] as const) {
-    for (const candidate of universe.topByLane[lane].slice(0, 3)) {
+    for (const candidate of universe.topByLane[lane].slice(0, PAPER_ROSTER_LIMITS[lane])) {
       strategies.push(createStrategy(lane, candidate, now));
     }
   }
