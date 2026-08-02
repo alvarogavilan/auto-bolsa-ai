@@ -35,25 +35,23 @@ async function runConfiguredXauCycle(env: Env): Promise<void> {
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
-    const runtimeEnv = paperRuntimeEnv(env);
     const path = new URL(request.url).pathname;
     if (request.method === "GET" && path === "/api/xau/status") {
-      return xauState(runtimeEnv).fetch("https://xau/status");
+      return xauState(paperRuntimeEnv(env)).fetch("https://xau/status");
     }
     if (request.method === "POST" && path === "/api/xau/cycle") {
-      if (!authorized(request, runtimeEnv)) return new Response("Unauthorized", { status: 401 });
-      return xauState(runtimeEnv).fetch("https://xau/cycle", {
+      if (!authorized(request, paperRuntimeEnv(env))) return new Response("Unauthorized", { status: 401 });
+      return xauState(paperRuntimeEnv(env)).fetch("https://xau/cycle", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: await request.text(),
       });
     }
-    return worker.fetch(request, runtimeEnv, ctx);
+    return worker.fetch(request, paperRuntimeEnv(env), ctx);
   },
 
   async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
-    const runtimeEnv = paperRuntimeEnv(env);
-    await worker.scheduled(controller, runtimeEnv, ctx);
-    ctx.waitUntil(runConfiguredXauCycle(runtimeEnv).catch(() => undefined));
+    await worker.scheduled(controller, paperRuntimeEnv(env), ctx);
+    ctx.waitUntil(runConfiguredXauCycle(paperRuntimeEnv(env)).catch(() => undefined));
   },
 };
