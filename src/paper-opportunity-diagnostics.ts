@@ -1,4 +1,7 @@
+import { globalPaperLosingStreak } from "./paper-entry-treasury-gate";
 import type { LabStrategyState, ResearchLabState } from "./research-lab";
+
+const GLOBAL_PAPER_LOSS_STREAK_LIMIT = 3;
 
 export interface PaperOpportunityAuditMetrics {
   signalsAnalyzed: number;
@@ -9,6 +12,7 @@ export interface PaperOpportunityAuditMetrics {
   rejectedByNews: number;
   rejectedByCommittee: number;
   rejectedByExposure: number;
+  rejectedByLossRecovery: number;
   rejectedByMarketMinimum: number;
   rejectedByExecution: number;
   rejectedByTechnicalConfirmation: number;
@@ -18,7 +22,7 @@ export interface PaperOpportunityAuditMetrics {
 }
 
 export interface PaperOpportunityDiagnostics {
-  schemaVersion: "paper-opportunity-diagnostics-v4";
+  schemaVersion: "paper-opportunity-diagnostics-v5";
   generatedAt: number;
   strategiesObserved: number;
   activeStrategies: number;
@@ -33,6 +37,15 @@ export interface PaperOpportunityDiagnostics {
   dominantBlockerCount: number;
   operationalStatus: "positions-open" | "flat-healthy" | "flat-runtime-delayed" | "flat-no-successful-cycles";
   operationalExplanation: string;
+  globalLossRecovery: {
+    currentLosingStreak: number;
+    activationThreshold: number;
+    active: boolean;
+    recoveryCondition: string;
+    blocksNewEntries: boolean;
+    safetyExitsRemainAllowed: true;
+    liveTrading: false;
+  };
   blockerCounts: Record<string, number>;
   auditMetrics: PaperOpportunityAuditMetrics;
   auditInterpretation: string;
@@ -52,6 +65,7 @@ export interface PaperOpportunityDiagnostics {
 
 function classify(decision: string): string {
   const value = decision.toLowerCase();
+  if (value.includes("freno global de tesorería") || value.includes("pérdidas consecutivas de cartera")) return "loss-recovery-veto";
   if (value.includes("spread")) return "spread";
   if (value.includes("liquidez") || value.includes("profundidad")) return "liquidity";
   if (value.includes("noticias") || value.includes("informativo")) return "news-veto";
@@ -121,6 +135,7 @@ function buildAuditMetrics(state: ResearchLabState, blockerCounts: Record<string
     rejectedByNews: count(blockerCounts, "news-veto"),
     rejectedByCommittee: count(blockerCounts, "committee-veto"),
     rejectedByExposure: count(blockerCounts, "exposure-veto"),
+    rejectedByLossRecovery: count(blockerCounts, "loss-recovery-veto"),
     rejectedByMarketMinimum: count(blockerCounts, "market-minimum"),
     rejectedByExecution: count(blockerCounts, "execution-gate", "costs"),
     rejectedByTechnicalConfirmation: count(blockerCounts, "technical-confirmation", "waiting-closed-candle", "cooldown"),
@@ -157,8 +172,10 @@ export function buildPaperOpportunityDiagnostics(state: ResearchLabState, now = 
   const strategiesWithoutSuccessfulCycle = state.strategies.filter((strategy) => strategy.lastSuccessfulAt === null).length;
   const dominant = dominantBlocker(blockerCounts);
   const operational = explainOperationalStatus(positionsOpen, positionsFlat, healthyFlatStrategies, overdueFlatStrategies, strategiesWithoutSuccessfulCycle, dominant);
+  const currentLosingStreak = globalPaperLosingStreak(state);
+  const recoveryActive = currentLosingStreak >= GLOBAL_PAPER_LOSS_STREAK_LIMIT;
   return {
-    schemaVersion: "paper-opportunity-diagnostics-v4",
+    schemaVersion: "paper-opportunity-diagnostics-v5",
     generatedAt: now,
     strategiesObserved: state.strategies.length,
     activeStrategies: state.strategies.filter((strategy) => strategy.status === "active").length,
@@ -173,6 +190,15 @@ export function buildPaperOpportunityDiagnostics(state: ResearchLabState, now = 
     dominantBlockerCount: dominant.count,
     operationalStatus: operational.status,
     operationalExplanation: operational.explanation,
+    globalLossRecovery: {
+      currentLosingStreak,
+      activationThreshold: GLOBAL_PAPER_LOSS_STREAK_LIMIT,
+      active: recoveryActive,
+      recoveryCondition: "Solo ruptura o continuación confirmada con costes excepcionalmente bajos; una operación cerrada no perdedora reinicia la racha.",
+      blocksNewEntries: recoveryActive,
+      safetyExitsRemainAllowed: true,
+      liveTrading: false,
+    },
     blockerCounts,
     auditMetrics: buildAuditMetrics(state, blockerCounts),
     auditInterpretation: "Los contadores acumulados de análisis y aperturas proceden del estado persistido. Los descartes por motivo representan el bloqueo actual de cada estrategia y no se presentan como un histórico acumulado.",

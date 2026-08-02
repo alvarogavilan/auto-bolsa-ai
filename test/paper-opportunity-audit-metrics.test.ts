@@ -52,7 +52,7 @@ describe("PAPER opportunity audit metrics", () => {
       strategy("valid", "PAPER BUY autorizada", 2, 6),
     ]), 1);
 
-    expect(report.schemaVersion).toBe("paper-opportunity-diagnostics-v4");
+    expect(report.schemaVersion).toBe("paper-opportunity-diagnostics-v5");
     expect(report.auditMetrics.signalsAnalyzed).toBe(25);
     expect(report.auditMetrics.signalsValid).toBe(2);
     expect(report.auditMetrics.rejectedBySpread).toBe(1);
@@ -61,6 +61,7 @@ describe("PAPER opportunity audit metrics", () => {
     expect(report.auditMetrics.rejectedByNews).toBe(1);
     expect(report.auditMetrics.rejectedByCommittee).toBe(1);
     expect(report.auditMetrics.rejectedByExposure).toBe(1);
+    expect(report.auditMetrics.rejectedByLossRecovery).toBe(0);
     expect(report.auditMetrics.operationsOpened).toBe(2);
     expect(report.auditMetrics.currentSnapshotOnly).toBe(true);
     expect(report.auditInterpretation).toContain("no se presentan como un histórico acumulado");
