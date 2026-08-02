@@ -1,4 +1,5 @@
 import { standaloneDemoDashboard } from "./demo-dashboard-standalone";
+import { DEMO_HISTORY_OUTCOMES_SCRIPT } from "./demo-history-outcomes";
 import { DEMO_LIVE_PRICES_SCRIPT } from "./demo-live-prices";
 
 export async function demoDashboard(): Promise<Response> {
@@ -11,7 +12,7 @@ export async function demoDashboard(): Promise<Response> {
     .replace("Mismo estado contable de Resumen, sin bloques heredados.", "Estado exacto del mismo capital mostrado en Resumen.")
     .replace("Cerradas · G/P", "Cerradas · G/P netas")
     .replace("JSON.stringify", "String")
-    .replace("</body>", `${DEMO_LIVE_PRICES_SCRIPT}</body>`);
+    .replace("</body>", `${DEMO_HISTORY_OUTCOMES_SCRIPT}${DEMO_LIVE_PRICES_SCRIPT}</body>`);
 
   const headers = new Headers(response.headers);
   headers.set("Content-Type", "text/html; charset=utf-8");
