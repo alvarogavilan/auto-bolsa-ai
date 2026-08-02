@@ -142,10 +142,12 @@ export function evaluateTreasuryEntry(
 
 export function buildTreasuryReport(state: ResearchLabState | null): Record<string, unknown> {
   const snapshot = buildPaperTreasurySnapshot(state);
+  const { schemaVersion: snapshotSchemaVersion, ...snapshotValues } = snapshot;
   return {
     schemaVersion: "paper-treasury-department-v2",
+    snapshotSchemaVersion,
     department: "Tesorería PAPER única",
-    ...snapshot,
+    ...snapshotValues,
     reserveCashPct: PAPER_RESERVE_CASH_PCT,
     maximumAggregateExposurePct: PAPER_MAXIMUM_AGGREGATE_EXPOSURE_PCT,
     laneBudgetsEur: PAPER_LANE_BUDGET_EUR,
