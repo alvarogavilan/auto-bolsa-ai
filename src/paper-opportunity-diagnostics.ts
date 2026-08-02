@@ -1,13 +1,14 @@
-import type { ResearchLabState } from "./research-lab";
+import type { LabStrategyState, ResearchLabState } from "./research-lab";
 
 export interface PaperOpportunityDiagnostics {
-  schemaVersion: "paper-opportunity-diagnostics-v1";
+  schemaVersion: "paper-opportunity-diagnostics-v2";
   generatedAt: number;
   strategiesObserved: number;
   activeStrategies: number;
   positionsOpen: number;
   positionsFlat: number;
   strategiesWithFreshAnalysis: number;
+  strategiesOverdue: number;
   strategiesWithoutSuccessfulCycle: number;
   blockerCounts: Record<string, number>;
   blockersByStrategy: Array<{
@@ -17,6 +18,8 @@ export interface PaperOpportunityDiagnostics {
     positionOpen: boolean;
     lastDecision: string;
     lastSuccessfulAt: number | null;
+    freshnessWindowMinutes: number;
+    overdue: boolean;
   }>;
   liveTrading: false;
 }
@@ -39,6 +42,20 @@ function classify(decision: string): string {
   return "other";
 }
 
+function freshnessWindowMs(strategy: LabStrategyState): number {
+  // A strategy is considered healthy for one full expected interval plus a
+  // scheduling/network grace period. This avoids falsely marking 60-minute
+  // swing strategies as stale under the former fixed 20-minute threshold.
+  const intervalMs = Math.max(1, strategy.config.intervalMinutes) * 60_000;
+  const graceMs = Math.max(10 * 60_000, Math.min(30 * 60_000, intervalMs * 0.5));
+  return intervalMs + graceMs;
+}
+
+function isOverdue(strategy: LabStrategyState, now: number): boolean {
+  if (strategy.lastSuccessfulAt === null) return true;
+  return now - strategy.lastSuccessfulAt > freshnessWindowMs(strategy);
+}
+
 export function buildPaperOpportunityDiagnostics(
   state: ResearchLabState,
   now = Date.now(),
@@ -47,6 +64,7 @@ export function buildPaperOpportunityDiagnostics(
   const blockersByStrategy = state.strategies.map((strategy) => {
     const category = classify(strategy.lastDecision);
     blockerCounts[category] = (blockerCounts[category] ?? 0) + 1;
+    const windowMs = freshnessWindowMs(strategy);
     return {
       id: strategy.id,
       lane: strategy.lane,
@@ -54,16 +72,19 @@ export function buildPaperOpportunityDiagnostics(
       positionOpen: strategy.position !== null,
       lastDecision: strategy.lastDecision,
       lastSuccessfulAt: strategy.lastSuccessfulAt,
+      freshnessWindowMinutes: windowMs / 60_000,
+      overdue: isOverdue(strategy, now),
     };
   });
   return {
-    schemaVersion: "paper-opportunity-diagnostics-v1",
+    schemaVersion: "paper-opportunity-diagnostics-v2",
     generatedAt: now,
     strategiesObserved: state.strategies.length,
     activeStrategies: state.strategies.filter((strategy) => strategy.status === "active").length,
     positionsOpen: state.strategies.filter((strategy) => strategy.position !== null).length,
     positionsFlat: state.strategies.filter((strategy) => strategy.position === null).length,
-    strategiesWithFreshAnalysis: state.strategies.filter((strategy) => strategy.lastSuccessfulAt !== null && now - strategy.lastSuccessfulAt <= 20 * 60_000).length,
+    strategiesWithFreshAnalysis: state.strategies.filter((strategy) => !isOverdue(strategy, now)).length,
+    strategiesOverdue: state.strategies.filter((strategy) => isOverdue(strategy, now)).length,
     strategiesWithoutSuccessfulCycle: state.strategies.filter((strategy) => strategy.lastSuccessfulAt === null).length,
     blockerCounts,
     blockersByStrategy,
