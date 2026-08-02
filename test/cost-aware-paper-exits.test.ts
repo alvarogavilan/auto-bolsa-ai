@@ -12,7 +12,7 @@ describe("cost-aware PAPER exits", () => {
   });
 
   it("does not disable mandatory risk exits", () => {
-    expect(source).toContain("Stop, take profit, cruce bajista y tiempo máximo siguen activos");
+    expect(source).toContain("Stop, take profit neto, cruce bajista y tiempo máximo siguen activos");
     expect(source).not.toContain("LIVE_TRADING_ENABLED");
   });
 });
