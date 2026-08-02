@@ -10,6 +10,7 @@ import {
   enforcePaperTreasuryEntry,
 } from "./paper-entry-treasury-gate";
 import { buildPaperOpportunityDiagnostics } from "./paper-opportunity-diagnostics";
+import { captureTradeIds, enrichNewPaperTrades } from "./paper-trade-evidence-enrichment";
 import { applyPaperTrendContinuationEntry } from "./paper-trend-continuation";
 import {
   applyResearchCandles,
@@ -99,6 +100,7 @@ export class ResearchLabState extends DurableObject<Env> {
     if (!state) state = initializeResearchLab(payload.universe, now); else state = reconcileResearchLab(state, payload.universe, now);
     const [benchmarks, news] = await Promise.all([this.readBenchmarks(), buildNewsIntelligence(now)]);
     const due = state.strategies.filter((strategy) => isStrategyDue(strategy, now));
+    let tradesEnrichedWithEvidence = 0;
     for (const strategy of due) {
       try {
         const candles = await fetchOhlc(strategy.pairKey, strategy.config.intervalMinutes);
@@ -108,13 +110,17 @@ export class ResearchLabState extends DurableObject<Env> {
         const newsContext = buildNewsDecisionContext(news, strategy.base);
         const executionGate = payload.executionGates[strategy.pairKey] ?? null;
 
+        const baseTradeIds = captureTradeIds(strategy);
         const baseEntrySnapshot = capturePaperEntrySnapshot(strategy);
         applyResearchCandles(strategy, candles, now, executionGate, newsContext);
         enforcePaperTreasuryEntry(strategy, state, baseEntrySnapshot);
+        tradesEnrichedWithEvidence += enrichNewPaperTrades(strategy, candles, baseTradeIds);
 
+        const continuationTradeIds = captureTradeIds(strategy);
         const continuationSnapshot = capturePaperEntrySnapshot(strategy);
         const continuation = applyPaperTrendContinuationEntry(strategy, candles, now, executionGate, newsContext);
         const treasuryContinuation = enforcePaperTreasuryEntry(strategy, state, continuationSnapshot);
+        tradesEnrichedWithEvidence += enrichNewPaperTrades(strategy, candles, continuationTradeIds);
         if (!continuation.entered && continuation.blocker && strategy.lastDecision === "Sin señal válida para el carril") {
           strategy.lastDecision = `Continuación PAPER descartada: ${continuation.blocker}`;
         } else if (continuation.entered && !treasuryContinuation.allowed) {
@@ -124,7 +130,7 @@ export class ResearchLabState extends DurableObject<Env> {
     }
     state.cycles += 1; state.lastCycleAt = now;
     await Promise.all([this.write(state), this.ctx.storage.put(EXECUTION_GATES_KEY, payload.executionGates), this.ctx.storage.put(BENCHMARKS_KEY, benchmarks)]);
-    return Response.json({ initialized: true, dueStrategiesProcessed: due.length, state, newsAppliedToPaper: true, trendContinuationAppliedToPaper: true, treasuryGateAppliedToEveryPaperEntry: true, ...this.buildAnalysis(state, payload.executionGates, benchmarks, now), liveTrading: false });
+    return Response.json({ initialized: true, dueStrategiesProcessed: due.length, tradesEnrichedWithEvidence, state, newsAppliedToPaper: true, trendContinuationAppliedToPaper: true, treasuryGateAppliedToEveryPaperEntry: true, completeTradeEvidencePersisted: true, ...this.buildAnalysis(state, payload.executionGates, benchmarks, now), liveTrading: false });
   }
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
@@ -132,7 +138,7 @@ export class ResearchLabState extends DurableObject<Env> {
       const [state, executionGates, benchmarks] = await Promise.all([this.read(), this.readExecutionGates(), this.readBenchmarks()]);
       if (!state) return Response.json({ initialized: false, mode: "paper", message: "El laboratorio se inicializará con el próximo mapa de mercados válido.", eligibleForLiveReview: false, liveTrading: false });
       const now = Date.now();
-      return Response.json({ initialized: true, state, newsAppliedToPaper: true, trendContinuationAppliedToPaper: true, treasuryGateAppliedToEveryPaperEntry: true, ...this.buildAnalysis(state, executionGates, benchmarks, now), liveTrading: false });
+      return Response.json({ initialized: true, state, newsAppliedToPaper: true, trendContinuationAppliedToPaper: true, treasuryGateAppliedToEveryPaperEntry: true, completeTradeEvidencePersisted: true, ...this.buildAnalysis(state, executionGates, benchmarks, now), liveTrading: false });
     }
     if (request.method === "POST" && url.pathname === "/tick") {
       let body: unknown; try { body = await request.json(); } catch { return Response.json({ error: "INVALID_RESEARCH_LAB_JSON", liveTrading: false }, { status: 400 }); }
