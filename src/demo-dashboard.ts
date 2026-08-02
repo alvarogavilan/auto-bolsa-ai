@@ -83,7 +83,7 @@ export async function demoDashboard(): Promise<Response> {
   html = html
     .replace("</head>", `${DEMO_HISTORY_OUTCOMES_STYLE}${DEMO_OPERATION_DOSSIERS_STYLE}${DEMO_ZERO_POSITION_DIAGNOSTICS_STYLE}${DEMO_FLATLINE_WATCHDOG_STYLE}</head>`)
     .replace("const TARGET=50;", "const TARGET=100;")
-    .replace("Cuenta equivalente de 50 €, separada del capital técnico multi-estrategia.", "Tesorería PAPER única de 100 €, con PnL histórico íntegro y carteras por estrategia solo comparativas.")
+    .replace("Cuenta equivalente de 50 €, separada del capital técnico multi-estrategia.", "Tesorería PAPER única de 100 €; no suma ficticia de carteras por estrategia. PnL histórico íntegro y balances por estrategia solo comparativos.")
     .replace("Cuenta equivalente de 50 €; no suma ficticia de nueve carteras.", "Tesorería PAPER única de 100 €; no suma ficticia de carteras por estrategia.")
     .replace("NO APTO PARA REAL", "NO APTO LIVE")
     .replace("Posiciones abiertas y cerradas", "Posiciones vigentes · Posiciones abiertas y cerradas")
