@@ -5,6 +5,7 @@ import type {
   LabTrade,
   ResearchLabState,
 } from "./research-lab";
+import { evaluateNegativePatternVeto } from "./paper-negative-pattern-veto";
 import { evaluateTreasuryEntry, type TreasuryDecision } from "./treasury-risk";
 
 const GLOBAL_PAPER_LOSS_STREAK_LIMIT = 3;
@@ -134,6 +135,19 @@ export function enforcePaperTreasuryEntry(
   }
 
   const preEntryState = stateBeforeEntry(strategy, state, snapshot);
+  const negativePattern = evaluateNegativePatternVeto(strategy, preEntryState, latest);
+  if (negativePattern.blocked) {
+    const factor = negativePattern.profitFactor === null
+      ? "0"
+      : Number.isFinite(negativePattern.profitFactor) ? negativePattern.profitFactor.toFixed(2) : "∞";
+    restoreSnapshot(
+      strategy,
+      snapshot,
+      `PAPER BUY vetada por patrón negativo con evidencia suficiente: ${negativePattern.sampleSize} cierres del mismo carril, activo y motivo de entrada; PnL ${negativePattern.netPnlEur.toFixed(4)} €; profit factor ${factor}.`,
+    );
+    return { newEntryDetected: true, allowed: false, resized: false, decision: null, liveTrading: false };
+  }
+
   const globalLosingStreak = globalPaperLosingStreak(preEntryState);
   if (
     globalLosingStreak >= GLOBAL_PAPER_LOSS_STREAK_LIMIT
