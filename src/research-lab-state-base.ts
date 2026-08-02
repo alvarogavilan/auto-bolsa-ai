@@ -60,10 +60,10 @@ export class ResearchLabState extends DurableObject<Env> {
   private async read(): Promise<StoredResearchLabState | null> {
     const stored = await this.ctx.storage.get<StoredResearchLabState>(STORAGE_KEY);
     if (!stored || stored.schemaVersion !== "multi-horizon-paper-lab-v1") return null;
-    return { ...stored, version: "0.18.0-paper", mode: "paper", liveTrading: false, strategies: Array.isArray(stored.strategies) ? stored.strategies : [] };
+    return { ...stored, version: "0.17.0-paper", mode: "paper", liveTrading: false, strategies: Array.isArray(stored.strategies) ? stored.strategies : [] };
   }
   private async write(state: StoredResearchLabState): Promise<void> {
-    await this.ctx.storage.put(STORAGE_KEY, { ...state, version: "0.18.0-paper", mode: "paper", liveTrading: false });
+    await this.ctx.storage.put(STORAGE_KEY, { ...state, version: "0.17.0-paper", mode: "paper", liveTrading: false });
   }
   private async readExecutionGates(): Promise<FastExecutionGates> { return sanitizeGates(await this.ctx.storage.get<unknown>(EXECUTION_GATES_KEY)); }
   private async readBenchmarks(): Promise<PaperBenchmarkMap> { return sanitizeBenchmarkMap(await this.ctx.storage.get<unknown>(BENCHMARKS_KEY)); }
@@ -103,7 +103,7 @@ export class ResearchLabState extends DurableObject<Env> {
     const url = new URL(request.url);
     if (request.method === "GET" && url.pathname === "/status") {
       const [state, executionGates, benchmarks] = await Promise.all([this.read(), this.readExecutionGates(), this.readBenchmarks()]);
-      if (!state) return Response.json({ initialized: false, mode: "paper", shadowLiveDemo: { schemaVersion: "shadow-live-demo-v1", mode: "shadow-live", status: "initializing", virtualCapitalEur: 50, usesRealKrakenMarketData: true, sendsOrdersToKraken: false, realBalanceTouched: false, message: "El DEMO se inicializará con el próximo ciclo automático válido.", eligibleForLiveReview: false, liveTrading: false }, benchmarkSuite: { schemaVersion: "paper-benchmark-suite-v1", strategyCount: 0, entries: [], leaderboard: [], eligibleForLiveReview: false, liveTrading: false }, committee: { schemaVersion: "paper-research-committee-v1", strategyCount: 0, candidates: 0, observing: 0, vetoed: 0, reports: [], changesTradingDecision: false, eligibleForLiveReview: false, liveTrading: false }, message: "El laboratorio se inicializará con el próximo mapa de mercados válido.", eligibleForLiveReview: false, liveTrading: false });
+      if (!state) return Response.json({ initialized: false, mode: "paper", message: "El laboratorio se inicializará con el próximo mapa de mercados válido.", eligibleForLiveReview: false, liveTrading: false });
       const now = Date.now();
       return Response.json({ initialized: true, state, newsAppliedToPaper: true, ...this.buildAnalysis(state, executionGates, benchmarks, now), liveTrading: false });
     }
