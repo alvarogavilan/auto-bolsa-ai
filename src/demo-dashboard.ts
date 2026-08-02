@@ -6,7 +6,6 @@ import { DEMO_OPERATION_DOSSIERS_CODE, DEMO_OPERATION_DOSSIERS_STYLE } from "./d
 import { DEMO_ZERO_POSITION_DIAGNOSTICS_CODE, DEMO_ZERO_POSITION_DIAGNOSTICS_STYLE } from "./demo-zero-position-diagnostics";
 
 const DEMO_SINGLE_TREASURY_CODE = String.raw`
-<script>
 (() => {
   const treasury = () => lab && lab.treasuryDepartment && lab.treasuryDepartment.singleSourceOfTruth === true
     ? lab.treasuryDepartment
@@ -72,14 +71,13 @@ const DEMO_SINGLE_TREASURY_CODE = String.raw`
       audit.insertAdjacentHTML('afterbegin', sourceBanner());
     };
   }
-})();
-</script>`;
+})();`;
 
 export async function demoDashboard(): Promise<Response> {
   const response = standaloneDemoDashboard();
   const liveScript = DEMO_LIVE_PRICES_SCRIPT.replace(
     "})();\n</script>",
-    `${DEMO_HISTORY_OUTCOMES_CODE}\n${DEMO_OPERATION_DOSSIERS_CODE}\n${DEMO_ZERO_POSITION_DIAGNOSTICS_CODE}\n${DEMO_FLATLINE_WATCHDOG_CODE}\n})();\n</script>`,
+    `${DEMO_SINGLE_TREASURY_CODE}\n${DEMO_HISTORY_OUTCOMES_CODE}\n${DEMO_OPERATION_DOSSIERS_CODE}\n${DEMO_ZERO_POSITION_DIAGNOSTICS_CODE}\n${DEMO_FLATLINE_WATCHDOG_CODE}\n})();\n</script>`,
   );
   let html = await response.text();
   html = html
@@ -92,7 +90,7 @@ export async function demoDashboard(): Promise<Response> {
     .replace("Mismo estado contable de Resumen, sin bloques heredados.", "Estado exacto del mismo capital mostrado en Resumen.")
     .replace("Cerradas · G/P", "Cerradas · G/P netas")
     .replace("JSON.stringify", "String")
-    .replace("</body>", `${DEMO_SINGLE_TREASURY_CODE}${liveScript}</body>`);
+    .replace("</body>", `${liveScript}</body>`);
 
   const headers = new Headers(response.headers);
   headers.set("Content-Type", "text/html; charset=utf-8");
