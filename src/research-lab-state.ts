@@ -203,6 +203,7 @@ export class ResearchLabState extends ImpactResearchLabState {
     const response = await super.fetch(request);
 
     if (request.method === "POST" && url.pathname === "/reset") {
+      // El reset base ya finalizó; el expediente forward no puede revertirlo.
       await Promise.allSettled([
         this.forwardStorage.delete(FROZEN_FORWARD_KEY),
         this.forwardStorage.delete(OPPORTUNITY_AUDIT_KEY),
@@ -212,6 +213,8 @@ export class ResearchLabState extends ImpactResearchLabState {
 
     if (!response.ok) return response;
     if (request.method === "POST" && url.pathname === "/tick") {
+      // El observador forward sigue ejecutándose después del PAPER base:
+      // return this.enrichForward(response, true)
       const withForward = await this.enrichForward(response, true);
       return this.enrichOpportunityAudit(withForward, true);
     }
