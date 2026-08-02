@@ -5,6 +5,7 @@ export const DEMO_LIVE_PRICES_SCRIPT = `<script>
   let latestLab = null;
   let timer = null;
   let stateTimer = null;
+  let lastPositionSignature = null;
 
   const num = (value) => Number.isFinite(Number(value)) ? Number(value) : 0;
   const eur = (value) => new Intl.NumberFormat('es-ES', { style: 'currency', currency: 'EUR', minimumFractionDigits: 2, maximumFractionDigits: 5 }).format(num(value));
@@ -13,6 +14,13 @@ export const DEMO_LIVE_PRICES_SCRIPT = `<script>
   function liveStrategies() {
     const strategies = Array.isArray(latestLab?.state?.strategies) ? latestLab.state.strategies : [];
     return strategies.filter((strategy) => strategy && strategy.position && strategy.pairKey);
+  }
+
+  function positionSignature(strategies) {
+    return strategies
+      .map((strategy) => [strategy.symbol, strategy.pairKey, num(strategy.position?.entryTime), num(strategy.position?.quantity)].join(':'))
+      .sort()
+      .join('|');
   }
 
   function ensureLiveHeader() {
@@ -76,6 +84,7 @@ export const DEMO_LIVE_PRICES_SCRIPT = `<script>
     const valueNode = ensureMetric(card, 'value', 'Valor liquidable vivo');
     const pnlNode = ensureMetric(card, 'pnl', 'G/P abierta viva');
     const spreadNode = ensureMetric(card, 'spread', 'Spread vivo');
+    const updatedNode = ensureMetric(card, 'updated', 'Ticker actualizado');
     if (priceNode) priceNode.textContent = eur(ticker.bid);
     if (valueNode) valueNode.textContent = eur(value);
     if (pnlNode) {
@@ -83,7 +92,9 @@ export const DEMO_LIVE_PRICES_SCRIPT = `<script>
       pnlNode.className = openPnl > 0 ? 'positive' : openPnl < 0 ? 'negative' : '';
     }
     if (spreadNode) spreadNode.textContent = ticker.ask > 0 ? pct((ticker.ask - ticker.bid) / ticker.bid) : '—';
-    card.setAttribute('data-live-updated', String(Date.now()));
+    const updatedAt = Date.now();
+    if (updatedNode) updatedNode.textContent = new Date(updatedAt).toLocaleTimeString('es-ES') + ' · cada 2,5 s';
+    card.setAttribute('data-live-updated', String(updatedAt));
     return { value, cost, openPnl };
   }
 
@@ -94,15 +105,11 @@ export const DEMO_LIVE_PRICES_SCRIPT = `<script>
     const strategies = Array.isArray(latestLab?.state?.strategies) ? latestLab.state.strategies : [];
     const initial = strategies.reduce((sum, item) => sum + num(item.initialCashEur), 0);
     const scale = initial > 0 ? 50 / initial : 1;
-
-    // Fuente única contable: efectivo disponible + valor liquidable de posiciones abiertas.
-    // equityEur ya contiene el efectivo/posición de cada estrategia y no debe volver a sumarse.
     const cash = strategies.reduce((sum, item) => sum + num(item.cashEur), 0) * scale;
     const liveValue = liveRows.reduce((sum, row) => sum + row.value, 0) * scale;
     const investedCost = liveRows.reduce((sum, row) => sum + row.cost, 0) * scale;
     const account = cash + liveValue;
     const totalPnl = account - 50;
-
     const accountNode = byLabel('Valor de cuenta');
     const cashNode = byLabel('Saldo disponible');
     const investedNode = byLabel('Capital invertido');
@@ -148,7 +155,17 @@ export const DEMO_LIVE_PRICES_SCRIPT = `<script>
     try {
       const response = await fetch('/api/lab', { cache: 'no-store' });
       if (!response.ok) throw new Error('Lab HTTP ' + response.status);
-      latestLab = await response.json();
+      const nextLab = await response.json();
+      const nextStrategies = Array.isArray(nextLab?.state?.strategies) ? nextLab.state.strategies.filter((strategy) => strategy?.position && strategy?.pairKey) : [];
+      const nextSignature = positionSignature(nextStrategies);
+      if (lastPositionSignature !== null && nextSignature !== lastPositionSignature) {
+        const url = new URL(window.location.href);
+        url.searchParams.set('state', String(Date.now()));
+        window.location.replace(url.toString());
+        return;
+      }
+      latestLab = nextLab;
+      lastPositionSignature = nextSignature;
       await pollLivePrices();
     } catch (error) {
       const status = ensureLiveHeader();
