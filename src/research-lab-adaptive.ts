@@ -9,7 +9,10 @@ import {
   recordResearchError,
   summarizeResearchLab,
   type FastEntryGate,
+  type LabPerformance,
+  type LabPosition,
   type LabStrategyState,
+  type LabTrade,
   type ResearchLabState,
 } from "./research-lab";
 
@@ -18,6 +21,17 @@ export { isStrategyDue, recordResearchError, summarizeResearchLab, type FastEntr
 export interface AppliedIntelligenceContext {
   news: NewsDecisionContext | null;
   chart: ChartIntelligence;
+}
+
+interface FinancialSnapshot {
+  cashEur: number;
+  equityEur: number;
+  peakEquityEur: number;
+  maxDrawdownPct: number;
+  position: LabPosition | null;
+  lastTradeAt: number | null;
+  performance: LabPerformance;
+  trades: LabTrade[];
 }
 
 function isTokenizedGold(candidate: MarketCandidate): boolean {
@@ -153,11 +167,56 @@ function resizeLatestPaperBuy(strategy: LabStrategyState, cashBefore: number, in
   strategy.lastDecision = `PAPER BUY dimensionada por comité: ${latest.reason}`;
 }
 
+function snapshotFinancialState(strategy: LabStrategyState): FinancialSnapshot {
+  return {
+    cashEur: strategy.cashEur,
+    equityEur: strategy.equityEur,
+    peakEquityEur: strategy.peakEquityEur,
+    maxDrawdownPct: strategy.maxDrawdownPct,
+    position: strategy.position ? { ...strategy.position } : null,
+    lastTradeAt: strategy.lastTradeAt,
+    performance: { ...strategy.performance },
+    trades: strategy.trades.map((trade) => ({ ...trade })),
+  };
+}
+
+function minimumDiscretionaryNetExitPct(strategy: LabStrategyState): number {
+  const laneFloor = strategy.lane === "fast" ? 0.006 : strategy.lane === "intraday" ? 0.01 : 0.015;
+  return Math.max(laneFloor, strategy.estimatedTakerRoundTripCostPct * 1.5);
+}
+
+function restoreTinyRsiExit(strategy: LabStrategyState, before: FinancialSnapshot, currentPrice: number): boolean {
+  const latest = strategy.trades[0];
+  const position = before.position;
+  if (!position || !latest || latest.side !== "sell" || latest.reason !== "RSI de salida del carril") return false;
+  const pnl = latest.pnlEur;
+  if (typeof pnl !== "number" || pnl <= 0 || position.costEur <= 0) return false;
+  const netReturnPct = pnl / position.costEur;
+  const minimum = minimumDiscretionaryNetExitPct(strategy);
+  if (netReturnPct >= minimum) return false;
+
+  strategy.cashEur = before.cashEur;
+  strategy.position = { ...position };
+  strategy.lastTradeAt = before.lastTradeAt;
+  strategy.performance = { ...before.performance };
+  strategy.trades = before.trades.map((trade) => ({ ...trade }));
+  strategy.peakEquityEur = before.peakEquityEur;
+  strategy.maxDrawdownPct = before.maxDrawdownPct;
+  strategy.equityEur = Math.round((before.cashEur + position.quantity * currentPrice) * 1_000_000) / 1_000_000;
+  strategy.lastDecision = `Salida RSI aplazada: beneficio neto ${(netReturnPct * 100).toFixed(3)} % inferior al mínimo ${(minimum * 100).toFixed(2)} % exigido tras costes. Stop, take profit, cruce bajista y tiempo máximo siguen activos.`;
+  return true;
+}
+
 export function applyResearchCandles(strategy: LabStrategyState, candles: Candle[], now = Date.now(), fastEntryGate: FastEntryGate | null = null, news: NewsDecisionContext | null = null): LabStrategyState {
   const cashBefore = strategy.cashEur;
   const buysBefore = strategy.performance.buys;
+  const financialBefore = snapshotFinancialState(strategy);
   const chart = interpretChart(candles);
   const result = applyBaseResearchCandles(strategy, candles, now, fastEntryGate);
+  const currentPrice = candles.at(-1)?.close;
+  if (typeof currentPrice === "number" && Number.isFinite(currentPrice) && currentPrice > 0) {
+    restoreTinyRsiExit(result, financialBefore, currentPrice);
+  }
   if (result.performance.buys > buysBefore && result.position) resizeLatestPaperBuy(result, cashBefore, { news, chart });
   return result;
 }
