@@ -16,6 +16,28 @@ export const DEMO_LIVE_PRICES_SCRIPT = `<script>
     return strategies.filter((strategy) => strategy && strategy.position && strategy.pairKey);
   }
 
+  // Única fuente de la escala a la cuenta equivalente de 50 €: la misma
+  // fórmula que usa el resumen estático (norm() en demo-dashboard-standalone).
+  // Se aplica una sola vez, aquí, y el resultado se reutiliza tanto para las
+  // tarjetas de posición como para el resumen en vivo, para que nunca puedan
+  // mostrarse a la vez una cifra escalada y otra sin escalar de la misma
+  // magnitud (inversión, valor liquidable o PnL abierto).
+  function accountScale() {
+    const strategies = Array.isArray(latestLab?.state?.strategies) ? latestLab.state.strategies : [];
+    const initial = strategies.reduce((sum, item) => sum + num(item.initialCashEur), 0);
+    return initial > 0 ? 50 / initial : 1;
+  }
+
+  // Valoración pura de una posición: cantidad técnica × bid vivo, coste
+  // completo de la posición, y PnL abierto como valor liquidable menos coste
+  // — todo en la misma unidad (la cuenta equivalente de 50 €) tras aplicar la
+  // escala una única vez.
+  function positionValuation(quantity, bid, costEur, scale) {
+    const value = quantity * bid * scale;
+    const cost = costEur * scale;
+    return { value, cost, openPnl: value - cost };
+  }
+
   function positionSignature(strategies) {
     return strategies
       .map((strategy) => [strategy.symbol, strategy.pairKey, num(strategy.position?.entryTime), num(strategy.position?.quantity)].join(':'))
@@ -71,14 +93,12 @@ export const DEMO_LIVE_PRICES_SCRIPT = `<script>
     return { bid, ask, last };
   }
 
-  function updateCard(strategy, ticker) {
+  function updateCard(strategy, ticker, scale) {
     const card = findPositionCard(strategy.symbol);
     if (!card) return null;
     const position = strategy.position || {};
     const quantity = num(position.quantity);
-    const cost = num(position.costEur);
-    const value = quantity * ticker.bid;
-    const openPnl = value - cost;
+    const { value, cost, openPnl } = positionValuation(quantity, ticker.bid, num(position.costEur), scale);
     const openPct = cost > 0 ? openPnl / cost : 0;
     const priceNode = ensureMetric(card, 'price', 'Precio vivo bid');
     const valueNode = ensureMetric(card, 'value', 'Valor liquidable vivo');
@@ -98,16 +118,16 @@ export const DEMO_LIVE_PRICES_SCRIPT = `<script>
     return { value, cost, openPnl };
   }
 
-  function updateSummary(liveRows, expectedOpenPositions) {
+  function updateSummary(liveRows, expectedOpenPositions, scale) {
     if (!liveRows.length || liveRows.length !== expectedOpenPositions) return false;
     const metrics = [...document.querySelectorAll('#summary .metric')];
     const byLabel = (label) => metrics.find((node) => node.querySelector('span')?.textContent?.trim() === label)?.querySelector('strong');
     const strategies = Array.isArray(latestLab?.state?.strategies) ? latestLab.state.strategies : [];
-    const initial = strategies.reduce((sum, item) => sum + num(item.initialCashEur), 0);
-    const scale = initial > 0 ? 50 / initial : 1;
     const cash = strategies.reduce((sum, item) => sum + num(item.cashEur), 0) * scale;
-    const liveValue = liveRows.reduce((sum, row) => sum + row.value, 0) * scale;
-    const investedCost = liveRows.reduce((sum, row) => sum + row.cost, 0) * scale;
+    // liveRows ya viene escalado por positionValuation(): sumar sin volver a
+    // multiplicar por scale, o el resultado quedaría escalado dos veces.
+    const liveValue = liveRows.reduce((sum, row) => sum + row.value, 0);
+    const investedCost = liveRows.reduce((sum, row) => sum + row.cost, 0);
     const account = cash + liveValue;
     const totalPnl = account - 50;
     const accountNode = byLabel('Valor de cuenta');
@@ -134,16 +154,17 @@ export const DEMO_LIVE_PRICES_SCRIPT = `<script>
       if (status) status.innerHTML = '<b>Precio vivo Kraken:</b> sin posiciones abiertas.';
       return;
     }
+    const scale = accountScale();
     const results = await Promise.allSettled(strategies.map(async (strategy) => ({ strategy, ticker: await fetchTicker(strategy.pairKey) })));
     const liveRows = [];
     let failures = 0;
     for (const result of results) {
       if (result.status !== 'fulfilled') { failures += 1; continue; }
-      const row = updateCard(result.value.strategy, result.value.ticker);
+      const row = updateCard(result.value.strategy, result.value.ticker, scale);
       if (row) liveRows.push(row);
       else failures += 1;
     }
-    const summaryUpdated = updateSummary(liveRows, strategies.length);
+    const summaryUpdated = updateSummary(liveRows, strategies.length, scale);
     if (status) {
       const now = new Date().toLocaleTimeString('es-ES');
       status.className = 'banner ' + (failures ? 'warn' : 'safe');

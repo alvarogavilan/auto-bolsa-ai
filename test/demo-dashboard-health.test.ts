@@ -11,16 +11,31 @@ describe("system health summary in the DEMO dashboard", () => {
     expect(html).toContain("function renderSystemHealth");
   });
 
-  it("summarizes market freshness, lab cycle freshness, engine error rate and strategy status", async () => {
+  it("summarizes market freshness, lab cycles, engine success/error split and strategy status", async () => {
     const html = await (await demoDashboard()).text();
 
     expect(html).toContain("Mercado Kraken");
-    expect(html).toContain("Ciclo del laboratorio");
-    expect(html).toContain("Motor principal (errores)");
+    expect(html).toContain("Ciclos del laboratorio");
+    expect(html).toContain("Motor principal");
     expect(html).toContain("Estrategias");
     expect(html).toContain("markets.available!==false");
     expect(html).toContain("readiness.successfulTickAttempts");
     expect(html).toContain("readiness.errorsObserved");
+    // Regression: "Ciclos del laboratorio" must read the lab's own cycle
+    // count (lab.cycles), never fall back to the single-pair engine's
+    // successfulTickAttempts — that conflated two unrelated systems under
+    // one ambiguous label.
+    expect(html).toContain("n(lab.cycles)+' ciclos'");
+  });
+
+  it("surfaces the most recent engine error with strategy and timestamp, distinguishing active from historical", async () => {
+    const html = await (await demoDashboard()).text();
+
+    expect(html).toContain("function lastEngineError");
+    expect(html).toContain("Último error registrado");
+    expect(html).toContain("consecutiveErrors");
+    expect(html).toContain("activo (");
+    expect(html).toContain("histórico, ya recuperado");
   });
 
   it("only reads already-served data, no new endpoints or risk thresholds", async () => {

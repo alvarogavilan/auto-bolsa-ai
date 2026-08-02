@@ -143,4 +143,47 @@ describe("multi-horizon PAPER lab", () => {
     expect(summary.eligibleForLiveReview).toBe(false);
     expect(summary.liveTrading).toBe(false);
   });
+
+  it("never persists the same operation twice when the same closed candle is applied again", () => {
+    const now = 1_800_000_000_000;
+    const state = initializeResearchLab(universe(), now);
+    const strategy = state.strategies.find((item) => item.lane === "fast")!;
+    const gate = { checkedAt: now, allowed: true, costPct: 0.009, blocker: null };
+    const buySignalCloses = [
+      100, 99.61396776074064, 98.6285416314374, 98.65807909262034, 99.21748094080644,
+      99.22527749479934, 98.97706749409033, 98.32364684134882, 97.57659448625111,
+      97.85362825987056, 98.74363142903736, 99.689747280863, 98.72519368862602,
+      97.86997608464418, 98.00551047869769, 98.2895885830802, 98.2216780237793,
+      98.9812143357764, 99.9383842138043, 99.75454049809389, 99.50262238022287,
+      100.31877221431512, 100.14173067468094, 99.59273447691274, 100.07314368817809,
+      99.95350650893783, 99.39904224379886, 98.55447018459589, 97.91809983773122,
+      100.50212967526686,
+    ];
+    const buySignalCandles = (): Candle[] => {
+      const all = [...buySignalCloses, buySignalCloses.at(-1)! + 0.05];
+      return all.map((close, index) => ({
+        time: 1_700_000_000 + index * 300,
+        open: close - 0.1,
+        high: close + 0.3,
+        low: close - 0.3,
+        close,
+        volume: 1_000 + index,
+      }));
+    };
+
+    applyResearchCandles(strategy, buySignalCandles(), now, gate);
+    expect(strategy.performance.buys).toBe(1);
+    expect(strategy.trades).toHaveLength(1);
+    const firstTradeId = strategy.trades[0]!.id;
+
+    // Simulate a retried/duplicated tick delivering the exact same closed
+    // candle again (e.g. a re-run cron invocation) before the next candle
+    // is due: it must be recognised as already processed and must never
+    // create a second trade for the same operation.
+    applyResearchCandles(strategy, buySignalCandles(), now, gate);
+    expect(strategy.performance.buys).toBe(1);
+    expect(strategy.trades).toHaveLength(1);
+    expect(strategy.trades[0]!.id).toBe(firstTradeId);
+    expect(strategy.duplicateSkips).toBe(1);
+  });
 });
