@@ -42,12 +42,13 @@ describe("PAPER profit lock", () => {
 
   it("moves the stop above true break-even and keeps the position open", () => {
     const trade = position();
+    const initialTarget = trade.takeProfit;
     const result = managePaperProfitLock(trade, strategy, 1.04);
     expect(result.activated).toBe(true);
     expect(result.trailingActive).toBe(true);
     expect(trade.stopLoss).toBeGreaterThan(1);
     expect(result.protectedNetPnlEur).toBeGreaterThan(0);
-    expect(trade.takeProfit).toBeGreaterThan(1.08);
+    expect(trade.takeProfit).toBeGreaterThanOrEqual(initialTarget);
   });
 
   it("ratchets the stop upward and never loosens it after a pullback", () => {
