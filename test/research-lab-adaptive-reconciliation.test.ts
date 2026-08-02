@@ -39,7 +39,7 @@ function universe(counts: Record<ResearchLaneId, number>): MarketUniverse {
   return {
     schemaVersion: "kraken-eur-market-universe-v1",
     generatedAt: 2_000,
-    capitalEur: 50,
+    capitalEur: 100,
     maximumPaperAllocationEur: 10,
     feeModel: {
       version: "kraken-spot-tier0-2026-07",
@@ -61,9 +61,12 @@ function universe(counts: Record<ResearchLaneId, number>): MarketUniverse {
 }
 
 describe("adaptive runtime roster reconciliation", () => {
-  it("expands a persisted 3/3/3 cohort to 5/8/12 without resetting evidence", () => {
+  it("expands and migrates a persisted 3/3/3 cohort without resetting evidence", () => {
     const persisted = initializeBaseResearchLab(universe({ fast: 3, intraday: 3, swing: 3 }), 1_000);
+    persisted.strategies[0]!.initialCashEur = 50;
     persisted.strategies[0]!.cashEur = 47.25;
+    persisted.strategies[0]!.equityEur = 47.25;
+    persisted.strategies[0]!.peakEquityEur = 50;
     persisted.strategies[0]!.performance.closedTrades = 3;
     persisted.strategies[0]!.lastDecision = "evidencia preservada";
 
@@ -73,7 +76,9 @@ describe("adaptive runtime roster reconciliation", () => {
     expect(reconciled.strategies.filter((strategy) => strategy.lane === "fast")).toHaveLength(5);
     expect(reconciled.strategies.filter((strategy) => strategy.lane === "intraday")).toHaveLength(8);
     expect(reconciled.strategies.filter((strategy) => strategy.lane === "swing")).toHaveLength(12);
-    expect(reconciled.strategies[0]!.cashEur).toBe(47.25);
+    expect(reconciled.strategies[0]!.initialCashEur).toBe(100);
+    expect(reconciled.strategies[0]!.cashEur).toBe(97.25);
+    expect(reconciled.strategies[0]!.equityEur).toBe(97.25);
     expect(reconciled.strategies[0]!.performance.closedTrades).toBe(3);
     expect(reconciled.strategies[0]!.lastDecision).toBe("evidencia preservada");
     expect(reconciled.initializedAt).toBe(1_000);
