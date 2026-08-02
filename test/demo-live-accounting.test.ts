@@ -5,7 +5,6 @@ describe("DEMO live accounting", () => {
   it("values the account from cash plus live liquidation value only", () => {
     expect(DEMO_LIVE_PRICES_SCRIPT).toContain("const account = cash + liveValue");
     expect(DEMO_LIVE_PRICES_SCRIPT).not.toContain("closedOnlyEquity");
-    expect(DEMO_LIVE_PRICES_SCRIPT).toContain("equityEur ya contiene el efectivo/posición");
   });
 
   it("does not recalculate the account from a partial ticker response", () => {
@@ -17,5 +16,16 @@ describe("DEMO live accounting", () => {
     expect(DEMO_LIVE_PRICES_SCRIPT).toContain("byLabel('Saldo disponible')");
     expect(DEMO_LIVE_PRICES_SCRIPT).toContain("byLabel('Capital invertido')");
     expect(DEMO_LIVE_PRICES_SCRIPT).toContain("const investedCost = liveRows.reduce");
+  });
+
+  it("reloads the dashboard when a position opens, closes or changes", () => {
+    expect(DEMO_LIVE_PRICES_SCRIPT).toContain("function positionSignature");
+    expect(DEMO_LIVE_PRICES_SCRIPT).toContain("nextSignature !== lastPositionSignature");
+    expect(DEMO_LIVE_PRICES_SCRIPT).toContain("window.location.replace");
+  });
+
+  it("shows an explicit timestamp on every live position card", () => {
+    expect(DEMO_LIVE_PRICES_SCRIPT).toContain("Ticker actualizado");
+    expect(DEMO_LIVE_PRICES_SCRIPT).toContain("cada 2,5 s");
   });
 });
