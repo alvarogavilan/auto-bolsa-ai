@@ -1,14 +1,18 @@
 export const DEMO_HISTORY_OUTCOMES_STYLE = `<style>
 #history .history-outcome{display:inline-flex;align-items:center;gap:6px;margin-top:7px;padding:6px 10px;border-radius:999px;font-size:12px;font-weight:900;letter-spacing:.02em}
 #history .history-outcome.winner{background:rgba(76,221,162,.14);border:1px solid rgba(76,221,162,.45);color:var(--green)}
+#history .history-outcome.micro{background:rgba(79,156,249,.14);border:1px solid rgba(79,156,249,.45);color:#8fc0ff}
 #history .history-outcome.loser{background:rgba(255,125,141,.14);border:1px solid rgba(255,125,141,.45);color:var(--red)}
 #history .history-outcome.open{background:rgba(255,209,102,.13);border:1px solid rgba(255,209,102,.42);color:var(--amber)}
 #history details.item.winner{border-color:rgba(76,221,162,.5)}
+#history details.item.micro{border-color:rgba(79,156,249,.45)}
 #history details.item.loser{border-color:rgba(255,125,141,.5)}
 #history details.item.open{border-color:rgba(255,209,102,.35)}
 </style>`;
 
 export const DEMO_HISTORY_OUTCOMES_CODE = `
+  const MINIMUM_MEANINGFUL_NET_PROFIT_EUR = 0.5;
+
   const parseHistoryEuro = (text) => {
     const normalized = String(text || '').replace(/[^0-9,.-]/g, '').replace(/[.]/g, '').replace(',', '.');
     const value = Number(normalized);
@@ -21,6 +25,13 @@ export const DEMO_HISTORY_OUTCOMES_CODE = `
     return row?.querySelector('strong')?.textContent?.trim() || '';
   };
 
+  const classifyHistoryPnl = (pnl) => {
+    if (pnl >= MINIMUM_MEANINGFUL_NET_PROFIT_EUR) return { kind: 'winner', label: 'GANADORA ECONÓMICA' };
+    if (pnl > 0.005) return { kind: 'micro', label: 'MICROBENEFICIO' };
+    if (pnl < -0.005) return { kind: 'loser', label: 'PERDEDORA' };
+    return { kind: 'open', label: 'RESULTADO PLANO' };
+  };
+
   const setHistoryOutcome = (card, kind, label, valueText = '') => {
     const nextText = '● ' + label + (valueText ? ' · ' + valueText : '');
     const summaryText = card.querySelector('.order-head > div:nth-child(2)');
@@ -28,7 +39,7 @@ export const DEMO_HISTORY_OUTCOMES_CODE = `
     let badge = summaryText.querySelector('.history-outcome');
     const alreadyCurrent = card.classList.contains(kind) && badge && badge.className === 'history-outcome ' + kind && badge.textContent === nextText;
     if (alreadyCurrent) return;
-    card.classList.remove('winner', 'loser', 'open');
+    card.classList.remove('winner', 'micro', 'loser', 'open');
     card.classList.add(kind);
     if (!badge) {
       badge = document.createElement('span');
@@ -56,15 +67,20 @@ export const DEMO_HISTORY_OUTCOMES_CODE = `
       const pnlText = historyDetailValue(card, 'PnL realizado');
       const pnl = parseHistoryEuro(pnlText);
       if (pnl === null) return;
-      const kind = pnl > 0 ? 'winner' : pnl < 0 ? 'loser' : 'open';
-      const label = pnl > 0 ? 'GANADORA' : pnl < 0 ? 'PERDEDORA' : 'SIN RESULTADO';
-      setHistoryOutcome(card, kind, label, pnlText);
+      const outcome = classifyHistoryPnl(pnl);
+      setHistoryOutcome(card, outcome.kind, outcome.label, pnlText);
 
       const buyId = historyDetailValue(card, 'Compra asociada');
       const buyCard = byId.get(buyId);
       if (buyCard) {
-        const entryLabel = pnl > 0 ? 'ENTRADA DE GANADORA' : pnl < 0 ? 'ENTRADA DE PERDEDORA' : 'ENTRADA CERRADA';
-        setHistoryOutcome(buyCard, kind, entryLabel, pnlText);
+        const entryLabel = outcome.kind === 'winner'
+          ? 'ENTRADA DE GANADORA ECONÓMICA'
+          : outcome.kind === 'micro'
+            ? 'ENTRADA DE MICROBENEFICIO'
+            : outcome.kind === 'loser'
+              ? 'ENTRADA DE PERDEDORA'
+              : 'ENTRADA CERRADA EN PLANO';
+        setHistoryOutcome(buyCard, outcome.kind, entryLabel, pnlText);
       }
     });
 
