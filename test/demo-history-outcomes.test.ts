@@ -24,13 +24,15 @@ describe("DEMO history outcome badges", () => {
     expect(html).not.toContain("const kind = pnl > 0 ? 'winner'");
   });
 
-  it("labels the associated buy as the entry leg, not as a second closed trade", async () => {
+  it("labels the associated buy once and removes duplicate badges", async () => {
     const html = await (await demoDashboard()).text();
 
     expect(html).toContain("ENTRADA DE GANADORA ECONÓMICA");
     expect(html).toContain("ENTRADA DE MICROBENEFICIO");
     expect(html).toContain("ENTRADA DE PERDEDORA");
-    expect(html).toContain("const buyId = historyDetailValue(card, 'Compra asociada')");
+    expect(html).toContain("const directOutcomeBadges");
+    expect(html).toContain("badges.forEach((duplicate) => duplicate.remove())");
+    expect(html).toContain("window.__demoHistoryOutcomeInterval");
     expect(html).toContain("setHistoryOutcome(buyCard, outcome.kind, entryLabel, pnlText)");
   });
 
