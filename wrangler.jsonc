@@ -20,5 +20,5 @@
     { "tag": "v2", "new_sqlite_classes": ["ResearchLabState"] },
     { "tag": "v3", "new_sqlite_classes": ["LiveExecutorState"] }
   ],
-  "triggers": { "crons": ["*/5 * * * *"] }
+  "triggers": { "crons": ["* * * * *"] }
 }
