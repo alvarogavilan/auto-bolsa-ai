@@ -31,6 +31,7 @@ export const DEMO_FLATLINE_WATCHDOG_CODE = `
     const lastSellAt = sellTimestamps.length ? Math.max(...sellTimestamps) : null;
     const lastAnalysisAt = analysisTimestamps.length ? Math.max(...analysisTimestamps) : null;
     const hoursSinceTrade = lastTradeAt ? Math.max(0, (now - lastTradeAt) / 3600000) : null;
+    const minutesSinceAnalysis = lastAnalysisAt ? Math.max(0, (now - lastAnalysisAt) / 60000) : null;
     const coverage = lab.marketCoverageAudit || lab.coverageAudit || demo.marketCoverageAudit || null;
     const activity = coverage && coverage.activity ? coverage.activity : {};
     const errors = Number(activity.errorsLast12h || activity.errors || 0);
@@ -39,9 +40,17 @@ export const DEMO_FLATLINE_WATCHDOG_CODE = `
       ? Object.values(coverage.currentDecisionFunnel).reduce((sum, value) => sum + Number(value || 0), 0)
       : 0;
     const thresholdHours = 6;
-    const breached = openCount === 0 && hoursSinceTrade !== null && hoursSinceTrade >= thresholdHours;
-    const unexplained = breached && (errors > 0 || stale > 0 || decisions === 0);
-    const status = openCount > 0 ? 'NORMAL' : unexplained ? 'ALERTA DE BLOQUEO' : breached ? 'PLANO PROLONGADO EXPLICADO' : 'VIGILANDO';
+    const analysisStaleMinutes = 15;
+    const breached = hoursSinceTrade !== null && hoursSinceTrade >= thresholdHours;
+    const analysisStale = minutesSinceAnalysis === null || minutesSinceAnalysis >= analysisStaleMinutes;
+    const unexplained = breached && (errors > 0 || stale > 0 || decisions === 0 || analysisStale);
+    const status = unexplained
+      ? 'ALERTA DE BLOQUEO'
+      : breached
+        ? 'PLANO PROLONGADO EXPLICADO'
+        : openCount > 0
+          ? 'NORMAL'
+          : 'VIGILANDO';
     const statusClass = unexplained ? 'bad' : breached ? 'warn' : 'ok';
     const ageText = (timestamp) => {
       if (!timestamp) return 'Sin registro';
@@ -63,12 +72,12 @@ export const DEMO_FLATLINE_WATCHDOG_CODE = `
       '<div class="metric"><span>Decisiones clasificadas</span><strong>' + decisions + '</strong></div>' +
       '</div>' +
       '<div class="banner ' + statusClass + '"><b>' + status + '.</b> ' +
-      (openCount > 0
-        ? 'Existen posiciones PAPER abiertas.'
-        : unexplained
-          ? 'Han pasado al menos ' + thresholdHours + ' horas desde la última operación y además faltan decisiones clasificadas o existen errores/estrategias estancadas.'
-          : breached
-            ? 'Han pasado al menos ' + thresholdHours + ' horas desde la última operación, pero el motor continúa analizando y el embudo explica los descartes.'
+      (unexplained
+        ? 'Han pasado al menos ' + thresholdHours + ' horas desde la última operación y faltan decisiones clasificadas, existen errores/estrategias estancadas o el análisis dejó de actualizarse. Tener posiciones abiertas no oculta este bloqueo.'
+        : breached
+          ? 'Han pasado al menos ' + thresholdHours + ' horas desde la última operación, pero el motor continúa analizando y el embudo explica los descartes.'
+          : openCount > 0
+            ? 'Existen posiciones PAPER abiertas y la actividad operativa está dentro del umbral.'
             : 'El motor continúa analizando; el reloj de operaciones todavía no supera el umbral.') +
       ' LIVE y órdenes reales permanecen bloqueados.</div>';
   }
