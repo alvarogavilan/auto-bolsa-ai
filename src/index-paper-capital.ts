@@ -173,7 +173,7 @@ export default {
         body: await request.text(),
       });
     }
-    return worker.fetch(request, runtimeEnv, ctx);
+    return worker.fetch(request, paperRuntimeEnv(env), ctx);
   },
 
   async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
