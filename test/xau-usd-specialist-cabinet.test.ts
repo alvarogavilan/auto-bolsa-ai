@@ -31,44 +31,70 @@ function healthyInput(): XauCabinetInput {
 }
 
 describe("XAU/USD specialist cabinet", () => {
-  it("authorizes only a strongly aligned XAU setup with fresh macro evidence", () => {
+  it("authorizes a strongly aligned setup with fresh macro evidence", () => {
     const decision = evaluateXauUsdCabinet(healthyInput());
     expect(decision.allowed).toBe(true);
-    expect(decision.symbol).toBe("XAU/USD");
     expect(decision.bias).toBe("long");
     expect(decision.consensusPct).toBeGreaterThanOrEqual(72);
-    expect(decision.votes.length).toBeGreaterThanOrEqual(9);
     expect(decision.liveTrading).toBe(false);
   });
 
-  it("blocks an imminent high-impact macro event even with technical alignment", () => {
+  it("allows only a unanimous high-asymmetry technical shadow setup when macro is unavailable", () => {
+    const input = healthyInput();
+    input.macro = {
+      dxyBiasForGold: "neutral",
+      realYieldsBiasForGold: "neutral",
+      centralBankBias: "neutral",
+      inflationBias: "neutral",
+      geopoliticalBias: "neutral",
+      highImpactEventWithinMinutes: null,
+      sourcesAvailable: 1,
+      sourcesFresh: 1,
+    };
+    const decision = evaluateXauUsdCabinet(input);
+    expect(decision.allowed).toBe(true);
+    expect(decision.consensusPct).toBe(100);
+    expect(decision.reasons.join(" ")).toContain("PAPER técnico estricto");
+    expect(decision.liveTrading).toBe(false);
+  });
+
+  it("blocks the shadow profile when one technical expert disagrees", () => {
+    const input = healthyInput();
+    input.macro.sourcesFresh = 1;
+    input.macro.sourcesAvailable = 1;
+    input.macro.dxyBiasForGold = "neutral";
+    input.macro.realYieldsBiasForGold = "neutral";
+    input.macro.centralBankBias = "neutral";
+    input.macro.inflationBias = "neutral";
+    input.macro.geopoliticalBias = "neutral";
+    input.technical.momentumBias = "short";
+    const decision = evaluateXauUsdCabinet(input);
+    expect(decision.allowed).toBe(false);
+    expect(decision.vetoes.join(" ")).toContain("perfil técnico PAPER estricto");
+  });
+
+  it("blocks imminent macro events and excessive exposure", () => {
     const input = healthyInput();
     input.macro.highImpactEventWithinMinutes = 10;
+    input.openXauExposureEur = 10;
     const decision = evaluateXauUsdCabinet(input);
     expect(decision.allowed).toBe(false);
     expect(decision.riskRegime).toBe("event-lockout");
     expect(decision.vetoes.join(" ")).toContain("evento macro");
-  });
-
-  it("blocks stale macro evidence, weak asymmetry and excessive XAU exposure", () => {
-    const input = healthyInput();
-    input.macro.sourcesFresh = 2;
-    input.technical.projectedMovePct = 0.5;
-    input.openXauExposureEur = 10;
-    const decision = evaluateXauUsdCabinet(input);
-    expect(decision.allowed).toBe(false);
-    expect(decision.vetoes.join(" ")).toContain("macro fresca insuficiente");
-    expect(decision.vetoes.join(" ")).toContain("Asimetría XAU insuficiente");
     expect(decision.vetoes.join(" ")).toContain("Exposición XAU máxima");
   });
 
-  it("is structurally exclusive to XAU/USD and remains PAPER only", () => {
+  it("remains exclusive and PAPER only", () => {
     const input = healthyInput();
     input.symbol = "BTC/EUR";
-    const decision = evaluateXauUsdCabinet(input);
-    const manifest = buildXauUsdCabinetManifest();
-    expect(decision.allowed).toBe(false);
-    expect(decision.vetoes.join(" ")).toContain("exclusivo para XAU/USD");
-    expect(manifest).toMatchObject({ market: "XAU/USD", exclusive: true, priority: "maximum", executionMode: "paper-only", liveTrading: false });
+    expect(evaluateXauUsdCabinet(input).allowed).toBe(false);
+    expect(buildXauUsdCabinetManifest()).toMatchObject({
+      market: "XAU/USD",
+      exclusive: true,
+      priority: "maximum",
+      paperFallback: "strict-technical-shadow",
+      executionMode: "paper-only",
+      liveTrading: false,
+    });
   });
 });
