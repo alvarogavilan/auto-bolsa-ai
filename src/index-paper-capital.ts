@@ -3,6 +3,7 @@ import worker, {
   ResearchLabState,
   LiveExecutorState,
 } from "./index-fire-drill";
+import { derivePaperEconomicPerformance, type PaperEconomicStrategyLike } from "./paper-economic-performance";
 import { BOT_STATE_SINGLETON_NAME, type Env } from "./types";
 import { buildNativeXauFastPriceInput, buildNativeXauPaperInput } from "./xau-native-paper-feed";
 import type { XauPaperRuntimeInput } from "./xau-usd-paper-runtime";
@@ -27,6 +28,54 @@ function authorized(request: Request, env: Env): boolean {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function strategiesFromLabPayload(payload: unknown): PaperEconomicStrategyLike[] {
+  if (!payload || typeof payload !== "object") return [];
+  const root = payload as Record<string, unknown>;
+  const candidates = [
+    root.strategies,
+    root.state && typeof root.state === "object" ? (root.state as Record<string, unknown>).strategies : null,
+    root.lab && typeof root.lab === "object" ? (root.lab as Record<string, unknown>).strategies : null,
+  ];
+  const raw = candidates.find(Array.isArray);
+  if (!Array.isArray(raw)) return [];
+  return raw.flatMap((entry) => {
+    if (!entry || typeof entry !== "object") return [];
+    const strategy = entry as Record<string, unknown>;
+    if (typeof strategy.id !== "string" || typeof strategy.symbol !== "string" || !Array.isArray(strategy.trades)) return [];
+    return [{
+      id: strategy.id,
+      symbol: strategy.symbol,
+      trades: strategy.trades as PaperEconomicStrategyLike["trades"],
+    }];
+  });
+}
+
+async function paperEconomicsResponse(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+  const labUrl = new URL("/api/lab", request.url);
+  const labResponse = await worker.fetch(new Request(labUrl, { headers: { Accept: "application/json" } }), env, ctx);
+  if (!labResponse.ok) {
+    return Response.json({
+      schemaVersion: "paper-economic-performance-v1",
+      mode: "paper",
+      available: false,
+      blocker: `Lab HTTP ${labResponse.status}`,
+      liveTrading: false,
+      realOrderSubmission: false,
+    }, { status: 503, headers: { "Cache-Control": "no-store" } });
+  }
+  const payload = await labResponse.json<unknown>();
+  const performance = derivePaperEconomicPerformance(strategiesFromLabPayload(payload));
+  return Response.json({
+    schemaVersion: "paper-economic-performance-v1",
+    mode: "paper",
+    available: true,
+    minimumMeaningfulNetProfitEur: 0.5,
+    ...performance,
+    liveTrading: false,
+    realOrderSubmission: false,
+  }, { headers: { "Cache-Control": "no-store" } });
 }
 
 async function xauStatus(env: Env): Promise<Record<string, unknown>> {
@@ -106,21 +155,25 @@ function shouldRunBaseStrategy(controller: ScheduledController): boolean {
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const path = new URL(request.url).pathname;
+    const runtimeEnv = paperRuntimeEnv(env);
+    if (request.method === "GET" && path === "/api/paper/economics") {
+      return paperEconomicsResponse(request, runtimeEnv, ctx);
+    }
     if (request.method === "GET" && path === "/api/xau/status") {
-      return botState(paperRuntimeEnv(env)).fetch("https://bot/xau/status");
+      return botState(runtimeEnv).fetch("https://bot/xau/status");
     }
     if (request.method === "GET" && path === "/api/xau/readiness") {
-      return xauReadinessResponse(env);
+      return xauReadinessResponse(runtimeEnv);
     }
     if (request.method === "POST" && path === "/api/xau/cycle") {
-      if (!authorized(request, paperRuntimeEnv(env))) return new Response("Unauthorized", { status: 401 });
-      return botState(paperRuntimeEnv(env)).fetch("https://bot/xau/cycle", {
+      if (!authorized(request, runtimeEnv)) return new Response("Unauthorized", { status: 401 });
+      return botState(runtimeEnv).fetch("https://bot/xau/cycle", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: await request.text(),
       });
     }
-    return worker.fetch(request, paperRuntimeEnv(env), ctx);
+    return worker.fetch(request, runtimeEnv, ctx);
   },
 
   async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
