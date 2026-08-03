@@ -32,13 +32,16 @@ export const DEMO_HISTORY_OUTCOMES_CODE = `
     return { kind: 'open', label: 'RESULTADO PLANO' };
   };
 
+  const directOutcomeBadges = (summaryText) => [...summaryText.children]
+    .filter((node) => node instanceof HTMLElement && node.classList.contains('history-outcome'));
+
   const setHistoryOutcome = (card, kind, label, valueText = '') => {
     const nextText = '● ' + label + (valueText ? ' · ' + valueText : '');
     const summaryText = card.querySelector('.order-head > div:nth-child(2)');
     if (!summaryText) return;
-    let badge = summaryText.querySelector('.history-outcome');
-    const alreadyCurrent = card.classList.contains(kind) && badge && badge.className === 'history-outcome ' + kind && badge.textContent === nextText;
-    if (alreadyCurrent) return;
+    const badges = directOutcomeBadges(summaryText);
+    let badge = badges.shift() || null;
+    badges.forEach((duplicate) => duplicate.remove());
     card.classList.remove('winner', 'micro', 'loser', 'open');
     card.classList.add(kind);
     if (!badge) {
@@ -46,6 +49,7 @@ export const DEMO_HISTORY_OUTCOMES_CODE = `
       summaryText.appendChild(badge);
     }
     badge.className = 'history-outcome ' + kind;
+    badge.dataset.outcomeBadge = 'primary';
     badge.textContent = nextText;
   };
 
@@ -85,15 +89,19 @@ export const DEMO_HISTORY_OUTCOMES_CODE = `
     });
 
     cards.forEach((card) => {
-      if (card.querySelector('.history-outcome')) return;
       const side = card.querySelector('.side')?.textContent || '';
+      const summaryText = card.querySelector('.order-head > div:nth-child(2)');
+      const badges = summaryText ? directOutcomeBadges(summaryText) : [];
+      if (badges.length > 1) badges.slice(1).forEach((duplicate) => duplicate.remove());
+      if (badges.length) return;
       if (side.includes('COMPRA')) setHistoryOutcome(card, 'open', 'ABIERTA');
     });
   }
 
   const startHistoryOutcomes = () => {
     decorateHistoryOutcomes();
-    window.setInterval(decorateHistoryOutcomes, 2000);
+    if (window.__demoHistoryOutcomeInterval) window.clearInterval(window.__demoHistoryOutcomeInterval);
+    window.__demoHistoryOutcomeInterval = window.setInterval(decorateHistoryOutcomes, 2000);
   };
   window.addEventListener('load', () => setTimeout(startHistoryOutcomes, 250));
   document.addEventListener('click', (event) => {
