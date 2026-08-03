@@ -19,6 +19,18 @@ describe("DEMO PAPER performance forensics", () => {
     expect(html).toContain("las operaciones históricas se conservan íntegramente");
   });
 
+  it("uses economic wins and excludes cent-level positives from win rate", async () => {
+    const html = await (await demoDashboard()).text();
+
+    expect(html).toContain("MIN_MEANINGFUL_NET_PROFIT_EUR = 0.5");
+    expect(html).toContain("Microbeneficios actuales");
+    expect(html).toContain("Microbeneficios totales");
+    expect(html).toContain("Acierto económico actual");
+    expect(html).toContain("Tasa de acierto económica total");
+    expect(html).toContain("Los positivos inferiores son microbeneficios y no inflan la tasa de acierto");
+    expect(html).toContain("row.pnl >= MIN_MEANINGFUL_NET_PROFIT_EUR");
+  });
+
   it("requires a meaningful current-engine sample before any favorable interpretation", async () => {
     const html = await (await demoDashboard()).text();
 
