@@ -26,36 +26,31 @@ function input(now: number, bid = 2399.8, ask = 2400): XauPaperRuntimeInput {
 }
 
 describe("XAU/USD PAPER position lifecycle", () => {
-  it("opens only one position and lets the winner run", () => {
+  it("does not activate a penny-profit trailing exit", () => {
     const firstInput = input(1_000);
     let book = applyXauPaperPositionCycle(createXauPaperPositionBook(), buildXauUsdPaperInstruction(firstInput), firstInput);
-    expect(book.open?.side).toBe("buy");
-    expect(book.metrics.opened).toBe(1);
-
-    const rally = input(2_000, 2412, 2412.2);
-    const oldTarget = book.open?.targetPrice as number;
-    book = applyXauPaperPositionCycle(book, buildXauUsdPaperInstruction(rally), rally);
-    expect(book.metrics.opened).toBe(1);
-    expect(book.open?.trailingActive).toBe(true);
-    expect(book.open?.stopPrice).toBeGreaterThan(book.open?.entryPrice as number);
-    expect(book.open?.protectedPnlEur).toBeGreaterThan(0);
-    expect(book.open?.targetPrice).toBeGreaterThanOrEqual(oldTarget);
+    const tinyRally = input(2_000, 2412, 2412.2);
+    book = applyXauPaperPositionCycle(book, buildXauUsdPaperInstruction(tinyRally), tinyRally);
+    expect(book.open?.trailingActive).toBe(false);
+    expect(book.open?.protectedPnlEur).toBe(0);
+    expect(book.open?.unrealizedPnlEur).toBeLessThan(0.5);
   });
 
-  it("closes through the raised stop while preserving a positive result", () => {
+  it("lets a meaningful winner run and protects at least fifty cents net", () => {
     const firstInput = input(1_000);
     let book = applyXauPaperPositionCycle(createXauPaperPositionBook(), buildXauUsdPaperInstruction(firstInput), firstInput);
-    const rally = input(2_000, 2412, 2412.2);
+    const rally = input(2_000, 2600, 2600.2);
     book = applyXauPaperPositionCycle(book, buildXauUsdPaperInstruction(rally), rally);
-    const protectedStop = book.open?.stopPrice as number;
+    expect(book.open?.trailingActive).toBe(true);
+    expect(book.open?.protectedPnlEur).toBeGreaterThanOrEqual(0.5);
 
+    const protectedStop = book.open?.stopPrice as number;
     const reversal = input(3_000, protectedStop - 0.1, protectedStop + 0.1);
     reversal.cabinet.macro.highImpactEventWithinMinutes = 5;
     book = applyXauPaperPositionCycle(book, buildXauUsdPaperInstruction(reversal), reversal);
     expect(book.open).toBeNull();
-    expect(book.metrics.closed).toBe(1);
     expect(book.metrics.winners).toBe(1);
-    expect(book.metrics.realizedPnlEur).toBeGreaterThan(0);
-    expect(book.closed[0]?.closeReason).toBe("stop");
+    expect(book.metrics.realizedPnlEur).toBeGreaterThanOrEqual(0.5);
+    expect(book.closed[0]?.grossPnlEur).toBeGreaterThan(book.closed[0]?.realizedPnlEur as number);
   });
 });
