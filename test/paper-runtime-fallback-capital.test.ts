@@ -14,6 +14,7 @@ describe("PAPER runtime fallback capital", () => {
     expect(wrapper).toContain('INITIAL_CASH_EUR: "100"');
     expect(wrapper).toContain("paperRuntimeEnv(env)");
     expect(wrapper).toContain("worker.fetch(request, paperRuntimeEnv(env), ctx)");
-    expect(wrapper).toContain("worker.scheduled(controller, paperRuntimeEnv(env), ctx)");
+    expect(wrapper).toContain("const runtimeEnv = paperRuntimeEnv(env)");
+    expect(wrapper).toContain("worker.scheduled(controller, runtimeEnv, ctx)");
   });
 });
