@@ -84,6 +84,12 @@ async function xauStatus(env: Env): Promise<Record<string, unknown>> {
   return response.json<Record<string, unknown>>();
 }
 
+function latestXauCycle(status: Record<string, unknown>): Record<string, unknown> | null {
+  if (!Array.isArray(status.cycles) || status.cycles.length === 0) return null;
+  const cycle = status.cycles[0];
+  return cycle && typeof cycle === "object" ? cycle as Record<string, unknown> : null;
+}
+
 async function xauReadinessResponse(env: Env): Promise<Response> {
   const runtimeEnv = paperRuntimeEnv(env);
   const status = await xauStatus(runtimeEnv);
@@ -92,13 +98,21 @@ async function xauReadinessResponse(env: Env): Promise<Response> {
     ? status.metrics as Record<string, unknown>
     : {};
   const cycles = typeof metrics.cycles === "number" ? metrics.cycles : 0;
+  const approved = typeof metrics.approved === "number" ? metrics.approved : 0;
+  const blocked = typeof metrics.blocked === "number" ? metrics.blocked : 0;
+  const latestCycle = latestXauCycle(status);
+  const latestOutcome = typeof latestCycle?.outcome === "string" ? latestCycle.outcome : null;
+  const latestBlockers = Array.isArray(latestCycle?.blockers)
+    ? latestCycle.blockers.filter((value): value is string => typeof value === "string")
+    : [];
 
   return Response.json({
-    schemaVersion: "xau-usd-paper-readiness-v3",
+    schemaVersion: "xau-usd-paper-readiness-v4",
     market: "XAU/USD",
     mode: "paper",
     operational: true,
     marketObservationEnabled: true,
+    entryProfile: externalFeedConfigured ? "full-technical-macro" : "strict-technical-paper-fallback",
     feedMode: externalFeedConfigured ? "external-plus-native-fast-price" : "native-kraken-xaut-proxy",
     externalFeedConfigured,
     automaticCycleEnabled: true,
@@ -108,11 +122,16 @@ async function xauReadinessResponse(env: Env): Promise<Response> {
     decisionReanalysisSeconds: 60,
     baseStrategyCycleMinutes: 5,
     cyclesObserved: cycles,
+    approvedCycles: approved,
+    blockedCycles: blocked,
+    latestOutcome,
+    latestBlockers,
     status,
-    tradingReady: externalFeedConfigured,
-    blockers: externalFeedConfigured
-      ? []
-      : ["El precio y la posición se vigilan cada 3 segundos con XAUT/USD de Kraken, pero las nuevas entradas mantienen veto PAPER hasta recibir DXY, rendimientos reales y calendario macro frescos."],
+    paperEntryCapable: true,
+    paperEntryRequirements: externalFeedConfigured
+      ? ["Consenso técnico y macro completo", "evidencia fresca", "asimetría y spread válidos"]
+      : ["Unanimidad técnica 100 %", "spread <= 0,05 %", "asimetría >= 2,5R", "sin veto de riesgo"],
+    blockers: latestOutcome === "blocked" ? latestBlockers : [],
     liveTrading: false,
     realOrderSubmission: false,
   }, { headers: { "Cache-Control": "no-store" } });
