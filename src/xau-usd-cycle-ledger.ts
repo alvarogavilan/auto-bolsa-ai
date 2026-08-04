@@ -5,7 +5,7 @@ export interface XauPaperCycleRecord {
   cycleId: string;
   observedAt: number;
   instruction: XauPaperInstruction;
-  outcome: "approved" | "blocked";
+  outcome: "approved" | "blocked" | "observed";
   blockers: string[];
   liveTrading: false;
   realOrderSubmission: false;
@@ -17,6 +17,8 @@ export interface XauPaperCycleLedger {
   cycles: XauPaperCycleRecord[];
   metrics: {
     cycles: number;
+    decisionCycles: number;
+    monitoringSamples: number;
     approved: number;
     blocked: number;
     staleQuotes: number;
@@ -32,7 +34,17 @@ export function createXauPaperCycleLedger(): XauPaperCycleLedger {
     schemaVersion: "xau-usd-paper-cycle-ledger-v1",
     market: "XAU/USD",
     cycles: [],
-    metrics: { cycles: 0, approved: 0, blocked: 0, staleQuotes: 0, macroLockouts: 0, weakConsensus: 0, invalidQuotes: 0 },
+    metrics: {
+      cycles: 0,
+      decisionCycles: 0,
+      monitoringSamples: 0,
+      approved: 0,
+      blocked: 0,
+      staleQuotes: 0,
+      macroLockouts: 0,
+      weakConsensus: 0,
+      invalidQuotes: 0,
+    },
     liveTrading: false,
   };
 }
@@ -41,13 +53,15 @@ export function appendXauPaperCycle(
   ledger: XauPaperCycleLedger,
   instruction: XauPaperInstruction,
 ): XauPaperCycleLedger {
-  const blockers = [...instruction.blockers];
+  const monitoring = instruction.cycleKind === "monitoring";
+  const blockers = monitoring ? [] : [...instruction.blockers];
+  const current = ledger.metrics;
   const record: XauPaperCycleRecord = {
     schemaVersion: "xau-usd-paper-cycle-v1",
-    cycleId: `${instruction.createdAt}:${ledger.metrics.cycles + 1}`,
+    cycleId: `${instruction.createdAt}:${(current.cycles ?? 0) + 1}`,
     observedAt: instruction.createdAt,
     instruction: structuredClone(instruction),
-    outcome: instruction.allowed ? "approved" : "blocked",
+    outcome: monitoring ? "observed" : instruction.allowed ? "approved" : "blocked",
     blockers,
     liveTrading: false,
     realOrderSubmission: false,
@@ -57,13 +71,15 @@ export function appendXauPaperCycle(
     ...ledger,
     cycles: [record, ...ledger.cycles].slice(0, 500),
     metrics: {
-      cycles: ledger.metrics.cycles + 1,
-      approved: ledger.metrics.approved + (instruction.allowed ? 1 : 0),
-      blocked: ledger.metrics.blocked + (instruction.allowed ? 0 : 1),
-      staleQuotes: ledger.metrics.staleQuotes + (text.includes("caducada") ? 1 : 0),
-      macroLockouts: ledger.metrics.macroLockouts + (text.includes("evento macro") ? 1 : 0),
-      weakConsensus: ledger.metrics.weakConsensus + (text.includes("consenso") ? 1 : 0),
-      invalidQuotes: ledger.metrics.invalidQuotes + (text.includes("cotización") && text.includes("inválida") ? 1 : 0),
+      cycles: (current.cycles ?? 0) + 1,
+      decisionCycles: (current.decisionCycles ?? ((current.approved ?? 0) + (current.blocked ?? 0))) + (monitoring ? 0 : 1),
+      monitoringSamples: (current.monitoringSamples ?? 0) + (monitoring ? 1 : 0),
+      approved: (current.approved ?? 0) + (!monitoring && instruction.allowed ? 1 : 0),
+      blocked: (current.blocked ?? 0) + (!monitoring && !instruction.allowed ? 1 : 0),
+      staleQuotes: (current.staleQuotes ?? 0) + (!monitoring && text.includes("caducada") ? 1 : 0),
+      macroLockouts: (current.macroLockouts ?? 0) + (!monitoring && text.includes("evento macro") ? 1 : 0),
+      weakConsensus: (current.weakConsensus ?? 0) + (!monitoring && text.includes("consenso") ? 1 : 0),
+      invalidQuotes: (current.invalidQuotes ?? 0) + (!monitoring && text.includes("cotización") && text.includes("inválida") ? 1 : 0),
     },
     liveTrading: false,
   };
