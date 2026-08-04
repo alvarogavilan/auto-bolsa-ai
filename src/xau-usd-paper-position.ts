@@ -114,30 +114,34 @@ export function createXauPaperPositionBook(): XauPaperPositionBook {
   };
 }
 
-function reconcileTreasury(book: XauPaperPositionBook, observedAt: number, event: XauPaperEquityPoint["event"]): void {
+function sanitizeEquityCurve(points: XauPaperEquityPoint[]): XauPaperEquityPoint[] {
+  const seen = new Set<string>();
+  return [...points]
+    .filter((point) => {
+      const key = [
+        point.observedAt,
+        point.cashEur,
+        point.committedCapitalEur,
+        point.realizedPnlEur,
+        point.unrealizedPnlEur,
+        point.equityEur,
+        point.event,
+        point.positionId ?? "",
+      ].join("|");
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .sort((left, right) => left.observedAt - right.observedAt)
+    .slice(-MAX_EQUITY_POINTS);
+}
+
+function refreshTreasurySummary(book: XauPaperPositionBook): void {
   const prior = book.treasury ?? emptyTreasury();
   const committed = book.open?.budgetEur ?? 0;
   const realized = book.metrics.realizedPnlEur;
   const unrealized = book.open?.unrealizedPnlEur ?? 0;
   const cash = rounded(PAPER_TREASURY_EUR + realized - committed);
-  const equity = rounded(PAPER_TREASURY_EUR + realized + unrealized);
-  const point: XauPaperEquityPoint = {
-    observedAt,
-    cashEur: cash,
-    committedCapitalEur: committed,
-    realizedPnlEur: realized,
-    unrealizedPnlEur: unrealized,
-    equityEur: equity,
-    event,
-    positionId: book.open?.id ?? null,
-  };
-  const last = prior.equityCurve.at(-1);
-  const curve = last
-    && last.observedAt === point.observedAt
-    && last.equityEur === point.equityEur
-    && last.positionId === point.positionId
-    ? prior.equityCurve
-    : [...prior.equityCurve, point].slice(-MAX_EQUITY_POINTS);
   book.treasury = {
     schemaVersion: "xau-paper-treasury-v1",
     initialCapitalEur: PAPER_TREASURY_EUR,
@@ -145,11 +149,27 @@ function reconcileTreasury(book: XauPaperPositionBook, observedAt: number, event
     committedCapitalEur: committed,
     realizedPnlEur: realized,
     unrealizedPnlEur: unrealized,
-    equityEur: equity,
+    equityEur: rounded(PAPER_TREASURY_EUR + realized + unrealized),
     availableCapitalEur: Math.max(0, cash),
-    equityCurve: curve,
+    equityCurve: sanitizeEquityCurve(prior.equityCurve ?? []),
     migratedExistingPosition: prior.migratedExistingPosition,
   };
+}
+
+function reconcileTreasury(book: XauPaperPositionBook, observedAt: number, event: XauPaperEquityPoint["event"]): void {
+  refreshTreasurySummary(book);
+  const prior = book.treasury;
+  const point: XauPaperEquityPoint = {
+    observedAt,
+    cashEur: prior.cashEur,
+    committedCapitalEur: prior.committedCapitalEur,
+    realizedPnlEur: prior.realizedPnlEur,
+    unrealizedPnlEur: prior.unrealizedPnlEur,
+    equityEur: prior.equityEur,
+    event,
+    positionId: book.open?.id ?? null,
+  };
+  book.treasury.equityCurve = sanitizeEquityCurve([...prior.equityCurve, point]);
 }
 
 export function parseXauPaperPositionBook(raw: string | null): XauPaperPositionBook {
@@ -157,9 +177,14 @@ export function parseXauPaperPositionBook(raw: string | null): XauPaperPositionB
   try {
     const value = JSON.parse(raw) as XauPaperPositionBook;
     if (value.schemaVersion !== "xau-usd-paper-position-book-v1" || value.market !== "XAU/USD") return createXauPaperPositionBook();
+    const legacy = !value.treasury;
     const book = { ...value, treasury: value.treasury ?? emptyTreasury() };
-    if (!value.treasury && book.open) book.treasury.migratedExistingPosition = true;
-    reconcileTreasury(book, book.open?.lastMarkedAt ?? Date.now(), value.treasury ? "mark" : "migration");
+    if (legacy && book.open) {
+      book.treasury.migratedExistingPosition = true;
+      reconcileTreasury(book, book.open.lastMarkedAt, "migration");
+    } else {
+      refreshTreasurySummary(book);
+    }
     return book;
   } catch {
     return createXauPaperPositionBook();
