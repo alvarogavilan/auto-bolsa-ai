@@ -6,7 +6,7 @@ const source = readFileSync("src/index-paper-capital.ts", "utf8");
 describe("XAU/USD PAPER readiness endpoint", () => {
   it("exposes fast price monitoring without enabling LIVE", () => {
     expect(source).toContain('path === "/api/xau/readiness"');
-    expect(source).toContain('schemaVersion: "xau-usd-paper-readiness-v5"');
+    expect(source).toContain('schemaVersion: "xau-usd-paper-readiness-v6"');
     expect(source).toContain('schedulerCron: "* * * * *"');
     expect(source).toContain("priceMonitoringIntervalSeconds");
     expect(source).toContain("baseStrategyCycleMinutes: 5");
@@ -32,5 +32,14 @@ describe("XAU/USD PAPER readiness endpoint", () => {
     expect(source).toContain("latestDecisionOutcome");
     expect(source).toContain("latestDecisionBlockers");
     expect(source).toContain('blockers: latestDecisionOutcome === "blocked" ? latestDecisionBlockers : []');
+  });
+
+  it("aggregates the dominant blocker from recent real decisions", () => {
+    expect(source).toContain("XAU_BLOCKER_DIAGNOSTIC_WINDOW = 50");
+    expect(source).toContain("xauBlockerDiagnostics");
+    expect(source).toContain("dominantBlocker");
+    expect(source).toContain("dominantBlockerCount");
+    expect(source).toContain("blockerFrequency");
+    expect(source).toContain("blockerDiagnostics,");
   });
 });
