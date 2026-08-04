@@ -49,11 +49,11 @@ describe("XAU/USD PAPER position lifecycle", () => {
     expect(migrated.treasury.equityCurve.at(-1)?.event).toBe("migration");
   });
 
-  it("does not activate a penny-profit trailing exit", () => {
+  it("does not activate protection before the move reaches one risk unit", () => {
     const firstInput = input(1_000);
     let book = applyXauPaperPositionCycle(createXauPaperPositionBook(), buildXauUsdPaperInstruction(firstInput), firstInput);
-    const tinyRally = input(2_000, 2412, 2412.2);
-    book = applyXauPaperPositionCycle(book, buildXauUsdPaperInstruction(tinyRally), tinyRally);
+    const subOneRMove = input(2_000, 2408, 2408.2);
+    book = applyXauPaperPositionCycle(book, buildXauUsdPaperInstruction(subOneRMove), subOneRMove);
     expect(book.open?.trailingActive).toBe(false);
     expect(book.open?.protectedPnlEur).toBe(0);
     expect(book.open?.unrealizedPnlEur).toBeLessThan(0.5);
