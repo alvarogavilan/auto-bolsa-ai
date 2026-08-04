@@ -196,8 +196,11 @@ async function submitXauCycle(env: Env, input: XauPaperRuntimeInput): Promise<vo
   if (!response.ok && response.status !== 202) throw new Error(`XAU cycle HTTP ${response.status}`);
 }
 
-async function runXauFastMonitoringWindow(env: Env): Promise<void> {
+async function runXauDecisionCycle(env: Env): Promise<void> {
   await submitXauCycle(env, await xauDecisionInput(env));
+}
+
+async function runXauFastMonitoringSamples(env: Env): Promise<void> {
   for (let sample = 0; sample < XAU_FAST_SAMPLES_PER_MINUTE; sample += 1) {
     await sleep(XAU_FAST_INTERVAL_MS);
     try {
@@ -233,6 +236,7 @@ export default {
   async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
     const runtimeEnv = paperRuntimeEnv(env);
     if (shouldRunBaseStrategy(controller)) await worker.scheduled(controller, runtimeEnv, ctx);
-    ctx.waitUntil(runXauFastMonitoringWindow(runtimeEnv).catch(() => undefined));
+    await runXauDecisionCycle(runtimeEnv);
+    ctx.waitUntil(runXauFastMonitoringSamples(runtimeEnv));
   },
 };
