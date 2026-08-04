@@ -22,21 +22,21 @@ jobs:
     env:
       WORKER_BASE_URL: https://auto-bolsa-ai.k8mwkbp68y.workers.dev
     steps:
-      - name: Wait for deployed readiness schema
+      - name: Wait for a persisted XAU decision
         shell: bash
         run: |
           set -euo pipefail
           for attempt in $(seq 1 30); do
             if curl --fail --silent --show-error --connect-timeout 10 --max-time 30 \
               "$WORKER_BASE_URL/api/xau/readiness" -o xau-readiness.json; then
-              schema="$(node -e "const x=require('./xau-readiness.json'); process.stdout.write(String(x.schemaVersion||''))")"
-              if [ "$schema" = "xau-usd-paper-readiness-v6" ]; then
+              read -r schema decisions < <(node -e "const x=require('./xau-readiness.json'); console.log(String(x.schemaVersion||''), Number(x.decisionCycles||0))")
+              if [ "$schema" = "xau-usd-paper-readiness-v6" ] && [ "$decisions" -gt 0 ]; then
                 exit 0
               fi
             fi
             sleep 10
           done
-          echo "Production did not expose readiness v6 within the bounded deployment window."
+          echo "Production did not persist an XAU decision within the bounded verification window."
           exit 1
 
       - name: Fetch production status
@@ -79,6 +79,7 @@ jobs:
             realOrderSubmission: readiness.realOrderSubmission,
           };
           if (summary.mode !== 'paper') throw new Error(`Unexpected mode: ${summary.mode}`);
+          if (!Number.isFinite(summary.decisionCycles) || summary.decisionCycles < 1) throw new Error('No persisted XAU decision cycle.');
           if (summary.liveTrading !== false) throw new Error('LIVE must remain disabled.');
           if (summary.realOrderSubmission !== false) throw new Error('Real order submission must remain disabled.');
           fs.writeFileSync('xau-production-summary.json', JSON.stringify(summary, null, 2));
