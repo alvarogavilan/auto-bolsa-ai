@@ -11,9 +11,10 @@ describe("DEMO XAU live EUR result", () => {
     expect(source).toContain("invested + pnl");
   });
 
-  it("refreshes production every second without fabricating ticks", () => {
+  it("refreshes the persisted production state every second", () => {
     expect(source).toContain("setInterval(refreshXau, 1000)");
-    expect(source).toContain("no se fabrican movimientos entre ticks");
+    expect(source).toContain("fetch('/api/xau/status', {cache:'no-store'})");
+    expect(source).toContain("último tick");
   });
 
   it("keeps real trading disabled", () => {
