@@ -47,7 +47,7 @@ function money(value: number): number {
 }
 
 export function buildXauUsdPaperInstruction(input: XauPaperRuntimeInput): XauPaperInstruction {
-  const cycleKind = input.cycleKind ?? "decision";
+  const cycleKind = input.cycleKind ?? (input.quote.source.toLowerCase().includes("fast proxy") ? "monitoring" : "decision");
   const cabinetDecision = evaluateXauUsdCabinet(input.cabinet);
   const blockers = [...cabinetDecision.vetoes];
   const quoteAgeMs = Math.max(0, input.now - input.quote.observedAt);
