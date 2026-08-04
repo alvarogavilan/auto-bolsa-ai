@@ -150,7 +150,7 @@ export async function demoDashboard(): Promise<Response> {
   const response = standaloneDemoDashboard();
   const liveScript = DEMO_LIVE_PRICES_SCRIPT.replace(
     "})();\n</script>",
-    `${DEMO_SINGLE_TREASURY_CODE}\n${DEMO_HISTORY_EVIDENCE_INTEGRITY_CODE}\n${DEMO_HISTORY_OUTCOMES_CODE}\n${DEMO_OPERATION_DOSSIERS_CODE}\n${DEMO_PERFORMANCE_FORENSICS_CODE}\n${DEMO_ZERO_POSITION_DIAGNOSTICS_CODE}\n${DEMO_FLATLINE_WATCHDOG_CODE}\n${DEMO_GLOBAL_LOSS_RECOVERY_CODE}\n})();\n</script>`,
+    `${DEMO_SINGLE_TREASURY_CODE}\n${DEMO_HISTORY_EVIDENCE_INTEGRITY_CODE}\n${DEMO_HISTORY_OUTCOMES_CODE}\n${DEMO_OPERATION_DOSSIERS_CODE}\n${DEMO_PERFORMANCE_FORENSICS_CODE}\n${DEMO_ZERO_POSITION_DIAGNOSTICS_CODE}\n${DEMO_FLATLINE_WATCHDOG_CODE}\n${DEMO_GLOBAL_LOSS_RECOVERY_CODE}\n${DEMO_XAU_POSITION_CODE}\n})();\n</script>`,
   );
   let html = await response.text();
   html = html
@@ -163,7 +163,7 @@ export async function demoDashboard(): Promise<Response> {
     .replace("Mismo estado contable de Resumen, sin bloques heredados.", "Estado exacto del mismo capital mostrado en Resumen.")
     .replace("Cerradas · G/P", "Cerradas · G/P netas")
     .replace("JSON.stringify", "String")
-    .replace("</body>", `${liveScript}${DEMO_XAU_POSITION_CODE}</body>`);
+    .replace("</body>", `${liveScript}</body>`);
 
   const headers = new Headers(response.headers);
   headers.set("Content-Type", "text/html; charset=utf-8");
