@@ -12,6 +12,7 @@ export { BotState, ResearchLabState, LiveExecutorState };
 
 const XAU_FAST_INTERVAL_MS = 3_000;
 const XAU_FAST_SAMPLES_PER_MINUTE = 19;
+const XAU_BLOCKER_DIAGNOSTIC_WINDOW = 50;
 
 function paperRuntimeEnv(env: Env): Env {
   if (env.INITIAL_CASH_EUR) return env;
@@ -80,15 +81,48 @@ async function xauStatus(env: Env): Promise<Record<string, unknown>> {
   return response.json<Record<string, unknown>>();
 }
 
+function isXauDecisionCycle(entry: unknown): entry is Record<string, unknown> {
+  if (!entry || typeof entry !== "object") return false;
+  const instruction = (entry as Record<string, unknown>).instruction;
+  if (!instruction || typeof instruction !== "object") return true;
+  return (instruction as Record<string, unknown>).cycleKind !== "monitoring";
+}
+
 function latestXauDecisionCycle(status: Record<string, unknown>): Record<string, unknown> | null {
   if (!Array.isArray(status.cycles)) return null;
-  const cycle = status.cycles.find((entry) => {
-    if (!entry || typeof entry !== "object") return false;
-    const instruction = (entry as Record<string, unknown>).instruction;
-    if (!instruction || typeof instruction !== "object") return true;
-    return (instruction as Record<string, unknown>).cycleKind !== "monitoring";
-  });
-  return cycle && typeof cycle === "object" ? cycle as Record<string, unknown> : null;
+  return status.cycles.find(isXauDecisionCycle) ?? null;
+}
+
+function xauBlockerDiagnostics(status: Record<string, unknown>): {
+  sampleSize: number;
+  blockedDecisions: number;
+  dominantBlocker: string | null;
+  dominantBlockerCount: number;
+  blockerFrequency: Array<{ blocker: string; count: number }>;
+} {
+  if (!Array.isArray(status.cycles)) {
+    return { sampleSize: 0, blockedDecisions: 0, dominantBlocker: null, dominantBlockerCount: 0, blockerFrequency: [] };
+  }
+  const decisions = status.cycles.filter(isXauDecisionCycle).slice(0, XAU_BLOCKER_DIAGNOSTIC_WINDOW);
+  const blocked = decisions.filter((cycle) => cycle.outcome === "blocked");
+  const counts = new Map<string, number>();
+  for (const cycle of blocked) {
+    if (!Array.isArray(cycle.blockers)) continue;
+    for (const blocker of cycle.blockers) {
+      if (typeof blocker !== "string" || !blocker.trim()) continue;
+      counts.set(blocker, (counts.get(blocker) ?? 0) + 1);
+    }
+  }
+  const blockerFrequency = [...counts.entries()]
+    .map(([blocker, count]) => ({ blocker, count }))
+    .sort((left, right) => right.count - left.count || left.blocker.localeCompare(right.blocker));
+  return {
+    sampleSize: decisions.length,
+    blockedDecisions: blocked.length,
+    dominantBlocker: blockerFrequency[0]?.blocker ?? null,
+    dominantBlockerCount: blockerFrequency[0]?.count ?? 0,
+    blockerFrequency,
+  };
 }
 
 async function xauReadinessResponse(env: Env): Promise<Response> {
@@ -108,9 +142,10 @@ async function xauReadinessResponse(env: Env): Promise<Response> {
   const latestDecisionBlockers = Array.isArray(latestDecisionCycle?.blockers)
     ? latestDecisionCycle.blockers.filter((value): value is string => typeof value === "string")
     : [];
+  const blockerDiagnostics = xauBlockerDiagnostics(status);
 
   return Response.json({
-    schemaVersion: "xau-usd-paper-readiness-v5",
+    schemaVersion: "xau-usd-paper-readiness-v6",
     market: "XAU/USD",
     mode: "paper",
     operational: true,
@@ -131,6 +166,7 @@ async function xauReadinessResponse(env: Env): Promise<Response> {
     blockedDecisionCycles: blocked,
     latestDecisionOutcome,
     latestDecisionBlockers,
+    blockerDiagnostics,
     status,
     paperEntryCapable: true,
     paperEntryRequirements: externalFeedConfigured
