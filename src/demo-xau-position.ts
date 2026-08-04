@@ -1,8 +1,10 @@
+import { DEMO_MARKET_UNIVERSE_CODE, DEMO_MARKET_UNIVERSE_STYLE } from "./demo-market-universe";
+
 export const DEMO_XAU_POSITION_STYLE = String.raw`
 <style>
 #xau-paper-panel{margin:16px 0;padding:16px;border:1px solid #8b6f22;border-radius:16px;background:linear-gradient(135deg,rgba(139,111,34,.18),rgba(21,28,50,.96))}
 #xau-paper-panel h2{margin:0 0 10px}#xau-paper-panel .xau-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:8px}.xau-metric{padding:10px;border-radius:12px;background:rgba(7,11,24,.58);border:1px solid rgba(255,255,255,.09)}.xau-metric span{display:block;color:#aeb8d4;font-size:12px}.xau-metric strong{display:block;margin-top:4px}.xau-ok{color:#5ee6a8}.xau-warn{color:#ffd86b}.xau-negative{color:#ff8a8a}.xau-note{margin-top:10px;color:#c5cde3;font-size:13px}
-</style>`;
+</style>` + DEMO_MARKET_UNIVERSE_STYLE;
 
 export const DEMO_XAU_POSITION_CODE = String.raw`
 (() => {
@@ -68,4 +70,4 @@ export const DEMO_XAU_POSITION_CODE = String.raw`
 
   refreshXau();
   setInterval(refreshXau, 2500);
-})();`;
+})();` + DEMO_MARKET_UNIVERSE_CODE;
