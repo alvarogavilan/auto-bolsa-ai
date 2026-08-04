@@ -5,10 +5,10 @@ const dashboard = readFileSync(new URL("../src/demo-dashboard.ts", import.meta.u
 const panel = readFileSync(new URL("../src/demo-xau-position.ts", import.meta.url), "utf8");
 
 describe("XAU PAPER visible demo integration", () => {
-  it("injects the XAU panel into the public demo", () => {
+  it("injects the XAU panel into the public demo single render pipeline", () => {
     expect(dashboard).toContain("DEMO_XAU_POSITION_STYLE");
-    expect(dashboard).toContain("DEMO_XAU_POSITION_CODE");
-    expect(dashboard).toContain("${DEMO_XAU_POSITION_CODE}</body>");
+    expect(dashboard).toContain("${DEMO_XAU_POSITION_CODE}\\n})();\\n</script>");
+    expect(panel).not.toContain("<script>");
   });
 
   it("reads the persisted XAU position endpoint without enabling LIVE", () => {
