@@ -23,7 +23,9 @@ function modernBook(): XauPaperPositionBook {
       lastMarkedAt: 300,
       trailingActive: false,
       protectedPnlEur: 0,
+      grossUnrealizedPnlEur: -0.001967,
       unrealizedPnlEur: -0.051967,
+      netBreakEvenPrice: 4045.765702,
     },
     closed: [],
     metrics: {
