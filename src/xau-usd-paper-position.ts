@@ -28,7 +28,9 @@ export interface XauPaperPosition {
   lastMarkedAt: number;
   trailingActive: boolean;
   protectedPnlEur: number;
+  grossUnrealizedPnlEur: number;
   unrealizedPnlEur: number;
+  netBreakEvenPrice: number;
 }
 
 export interface XauClosedPaperPosition extends XauPaperPosition {
@@ -172,6 +174,39 @@ function reconcileTreasury(book: XauPaperPositionBook, observedAt: number, event
   book.treasury.equityCurve = sanitizeEquityCurve([...prior.equityCurve, point]);
 }
 
+function grossPnlAt(position: XauPaperPosition, price: number): number {
+  const direction = position.side === "buy" ? 1 : -1;
+  return rounded((price - position.entryPrice) * position.quantityOz * direction);
+}
+
+function netPnlAt(position: XauPaperPosition, price: number): number {
+  return rounded(grossPnlAt(position, price) - position.estimatedRoundTripCostEur);
+}
+
+function priceForNetProfit(position: XauPaperPosition, netProfitEur: number): number {
+  const grossNeeded = netProfitEur + position.estimatedRoundTripCostEur;
+  const move = grossNeeded / position.quantityOz;
+  return position.side === "buy" ? position.entryPrice + move : position.entryPrice - move;
+}
+
+function normalizeOpenPosition(position: XauPaperPosition): XauPaperPosition {
+  const netBreakEvenPrice = Number.isFinite(position.netBreakEvenPrice)
+    ? position.netBreakEvenPrice
+    : priceForNetProfit(position, 0);
+  const grossUnrealizedPnlEur = Number.isFinite(position.grossUnrealizedPnlEur)
+    ? position.grossUnrealizedPnlEur
+    : grossPnlAt(position, position.lastMarkPrice);
+  const protectedPnlEur = Math.max(0, netPnlAt(position, position.stopPrice));
+  const netProtectionIsReal = protectedPnlEur > 0;
+  return {
+    ...position,
+    netBreakEvenPrice: rounded(netBreakEvenPrice),
+    grossUnrealizedPnlEur: rounded(grossUnrealizedPnlEur),
+    protectedPnlEur: rounded(protectedPnlEur),
+    trailingActive: Boolean(position.trailingActive && netProtectionIsReal),
+  };
+}
+
 export function parseXauPaperPositionBook(raw: string | null): XauPaperPositionBook {
   if (!raw) return createXauPaperPositionBook();
   try {
@@ -179,6 +214,7 @@ export function parseXauPaperPositionBook(raw: string | null): XauPaperPositionB
     if (value.schemaVersion !== "xau-usd-paper-position-book-v1" || value.market !== "XAU/USD") return createXauPaperPositionBook();
     const legacy = !value.treasury;
     const book = { ...value, treasury: value.treasury ?? emptyTreasury() };
+    if (book.open) book.open = normalizeOpenPosition(book.open);
     if (legacy && book.open) {
       book.treasury.migratedExistingPosition = true;
       reconcileTreasury(book, book.open.lastMarkedAt, "migration");
@@ -195,27 +231,12 @@ function markPrice(position: XauPaperPosition, input: XauPaperRuntimeInput): num
   return position.side === "buy" ? input.quote.bid : input.quote.ask;
 }
 
-function grossPnlAt(position: XauPaperPosition, price: number): number {
-  const direction = position.side === "buy" ? 1 : -1;
-  return rounded((price - position.entryPrice) * position.quantityOz * direction);
-}
-
-function netPnlAt(position: XauPaperPosition, price: number): number {
-  return rounded(grossPnlAt(position, price) - position.estimatedRoundTripCostEur);
-}
-
-function priceForNetProfit(position: XauPaperPosition, netProfitEur: number): number {
-  const grossNeeded = netProfitEur + position.estimatedRoundTripCostEur;
-  const move = grossNeeded / position.quantityOz;
-  return position.side === "buy" ? position.entryPrice + move : position.entryPrice - move;
-}
-
 function openPosition(instruction: XauPaperInstruction, availableCapitalEur: number): XauPaperPosition | null {
   if (!instruction.allowed || instruction.action === "hold" || instruction.referencePrice === null || instruction.stopPrice === null || instruction.initialTargetPrice === null) return null;
   if (instruction.budgetEur <= 0 || instruction.budgetEur > availableCapitalEur) return null;
   const quantityOz = instruction.budgetEur / instruction.referencePrice;
   const estimatedRoundTripCostEur = rounded(instruction.budgetEur * ROUND_TRIP_COST_PCT);
-  return {
+  const base: XauPaperPosition = {
     id: `xau-${instruction.createdAt}-${instruction.action}`,
     side: instruction.action,
     openedAt: instruction.createdAt,
@@ -233,8 +254,12 @@ function openPosition(instruction: XauPaperInstruction, availableCapitalEur: num
     lastMarkedAt: instruction.createdAt,
     trailingActive: false,
     protectedPnlEur: 0,
+    grossUnrealizedPnlEur: 0,
     unrealizedPnlEur: -estimatedRoundTripCostEur,
+    netBreakEvenPrice: 0,
   };
+  base.netBreakEvenPrice = rounded(priceForNetProfit(base, 0));
+  return base;
 }
 
 function manageOpenPosition(position: XauPaperPosition, input: XauPaperRuntimeInput): XauClosedPaperPosition | null {
@@ -243,27 +268,32 @@ function manageOpenPosition(position: XauPaperPosition, input: XauPaperRuntimeIn
   position.lastMarkedAt = input.quote.observedAt;
   position.highWaterPrice = Math.max(position.highWaterPrice, price);
   position.lowWaterPrice = Math.min(position.lowWaterPrice, price);
+  position.netBreakEvenPrice = rounded(priceForNetProfit(position, 0));
   const risk = Math.abs(position.entryPrice - position.initialStopPrice);
   const favourableMove = position.side === "buy" ? price - position.entryPrice : position.entryPrice - price;
+  const currentGrossPnl = grossPnlAt(position, price);
   const currentNetPnl = netPnlAt(position, price);
+  const netBreakEvenReached = currentNetPnl >= 0;
 
-  const grossBreakEvenReached = currentNetPnl >= -position.estimatedRoundTripCostEur;
-  if (risk > 0 && favourableMove >= risk * TRAILING_ACTIVATION_R && grossBreakEvenReached) {
+  if (!netBreakEvenReached) {
+    position.trailingActive = false;
+  } else if (risk > 0 && favourableMove >= risk * TRAILING_ACTIVATION_R) {
     position.trailingActive = true;
-    const breakEvenPrice = priceForNetProfit(position, -position.estimatedRoundTripCostEur);
+    const netBreakEvenPrice = priceForNetProfit(position, 0);
     if (position.side === "buy") {
       const locked = position.entryPrice + risk * LOCKED_PROFIT_R;
       const trailing = position.highWaterPrice - risk * TRAILING_DISTANCE_R;
-      position.stopPrice = Math.max(position.stopPrice, breakEvenPrice, locked, trailing);
+      position.stopPrice = Math.max(position.stopPrice, netBreakEvenPrice, locked, trailing);
       position.targetPrice = Math.max(position.targetPrice, position.highWaterPrice + risk);
     } else {
       const locked = position.entryPrice - risk * LOCKED_PROFIT_R;
       const trailing = position.lowWaterPrice + risk * TRAILING_DISTANCE_R;
-      position.stopPrice = Math.min(position.stopPrice, breakEvenPrice, locked, trailing);
+      position.stopPrice = Math.min(position.stopPrice, netBreakEvenPrice, locked, trailing);
       position.targetPrice = Math.min(position.targetPrice, position.lowWaterPrice - risk);
     }
   }
 
+  position.grossUnrealizedPnlEur = currentGrossPnl;
   position.unrealizedPnlEur = currentNetPnl;
   position.protectedPnlEur = position.trailingActive ? Math.max(0, netPnlAt(position, position.stopPrice)) : 0;
   const stopped = position.side === "buy" ? price <= position.stopPrice : price >= position.stopPrice;
@@ -278,6 +308,7 @@ function manageOpenPosition(position: XauPaperPosition, input: XauPaperRuntimeIn
     grossPnlEur,
     realizedPnlEur,
     closeReason: "stop",
+    grossUnrealizedPnlEur: 0,
     unrealizedPnlEur: 0,
   };
 }
@@ -285,6 +316,7 @@ function manageOpenPosition(position: XauPaperPosition, input: XauPaperRuntimeIn
 export function applyXauPaperPositionCycle(current: XauPaperPositionBook, instruction: XauPaperInstruction, input: XauPaperRuntimeInput): XauPaperPositionBook {
   const book: XauPaperPositionBook = JSON.parse(JSON.stringify(current)) as XauPaperPositionBook;
   if (!book.treasury) book.treasury = emptyTreasury();
+  if (book.open) book.open = normalizeOpenPosition(book.open);
   let event: XauPaperEquityPoint["event"] = "mark";
   if (book.open) {
     const closed = manageOpenPosition(book.open, input);
