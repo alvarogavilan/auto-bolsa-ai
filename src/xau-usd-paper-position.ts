@@ -22,6 +22,8 @@ export interface XauPaperPosition {
   targetPrice: number;
   highWaterPrice: number;
   lowWaterPrice: number;
+  lastMarkPrice: number;
+  lastMarkedAt: number;
   trailingActive: boolean;
   protectedPnlEur: number;
   unrealizedPnlEur: number;
@@ -118,6 +120,8 @@ function openPosition(instruction: XauPaperInstruction): XauPaperPosition | null
     targetPrice: instruction.initialTargetPrice,
     highWaterPrice: instruction.referencePrice,
     lowWaterPrice: instruction.referencePrice,
+    lastMarkPrice: instruction.referencePrice,
+    lastMarkedAt: instruction.createdAt,
     trailingActive: false,
     protectedPnlEur: 0,
     unrealizedPnlEur: -estimatedRoundTripCostEur,
@@ -126,6 +130,8 @@ function openPosition(instruction: XauPaperInstruction): XauPaperPosition | null
 
 function manageOpenPosition(position: XauPaperPosition, input: XauPaperRuntimeInput): XauClosedPaperPosition | null {
   const price = markPrice(position, input);
+  position.lastMarkPrice = price;
+  position.lastMarkedAt = input.quote.observedAt;
   position.highWaterPrice = Math.max(position.highWaterPrice, price);
   position.lowWaterPrice = Math.min(position.lowWaterPrice, price);
   const risk = Math.abs(position.entryPrice - position.initialStopPrice);

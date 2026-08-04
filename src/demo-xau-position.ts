@@ -9,6 +9,7 @@ export const DEMO_XAU_POSITION_CODE = String.raw`
   const xauFmt = (value, digits = 2) => Number.isFinite(Number(value)) ? Number(value).toLocaleString('es-ES',{minimumFractionDigits:digits,maximumFractionDigits:digits}) : '—';
   const xauEur = (value) => Number.isFinite(Number(value)) ? xauFmt(value, 4) + ' €' : '—';
   const xauEsc = (value) => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const xauTime = (value) => Number.isFinite(Number(value)) ? new Date(Number(value)).toLocaleTimeString('es-ES') : '—';
 
   function ensureXauPanel() {
     let panel = document.getElementById('xau-paper-panel');
@@ -36,10 +37,14 @@ export const DEMO_XAU_POSITION_CODE = String.raw`
       return;
     }
     const pnlClass = Number(open.unrealizedPnlEur) >= 0 ? 'xau-ok' : 'xau-negative';
+    const tickAgeMs = Number.isFinite(Number(open.lastMarkedAt)) ? Math.max(0, Date.now() - Number(open.lastMarkedAt)) : null;
+    const tickClass = tickAgeMs !== null && tickAgeMs <= 15000 ? 'xau-ok' : 'xau-warn';
     panel.innerHTML = '<h2>🟡 XAU/USD · Posición abierta</h2>'
       + '<div class="xau-grid">'
       + '<div class="xau-metric"><span>Dirección</span><strong>'+xauEsc(String(open.side || '').toUpperCase())+'</strong></div>'
       + '<div class="xau-metric"><span>Entrada</span><strong>'+xauFmt(open.entryPrice, 2)+'</strong></div>'
+      + '<div class="xau-metric"><span>Precio actual de salida</span><strong class="'+tickClass+'">'+xauFmt(open.lastMarkPrice, 4)+'</strong></div>'
+      + '<div class="xau-metric"><span>Último tick</span><strong class="'+tickClass+'">'+xauTime(open.lastMarkedAt)+'</strong></div>'
       + '<div class="xau-metric"><span>Stop actual</span><strong>'+xauFmt(open.stopPrice, 6)+'</strong></div>'
       + '<div class="xau-metric"><span>Objetivo</span><strong>'+xauFmt(open.targetPrice, 6)+'</strong></div>'
       + '<div class="xau-metric"><span>PnL no realizado</span><strong class="'+pnlClass+'">'+xauEur(open.unrealizedPnlEur)+'</strong></div>'
@@ -47,7 +52,7 @@ export const DEMO_XAU_POSITION_CODE = String.raw`
       + '<div class="xau-metric"><span>Beneficio protegido</span><strong>'+xauEur(open.protectedPnlEur)+'</strong></div>'
       + '<div class="xau-metric"><span>Capital PAPER</span><strong>'+xauEur(open.budgetEur)+'</strong></div>'
       + '</div>'
-      + '<div class="xau-note">Estado persistido en BotState · seguimiento automático · LIVE y órdenes reales desactivados.</div>';
+      + '<div class="xau-note">El precio y el PnL proceden del último marcado persistido del motor; la tarjeta consulta producción cada 2,5 s. LIVE y órdenes reales desactivados.</div>';
   }
 
   async function refreshXau() {
@@ -62,5 +67,5 @@ export const DEMO_XAU_POSITION_CODE = String.raw`
   }
 
   refreshXau();
-  setInterval(refreshXau, 5000);
+  setInterval(refreshXau, 2500);
 })();`;
