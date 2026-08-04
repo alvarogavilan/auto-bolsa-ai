@@ -1,5 +1,7 @@
 import { evaluateXauUsdCabinet, type XauCabinetInput, type XauCabinetDecision } from "./xau-usd-specialist-cabinet";
 
+export type XauCycleKind = "decision" | "monitoring";
+
 export interface XauLiveQuoteEvidence {
   bid: number;
   ask: number;
@@ -12,6 +14,7 @@ export interface XauPaperRuntimeInput {
   cabinet: XauCabinetInput;
   quote: XauLiveQuoteEvidence;
   requestedBudgetEur: number;
+  cycleKind?: XauCycleKind;
 }
 
 export interface XauPaperInstruction {
@@ -19,6 +22,7 @@ export interface XauPaperInstruction {
   createdAt: number;
   market: "XAU/USD";
   mode: "paper";
+  cycleKind?: XauCycleKind;
   action: "buy" | "sell" | "hold";
   allowed: boolean;
   budgetEur: number;
@@ -43,15 +47,14 @@ function money(value: number): number {
 }
 
 export function buildXauUsdPaperInstruction(input: XauPaperRuntimeInput): XauPaperInstruction {
+  const cycleKind = input.cycleKind ?? (input.quote.source.toLowerCase().includes("fast proxy") ? "monitoring" : "decision");
   const cabinetDecision = evaluateXauUsdCabinet(input.cabinet);
   const blockers = [...cabinetDecision.vetoes];
   const quoteAgeMs = Math.max(0, input.now - input.quote.observedAt);
   const bid = Number(input.quote.bid);
   const ask = Number(input.quote.ask);
 
-  if (!Number.isFinite(bid) || !Number.isFinite(ask) || bid <= 0 || ask <= 0 || ask <= bid) {
-    blockers.push("Cotización XAU/USD inválida o cruzada.");
-  }
+  if (!Number.isFinite(bid) || !Number.isFinite(ask) || bid <= 0 || ask <= 0 || ask <= bid) blockers.push("Cotización XAU/USD inválida o cruzada.");
   if (quoteAgeMs > MAX_QUOTE_AGE_MS) blockers.push("Cotización XAU/USD caducada.");
   if (!input.quote.source.trim()) blockers.push("Fuente de cotización XAU/USD ausente.");
 
@@ -67,24 +70,18 @@ export function buildXauUsdPaperInstruction(input: XauPaperRuntimeInput): XauPap
   let stopPrice: number | null = null;
   let initialTargetPrice: number | null = null;
   if (referencePrice !== null) {
-    stopPrice = action === "buy"
-      ? referencePrice * (1 - invalidationPct)
-      : referencePrice * (1 + invalidationPct);
-    initialTargetPrice = action === "buy"
-      ? referencePrice * (1 + projectedMovePct)
-      : referencePrice * (1 - projectedMovePct);
+    stopPrice = action === "buy" ? referencePrice * (1 - invalidationPct) : referencePrice * (1 + invalidationPct);
+    initialTargetPrice = action === "buy" ? referencePrice * (1 + projectedMovePct) : referencePrice * (1 - projectedMovePct);
   }
 
-  const allowed = cabinetDecision.allowed
-    && blockers.length === 0
-    && action !== "hold"
-    && referencePrice !== null;
+  const allowed = cycleKind === "decision" && cabinetDecision.allowed && blockers.length === 0 && action !== "hold" && referencePrice !== null;
 
   return {
     schemaVersion: "xau-usd-paper-instruction-v1",
     createdAt: input.now,
     market: "XAU/USD",
     mode: "paper",
+    cycleKind,
     action: allowed ? action : "hold",
     allowed,
     budgetEur: allowed ? normalizedBudget : 0,
