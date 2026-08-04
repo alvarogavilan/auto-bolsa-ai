@@ -54,30 +54,39 @@ export const DEMO_XAU_POSITION_CODE = String.raw`
       return;
     }
     const pnl = Number(open.unrealizedPnlEur);
+    const gross = Number(open.grossUnrealizedPnlEur);
+    const costs = Number(open.estimatedRoundTripCostEur);
     const invested = Number(open.budgetEur);
     const currentNetValue = Number.isFinite(invested) && Number.isFinite(pnl) ? invested + pnl : NaN;
     const roiPct = Number.isFinite(invested) && invested > 0 && Number.isFinite(pnl) ? (pnl / invested) * 100 : NaN;
     const pnlClass = pnl >= 0 ? 'xau-ok' : 'xau-negative';
+    const grossClass = gross >= 0 ? 'xau-ok' : 'xau-negative';
+    const stopMoved = Number.isFinite(Number(open.stopPrice)) && Number.isFinite(Number(open.initialStopPrice)) && Number(open.stopPrice) !== Number(open.initialStopPrice);
+    const stopState = open.trailingActive ? 'TRAILING ACTIVO' : (stopMoved ? 'STOP REDUCIDO · AÚN SIN BENEFICIO NETO' : 'STOP INICIAL');
+    const stopStateClass = open.trailingActive ? 'xau-ok' : 'xau-warn';
     const tickAgeMs = Number.isFinite(Number(open.lastMarkedAt)) ? Math.max(0, Date.now() - Number(open.lastMarkedAt)) : null;
     const tickClass = tickAgeMs !== null && tickAgeMs <= 15000 ? 'xau-ok' : 'xau-warn';
     panel.innerHTML = '<h2>🟡 XAU/USD · Posición abierta</h2>'
-      + '<div class="xau-live-result"><div class="headline">Resultado neto PAPER sobre '+xauEur(invested)+' invertidos</div><div class="amount '+pnlClass+'">'+(pnl>=0?'+':'')+xauEur(pnl)+'</div><div class="xau-note">Valor neto actual: <b>'+xauEur(currentNetValue)+'</b> · Rentabilidad: <b class="'+pnlClass+'">'+(roiPct>=0?'+':'')+xauFmt(roiPct,3)+' %</b></div></div>'
+      + '<div class="xau-live-result"><div class="headline">Resultado neto PAPER sobre '+xauEur(invested)+' invertidos</div><div class="amount '+pnlClass+'">'+(pnl>=0?'+':'')+xauEur(pnl)+'</div><div class="xau-note">Bruto: <b class="'+grossClass+'">'+(gross>=0?'+':'')+xauEur(gross)+'</b> · Costes estimados: <b>'+xauEur(costs)+'</b> · Neto: <b class="'+pnlClass+'">'+(pnl>=0?'+':'')+xauEur(pnl)+'</b></div><div class="xau-note">Valor neto actual: <b>'+xauEur(currentNetValue)+'</b> · Rentabilidad neta: <b class="'+pnlClass+'">'+(roiPct>=0?'+':'')+xauFmt(roiPct,3)+' %</b></div></div>'
       + '<div class="xau-grid">'
       + '<div class="xau-metric"><span>Dinero invertido</span><strong>'+xauEur(invested)+'</strong></div>'
-      + '<div class="xau-metric"><span>Valor neto actual</span><strong class="'+pnlClass+'">'+xauEur(currentNetValue)+'</strong></div>'
+      + '<div class="xau-metric"><span>Beneficio bruto</span><strong class="'+grossClass+'">'+(gross>=0?'+':'')+xauEur(gross)+'</strong></div>'
+      + '<div class="xau-metric"><span>Costes estimados</span><strong>'+xauEur(costs)+'</strong></div>'
       + '<div class="xau-metric"><span>Ganancia / pérdida neta</span><strong class="'+pnlClass+'">'+(pnl>=0?'+':'')+xauEur(pnl)+'</strong></div>'
+      + '<div class="xau-metric"><span>Valor neto actual</span><strong class="'+pnlClass+'">'+xauEur(currentNetValue)+'</strong></div>'
+      + '<div class="xau-metric"><span>Break-even neto</span><strong>'+xauFmt(open.netBreakEvenPrice, 6)+'</strong></div>'
       + '<div class="xau-metric"><span>Dirección</span><strong>'+xauEsc(String(open.side || '').toUpperCase())+'</strong></div>'
       + '<div class="xau-metric"><span>Entrada</span><strong>'+xauFmt(open.entryPrice, 2)+'</strong></div>'
       + '<div class="xau-metric"><span>Precio actual de salida</span><strong class="'+tickClass+'">'+xauFmt(open.lastMarkPrice, 4)+'</strong></div>'
       + '<div class="xau-metric"><span>Último tick</span><strong class="'+tickClass+'">'+xauTime(open.lastMarkedAt)+'</strong></div>'
       + '<div class="xau-metric"><span>Stop actual</span><strong>'+xauFmt(open.stopPrice, 6)+'</strong></div>'
+      + '<div class="xau-metric"><span>Estado del stop</span><strong class="'+stopStateClass+'">'+stopState+'</strong></div>'
       + '<div class="xau-metric"><span>Objetivo</span><strong>'+xauFmt(open.targetPrice, 6)+'</strong></div>'
-      + '<div class="xau-metric"><span>Trailing</span><strong class="'+(open.trailingActive?'xau-ok':'xau-warn')+'">'+(open.trailingActive?'ACTIVO':'AÚN NO')+'</strong></div>'
-      + '<div class="xau-metric"><span>Beneficio protegido</span><strong>'+xauEur(open.protectedPnlEur)+'</strong></div>'
+      + '<div class="xau-metric"><span>Beneficio neto protegido</span><strong>'+xauEur(open.protectedPnlEur)+'</strong></div>'
       + '</div>'
       + '<div class="xau-note"><b>Tesorería XAU persistida</b></div>'
       + treasuryHtml(treasury)
-      + '<div class="xau-note">La tarjeta consulta producción cada segundo. El importe solo cambia cuando el motor recibe y persiste una cotización nueva; no se fabrican movimientos entre ticks. LIVE y órdenes reales desactivados.</div>';
+      + '<div class="xau-note">Una SELL puede tener beneficio bruto y resultado neto negativo mientras los costes estimados no estén cubiertos. El stop reducido conserva la mejora de riesgo heredada, pero no se presenta como beneficio protegido. LIVE y órdenes reales desactivados.</div>';
   }
 
   async function refreshXau() {
