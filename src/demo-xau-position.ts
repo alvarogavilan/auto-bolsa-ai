@@ -25,6 +25,19 @@ export const DEMO_XAU_POSITION_CODE = String.raw`
     return panel;
   }
 
+  function treasuryHtml(treasury) {
+    if (!treasury) return '<div class="xau-note xau-warn">Tesorería XAU todavía no disponible.</div>';
+    const points = Array.isArray(treasury.equityCurve) ? treasury.equityCurve.length : 0;
+    return '<div class="xau-grid">'
+      + '<div class="xau-metric"><span>Efectivo XAU</span><strong>'+xauEur(treasury.cashEur)+'</strong></div>'
+      + '<div class="xau-metric"><span>Capital comprometido</span><strong>'+xauEur(treasury.committedCapitalEur)+'</strong></div>'
+      + '<div class="xau-metric"><span>Equity XAU</span><strong>'+xauEur(treasury.equityEur)+'</strong></div>'
+      + '<div class="xau-metric"><span>PnL realizado</span><strong>'+xauEur(treasury.realizedPnlEur)+'</strong></div>'
+      + '<div class="xau-metric"><span>Puntos de curva</span><strong>'+xauEsc(points)+'</strong></div>'
+      + '<div class="xau-metric"><span>Migración posición previa</span><strong>'+(treasury.migratedExistingPosition?'SÍ':'NO')+'</strong></div>'
+      + '</div>';
+  }
+
   function renderXau(status) {
     const panel = ensureXauPanel();
     const book = status && status.positionBook;
@@ -34,8 +47,10 @@ export const DEMO_XAU_POSITION_CODE = String.raw`
     }
     const open = book.open;
     const metrics = book.metrics || {};
+    const treasury = book.treasury || null;
     if (!open) {
-      panel.innerHTML = '<h2>🟡 XAU/USD · Operación PAPER</h2><div class="xau-note">Sin posición XAU abierta. Cerradas: '+xauEsc(metrics.closed || 0)+' · PnL realizado: '+xauEur(metrics.realizedPnlEur || 0)+'</div>';
+      panel.innerHTML = '<h2>🟡 XAU/USD · Operación PAPER</h2><div class="xau-note">Sin posición XAU abierta. Cerradas: '+xauEsc(metrics.closed || 0)+' · PnL realizado: '+xauEur(metrics.realizedPnlEur || 0)+'</div>'
+        + treasuryHtml(treasury);
       return;
     }
     const pnlClass = Number(open.unrealizedPnlEur) >= 0 ? 'xau-ok' : 'xau-negative';
@@ -54,7 +69,9 @@ export const DEMO_XAU_POSITION_CODE = String.raw`
       + '<div class="xau-metric"><span>Beneficio protegido</span><strong>'+xauEur(open.protectedPnlEur)+'</strong></div>'
       + '<div class="xau-metric"><span>Capital PAPER</span><strong>'+xauEur(open.budgetEur)+'</strong></div>'
       + '</div>'
-      + '<div class="xau-note">El precio y el PnL proceden del último marcado persistido del motor; la tarjeta consulta producción cada 2,5 s. LIVE y órdenes reales desactivados.</div>';
+      + '<div class="xau-note"><b>Tesorería XAU persistida</b></div>'
+      + treasuryHtml(treasury)
+      + '<div class="xau-note">El precio, PnL, tesorería y curva proceden del estado persistido del motor. La tarjeta consulta producción cada 2,5 s. LIVE y órdenes reales desactivados.</div>';
   }
 
   async function refreshXau() {
