@@ -14,11 +14,14 @@ describe("native XAU PAPER feed architecture", () => {
     expect(runtimeSource).toContain("realOrderSubmission: false");
   });
 
-  it("keeps macro specialists neutral so missing evidence remains a cabinet veto", () => {
+  it("keeps macro specialists neutral while exposing the strict technical PAPER fallback", () => {
     expect(feedSource).toContain('dxyBiasForGold: "neutral"');
     expect(feedSource).toContain('realYieldsBiasForGold: "neutral"');
     expect(feedSource).toContain("sourcesFresh: 1");
-    expect(runtimeSource).toContain("mantienen veto PAPER");
+    expect(runtimeSource).toContain('"strict-technical-paper-fallback"');
+    expect(runtimeSource).toContain('"Unanimidad técnica 100 %"');
+    expect(runtimeSource).toContain('"spread <= 0,05 %"');
+    expect(runtimeSource).toContain('"asimetría >= 2,5R"');
   });
 
   it("runs an automatic native observation cycle when no external feed exists", () => {
