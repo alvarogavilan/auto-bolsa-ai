@@ -14,10 +14,10 @@ describe("DEMO market universe observability", () => {
     expect(marketPanel).toContain("swingEligible");
   });
 
-  it("integrates into the existing single demo rendering pipeline", () => {
+  it("integrates into the existing single demo rendering pipeline without enabling LIVE", () => {
     expect(xauPanel).toContain("DEMO_MARKET_UNIVERSE_STYLE");
     expect(xauPanel).toContain("DEMO_MARKET_UNIVERSE_CODE");
-    expect(marketPanel).toContain("live");
     expect(marketPanel).not.toContain("LIVE_TRADING_ENABLED");
+    expect(marketPanel).not.toContain("realOrderSubmission: true");
   });
 });
