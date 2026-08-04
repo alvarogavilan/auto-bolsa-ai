@@ -83,7 +83,7 @@ describe("XAU net break-even protection", () => {
 
     expect(result.open?.unrealizedPnlEur).toBeGreaterThan(0);
     expect(result.open?.trailingActive).toBe(true);
-    expect(result.open?.stopPrice).toBeLessThanOrEqual(result.open?.netBreakEvenPrice as number);
+    expect(result.open?.stopPrice).toBeCloseTo(result.open?.netBreakEvenPrice as number, 5);
     expect(result.open?.stopPrice).toBeGreaterThan(4044);
     expect(result.open?.protectedPnlEur).toBeGreaterThanOrEqual(0);
   });
