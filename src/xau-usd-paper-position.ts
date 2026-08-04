@@ -247,18 +247,19 @@ function manageOpenPosition(position: XauPaperPosition, input: XauPaperRuntimeIn
   const favourableMove = position.side === "buy" ? price - position.entryPrice : position.entryPrice - price;
   const currentNetPnl = netPnlAt(position, price);
 
-  if (risk > 0 && favourableMove >= risk * TRAILING_ACTIVATION_R && currentNetPnl >= position.minimumMeaningfulNetProfitEur) {
+  const grossBreakEvenReached = currentNetPnl >= -position.estimatedRoundTripCostEur;
+  if (risk > 0 && favourableMove >= risk * TRAILING_ACTIVATION_R && grossBreakEvenReached) {
     position.trailingActive = true;
-    const meaningfulProfitPrice = priceForNetProfit(position, position.minimumMeaningfulNetProfitEur);
+    const breakEvenPrice = priceForNetProfit(position, -position.estimatedRoundTripCostEur);
     if (position.side === "buy") {
       const locked = position.entryPrice + risk * LOCKED_PROFIT_R;
       const trailing = position.highWaterPrice - risk * TRAILING_DISTANCE_R;
-      position.stopPrice = Math.max(position.stopPrice, locked, trailing, meaningfulProfitPrice);
+      position.stopPrice = Math.max(position.stopPrice, breakEvenPrice, locked, trailing);
       position.targetPrice = Math.max(position.targetPrice, position.highWaterPrice + risk);
     } else {
       const locked = position.entryPrice - risk * LOCKED_PROFIT_R;
       const trailing = position.lowWaterPrice + risk * TRAILING_DISTANCE_R;
-      position.stopPrice = Math.min(position.stopPrice, locked, trailing, meaningfulProfitPrice);
+      position.stopPrice = Math.min(position.stopPrice, breakEvenPrice, locked, trailing);
       position.targetPrice = Math.min(position.targetPrice, position.lowWaterPrice - risk);
     }
   }
