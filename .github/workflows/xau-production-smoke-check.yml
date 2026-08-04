@@ -58,6 +58,7 @@ jobs:
           const fs = require('node:fs');
           const readiness = JSON.parse(fs.readFileSync('xau-readiness.json', 'utf8'));
           const status = JSON.parse(fs.readFileSync('xau-status.json', 'utf8'));
+          const diagnostics = readiness.blockerDiagnostics;
 
           const fail = (message) => {
             console.error(message);
@@ -74,7 +75,10 @@ jobs:
           if (!Number.isFinite(readiness.decisionCycles)) fail('decisionCycles missing.');
           if (!Number.isFinite(readiness.monitoringSamples)) fail('monitoringSamples missing.');
           if (!Array.isArray(readiness.latestDecisionBlockers)) fail('latestDecisionBlockers missing.');
-          if (!Object.prototype.hasOwnProperty.call(readiness, 'dominantBlocker')) fail('dominantBlocker missing.');
+          if (!diagnostics || typeof diagnostics !== 'object') fail('blockerDiagnostics missing.');
+          if (!Object.prototype.hasOwnProperty.call(diagnostics ?? {}, 'dominantBlocker')) fail('blockerDiagnostics.dominantBlocker missing.');
+          if (!Number.isFinite(diagnostics?.dominantBlockerCount)) fail('blockerDiagnostics.dominantBlockerCount missing.');
+          if (!Array.isArray(diagnostics?.blockerFrequency)) fail('blockerDiagnostics.blockerFrequency missing.');
           if (!status || typeof status !== 'object') fail('Invalid XAU status payload.');
 
           console.log(JSON.stringify({
@@ -84,8 +88,11 @@ jobs:
             approvedDecisionCycles: readiness.approvedDecisionCycles,
             blockedDecisionCycles: readiness.blockedDecisionCycles,
             monitoringSamples: readiness.monitoringSamples,
-            dominantBlocker: readiness.dominantBlocker,
-            dominantBlockerCount: readiness.dominantBlockerCount,
+            diagnosticSampleSize: diagnostics?.sampleSize,
+            diagnosticBlockedDecisions: diagnostics?.blockedDecisions,
+            dominantBlocker: diagnostics?.dominantBlocker,
+            dominantBlockerCount: diagnostics?.dominantBlockerCount,
+            blockerFrequency: diagnostics?.blockerFrequency,
             latestDecisionOutcome: readiness.latestDecisionOutcome,
             latestDecisionBlockers: readiness.latestDecisionBlockers,
             liveTrading: readiness.liveTrading,
