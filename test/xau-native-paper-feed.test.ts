@@ -24,10 +24,14 @@ describe("native XAU PAPER feed architecture", () => {
     expect(runtimeSource).toContain('"asimetría >= 2,5R"');
   });
 
-  it("runs an automatic native observation cycle when no external feed exists", () => {
+  it("persists an automatic native decision before starting background monitoring", () => {
     expect(runtimeSource).toContain("buildNativeXauPaperInput");
     expect(runtimeSource).toContain('feedMode: externalFeedConfigured ? "external-plus-native-fast-price" : "native-kraken-xaut-proxy"');
-    expect(runtimeSource).toContain("ctx.waitUntil(runXauFastMonitoringWindow");
+    const decision = runtimeSource.indexOf("await runXauDecisionCycle(runtimeEnv)");
+    const monitoring = runtimeSource.indexOf("ctx.waitUntil(runXauFastMonitoringSamples(runtimeEnv))");
+    expect(decision).toBeGreaterThan(-1);
+    expect(monitoring).toBeGreaterThan(decision);
+    expect(runtimeSource).not.toContain("runXauDecisionCycle(runtimeEnv).catch");
   });
 
   it("monitors price and open PAPER positions every three seconds without accelerating the base strategy", () => {
