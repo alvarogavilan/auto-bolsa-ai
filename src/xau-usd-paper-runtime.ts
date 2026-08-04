@@ -22,7 +22,7 @@ export interface XauPaperInstruction {
   createdAt: number;
   market: "XAU/USD";
   mode: "paper";
-  cycleKind: XauCycleKind;
+  cycleKind?: XauCycleKind;
   action: "buy" | "sell" | "hold";
   allowed: boolean;
   budgetEur: number;
