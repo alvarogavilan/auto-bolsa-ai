@@ -3,9 +3,11 @@ import type { XauPaperRuntimeInput } from "./xau-usd-paper-runtime";
 type Bias = "long" | "short" | "neutral";
 
 interface KrakenLevel { price: string; qty: string; publication_ts?: string }
-interface KrakenPreTradeResult { bids?: KrakenLevel[]; asks?: KrakenLevel[]; error?: string[] }
+interface KrakenPreTradeBook { bids?: KrakenLevel[]; asks?: KrakenLevel[] }
+interface KrakenPreTradeResponse { result?: KrakenPreTradeBook; error?: string[] }
 interface KrakenTrade { price: string; trade_ts?: string }
-interface KrakenPostTradeResult { trades?: KrakenTrade[]; error?: string[] }
+interface KrakenPostTradeTape { trades?: KrakenTrade[] }
+interface KrakenPostTradeResponse { result?: KrakenPostTradeTape; error?: string[] }
 
 const PRE_TRADE_URL = "https://api.kraken.com/0/public/PreTrade?symbol=XAUT/USD";
 const POST_TRADE_URL = "https://api.kraken.com/0/public/PostTrade?symbol=XAUT/USD&count=200";
@@ -33,15 +35,20 @@ async function fetchJson<T>(url: string): Promise<T> {
   return response.json<T>();
 }
 
-function quoteFromBook(book: KrakenPreTradeResult, now: number): {
+function requireResult<T>(payload: { result?: T; error?: string[] }, label: string): T {
+  const errors = payload.error ?? [];
+  if (errors.length) throw new Error(`Kraken XAUT/USD feed error: ${errors.join(", ")}`);
+  if (!payload.result) throw new Error(`Kraken XAUT/USD returned no ${label} result`);
+  return payload.result;
+}
+
+function quoteFromBook(book: KrakenPreTradeBook, now: number): {
   bid: number;
   ask: number;
   bidQty: number;
   askQty: number;
   observedAt: number;
 } {
-  const errors = book.error ?? [];
-  if (errors.length) throw new Error(`Kraken XAUT/USD feed error: ${errors.join(", ")}`);
   const bid = positive(book.bids?.[0]?.price);
   const ask = positive(book.asks?.[0]?.price);
   if (bid === null || ask === null || ask <= bid) throw new Error("Kraken XAUT/USD returned an invalid order book");
@@ -58,7 +65,8 @@ function quoteFromBook(book: KrakenPreTradeResult, now: number): {
 }
 
 export async function buildNativeXauFastPriceInput(now = Date.now()): Promise<XauPaperRuntimeInput> {
-  const quote = quoteFromBook(await fetchJson<KrakenPreTradeResult>(PRE_TRADE_URL), now);
+  const response = await fetchJson<KrakenPreTradeResponse>(PRE_TRADE_URL);
+  const quote = quoteFromBook(requireResult(response, "pre-trade"), now);
   const midpoint = (quote.bid + quote.ask) / 2;
   const spreadPct = ((quote.ask - quote.bid) / midpoint) * 100;
   return {
@@ -95,13 +103,12 @@ export async function buildNativeXauFastPriceInput(now = Date.now()): Promise<Xa
 }
 
 export async function buildNativeXauPaperInput(now = Date.now()): Promise<XauPaperRuntimeInput> {
-  const [book, tape] = await Promise.all([
-    fetchJson<KrakenPreTradeResult>(PRE_TRADE_URL),
-    fetchJson<KrakenPostTradeResult>(POST_TRADE_URL),
+  const [bookResponse, tapeResponse] = await Promise.all([
+    fetchJson<KrakenPreTradeResponse>(PRE_TRADE_URL),
+    fetchJson<KrakenPostTradeResponse>(POST_TRADE_URL),
   ]);
-  const errors = [...(book.error ?? []), ...(tape.error ?? [])];
-  if (errors.length) throw new Error(`Kraken XAUT/USD feed error: ${errors.join(", ")}`);
-
+  const book = requireResult(bookResponse, "pre-trade");
+  const tape = requireResult(tapeResponse, "post-trade");
   const quote = quoteFromBook(book, now);
   const prices = (tape.trades ?? []).map((trade) => positive(trade.price)).filter((value): value is number => value !== null);
   if (prices.length < 20) throw new Error("Kraken XAUT/USD returned insufficient trade history");

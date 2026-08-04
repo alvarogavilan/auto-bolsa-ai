@@ -14,6 +14,14 @@ describe("native XAU PAPER feed architecture", () => {
     expect(runtimeSource).toContain("realOrderSubmission: false");
   });
 
+  it("unwraps Kraken result envelopes before reading book and trade data", () => {
+    expect(feedSource).toContain("interface KrakenPreTradeResponse { result?: KrakenPreTradeBook");
+    expect(feedSource).toContain("interface KrakenPostTradeResponse { result?: KrakenPostTradeTape");
+    expect(feedSource).toContain("function requireResult");
+    expect(feedSource).toContain('requireResult(bookResponse, "pre-trade")');
+    expect(feedSource).toContain('requireResult(tapeResponse, "post-trade")');
+  });
+
   it("keeps macro specialists neutral while exposing the strict technical PAPER fallback", () => {
     expect(feedSource).toContain('dxyBiasForGold: "neutral"');
     expect(feedSource).toContain('realYieldsBiasForGold: "neutral"');
