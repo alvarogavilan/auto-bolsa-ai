@@ -44,11 +44,7 @@ function strategiesFromLabPayload(payload: unknown): PaperEconomicStrategyLike[]
     if (!entry || typeof entry !== "object") return [];
     const strategy = entry as Record<string, unknown>;
     if (typeof strategy.id !== "string" || typeof strategy.symbol !== "string" || !Array.isArray(strategy.trades)) return [];
-    return [{
-      id: strategy.id,
-      symbol: strategy.symbol,
-      trades: strategy.trades as PaperEconomicStrategyLike["trades"],
-    }];
+    return [{ id: strategy.id, symbol: strategy.symbol, trades: strategy.trades as PaperEconomicStrategyLike["trades"] }];
   });
 }
 
@@ -84,9 +80,14 @@ async function xauStatus(env: Env): Promise<Record<string, unknown>> {
   return response.json<Record<string, unknown>>();
 }
 
-function latestXauCycle(status: Record<string, unknown>): Record<string, unknown> | null {
-  if (!Array.isArray(status.cycles) || status.cycles.length === 0) return null;
-  const cycle = status.cycles[0];
+function latestXauDecisionCycle(status: Record<string, unknown>): Record<string, unknown> | null {
+  if (!Array.isArray(status.cycles)) return null;
+  const cycle = status.cycles.find((entry) => {
+    if (!entry || typeof entry !== "object") return false;
+    const instruction = (entry as Record<string, unknown>).instruction;
+    if (!instruction || typeof instruction !== "object") return true;
+    return (instruction as Record<string, unknown>).cycleKind !== "monitoring";
+  });
   return cycle && typeof cycle === "object" ? cycle as Record<string, unknown> : null;
 }
 
@@ -94,20 +95,22 @@ async function xauReadinessResponse(env: Env): Promise<Response> {
   const runtimeEnv = paperRuntimeEnv(env);
   const status = await xauStatus(runtimeEnv);
   const externalFeedConfigured = Boolean(runtimeEnv.XAU_PAPER_FEED_URL?.trim());
-  const metrics = status.metrics && typeof status.metrics === "object"
-    ? status.metrics as Record<string, unknown>
-    : {};
+  const metrics = status.metrics && typeof status.metrics === "object" ? status.metrics as Record<string, unknown> : {};
   const cycles = typeof metrics.cycles === "number" ? metrics.cycles : 0;
+  const decisionCycles = typeof metrics.decisionCycles === "number"
+    ? metrics.decisionCycles
+    : (typeof metrics.approved === "number" ? metrics.approved : 0) + (typeof metrics.blocked === "number" ? metrics.blocked : 0);
+  const monitoringSamples = typeof metrics.monitoringSamples === "number" ? metrics.monitoringSamples : Math.max(0, cycles - decisionCycles);
   const approved = typeof metrics.approved === "number" ? metrics.approved : 0;
   const blocked = typeof metrics.blocked === "number" ? metrics.blocked : 0;
-  const latestCycle = latestXauCycle(status);
-  const latestOutcome = typeof latestCycle?.outcome === "string" ? latestCycle.outcome : null;
-  const latestBlockers = Array.isArray(latestCycle?.blockers)
-    ? latestCycle.blockers.filter((value): value is string => typeof value === "string")
+  const latestDecisionCycle = latestXauDecisionCycle(status);
+  const latestDecisionOutcome = typeof latestDecisionCycle?.outcome === "string" ? latestDecisionCycle.outcome : null;
+  const latestDecisionBlockers = Array.isArray(latestDecisionCycle?.blockers)
+    ? latestDecisionCycle.blockers.filter((value): value is string => typeof value === "string")
     : [];
 
   return Response.json({
-    schemaVersion: "xau-usd-paper-readiness-v4",
+    schemaVersion: "xau-usd-paper-readiness-v5",
     market: "XAU/USD",
     mode: "paper",
     operational: true,
@@ -121,17 +124,19 @@ async function xauReadinessResponse(env: Env): Promise<Response> {
     fastSamplesPerMinute: XAU_FAST_SAMPLES_PER_MINUTE,
     decisionReanalysisSeconds: 60,
     baseStrategyCycleMinutes: 5,
-    cyclesObserved: cycles,
-    approvedCycles: approved,
-    blockedCycles: blocked,
-    latestOutcome,
-    latestBlockers,
+    totalObservations: cycles,
+    decisionCycles,
+    monitoringSamples,
+    approvedDecisionCycles: approved,
+    blockedDecisionCycles: blocked,
+    latestDecisionOutcome,
+    latestDecisionBlockers,
     status,
     paperEntryCapable: true,
     paperEntryRequirements: externalFeedConfigured
       ? ["Consenso técnico y macro completo", "evidencia fresca", "asimetría y spread válidos"]
       : ["Unanimidad técnica 100 %", "spread <= 0,05 %", "asimetría >= 2,5R", "sin veto de riesgo"],
-    blockers: latestOutcome === "blocked" ? latestBlockers : [],
+    blockers: latestDecisionOutcome === "blocked" ? latestDecisionBlockers : [],
     liveTrading: false,
     realOrderSubmission: false,
   }, { headers: { "Cache-Control": "no-store" } });
@@ -175,15 +180,9 @@ export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const path = new URL(request.url).pathname;
     const runtimeEnv = paperRuntimeEnv(env);
-    if (request.method === "GET" && path === "/api/paper/economics") {
-      return paperEconomicsResponse(request, runtimeEnv, ctx);
-    }
-    if (request.method === "GET" && path === "/api/xau/status") {
-      return botState(runtimeEnv).fetch("https://bot/xau/status");
-    }
-    if (request.method === "GET" && path === "/api/xau/readiness") {
-      return xauReadinessResponse(runtimeEnv);
-    }
+    if (request.method === "GET" && path === "/api/paper/economics") return paperEconomicsResponse(request, runtimeEnv, ctx);
+    if (request.method === "GET" && path === "/api/xau/status") return botState(runtimeEnv).fetch("https://bot/xau/status");
+    if (request.method === "GET" && path === "/api/xau/readiness") return xauReadinessResponse(runtimeEnv);
     if (request.method === "POST" && path === "/api/xau/cycle") {
       if (!authorized(request, runtimeEnv)) return new Response("Unauthorized", { status: 401 });
       return botState(runtimeEnv).fetch("https://bot/xau/cycle", {
