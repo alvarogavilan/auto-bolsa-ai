@@ -1,0 +1,109 @@
+name: XAU production evidence on main
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: xau-production-evidence-main
+  cancel-in-progress: true
+
+jobs:
+  capture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    env:
+      WORKER_BASE_URL: https://auto-bolsa-ai.k8mwkbp68y.workers.dev
+    steps:
+      - name: Wait for deployed readiness schema
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent --show-error --connect-timeout 10 --max-time 30 \
+              "$WORKER_BASE_URL/api/xau/readiness" -o xau-readiness.json; then
+              schema="$(node -e "const x=require('./xau-readiness.json'); process.stdout.write(String(x.schemaVersion||''))")"
+              if [ "$schema" = "xau-usd-paper-readiness-v6" ]; then
+                exit 0
+              fi
+            fi
+            sleep 10
+          done
+          echo "Production did not expose readiness v6 within the bounded deployment window."
+          exit 1
+
+      - name: Fetch production status
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --retry 3 --retry-all-errors \
+            --connect-timeout 10 --max-time 30 \
+            "$WORKER_BASE_URL/api/xau/status" -o xau-status.json
+
+      - name: Validate and summarize evidence
+        id: evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          node <<'NODE'
+          const fs = require('node:fs');
+          const readiness = JSON.parse(fs.readFileSync('xau-readiness.json', 'utf8'));
+          const status = JSON.parse(fs.readFileSync('xau-status.json', 'utf8'));
+          const diagnostics = readiness.blockerDiagnostics ?? {};
+          const open = status?.positions?.open ?? status?.positionBook?.open ?? null;
+          const closed = status?.positions?.closed ?? status?.positionBook?.closed ?? [];
+          const summary = {
+            commit: process.env.GITHUB_SHA,
+            observedAt: new Date().toISOString(),
+            schemaVersion: readiness.schemaVersion,
+            mode: readiness.mode,
+            operational: readiness.operational,
+            feedMode: readiness.feedMode,
+            decisionCycles: readiness.decisionCycles,
+            approvedDecisionCycles: readiness.approvedDecisionCycles,
+            blockedDecisionCycles: readiness.blockedDecisionCycles,
+            monitoringSamples: readiness.monitoringSamples,
+            latestDecisionOutcome: readiness.latestDecisionOutcome,
+            latestDecisionBlockers: readiness.latestDecisionBlockers,
+            blockerDiagnostics: diagnostics,
+            openPaperPosition: open,
+            closedPaperPositions: Array.isArray(closed) ? closed.slice(0, 10) : [],
+            liveTrading: readiness.liveTrading,
+            realOrderSubmission: readiness.realOrderSubmission,
+          };
+          if (summary.mode !== 'paper') throw new Error(`Unexpected mode: ${summary.mode}`);
+          if (summary.liveTrading !== false) throw new Error('LIVE must remain disabled.');
+          if (summary.realOrderSubmission !== false) throw new Error('Real order submission must remain disabled.');
+          fs.writeFileSync('xau-production-summary.json', JSON.stringify(summary, null, 2));
+          NODE
+
+      - name: Upload production evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: xau-production-evidence-${{ github.sha }}
+          path: |
+            xau-readiness.json
+            xau-status.json
+            xau-production-summary.json
+          retention-days: 14
+
+      - name: Publish auditable evidence issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          title="XAU production evidence · ${GITHUB_SHA:0:7}"
+          {
+            echo "Commit: \`$GITHUB_SHA\`"
+            echo
+            echo '```json'
+            cat xau-production-summary.json
+            echo '```'
+          } > issue-body.md
+          gh issue create --title "$title" --body-file issue-body.md
