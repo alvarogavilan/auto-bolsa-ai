@@ -3,7 +3,7 @@ import { DEMO_MARKET_UNIVERSE_CODE, DEMO_MARKET_UNIVERSE_STYLE } from "./demo-ma
 export const DEMO_XAU_POSITION_STYLE = String.raw`
 <style>
 #xau-paper-panel{margin:16px 0;padding:16px;border:1px solid #8b6f22;border-radius:16px;background:linear-gradient(135deg,rgba(139,111,34,.18),rgba(21,28,50,.96))}
-#xau-paper-panel h2{margin:0 0 10px}#xau-paper-panel .xau-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:8px}.xau-metric{padding:10px;border-radius:12px;background:rgba(7,11,24,.58);border:1px solid rgba(255,255,255,.09)}.xau-metric span{display:block;color:#aeb8d4;font-size:12px}.xau-metric strong{display:block;margin-top:4px}.xau-ok{color:#5ee6a8}.xau-warn{color:#ffd86b}.xau-negative{color:#ff8a8a}.xau-note{margin-top:10px;color:#c5cde3;font-size:13px}
+#xau-paper-panel h2{margin:0 0 10px}#xau-paper-panel .xau-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:8px}.xau-metric{padding:10px;border-radius:12px;background:rgba(7,11,24,.58);border:1px solid rgba(255,255,255,.09)}.xau-metric span{display:block;color:#aeb8d4;font-size:12px}.xau-metric strong{display:block;margin-top:4px}.xau-ok{color:#5ee6a8}.xau-warn{color:#ffd86b}.xau-negative{color:#ff8a8a}.xau-note{margin-top:10px;color:#c5cde3;font-size:13px}.xau-live-result{margin:12px 0;padding:14px;border-radius:14px;background:rgba(7,11,24,.76);border:1px solid rgba(255,216,107,.35)}.xau-live-result .headline{font-size:13px;color:#c5cde3}.xau-live-result .amount{font-size:28px;font-weight:800;margin-top:5px}
 </style>` + DEMO_MARKET_UNIVERSE_STYLE;
 
 export const DEMO_XAU_POSITION_CODE = String.raw`
@@ -53,25 +53,31 @@ export const DEMO_XAU_POSITION_CODE = String.raw`
         + treasuryHtml(treasury);
       return;
     }
-    const pnlClass = Number(open.unrealizedPnlEur) >= 0 ? 'xau-ok' : 'xau-negative';
+    const pnl = Number(open.unrealizedPnlEur);
+    const invested = Number(open.budgetEur);
+    const currentNetValue = Number.isFinite(invested) && Number.isFinite(pnl) ? invested + pnl : NaN;
+    const roiPct = Number.isFinite(invested) && invested > 0 && Number.isFinite(pnl) ? (pnl / invested) * 100 : NaN;
+    const pnlClass = pnl >= 0 ? 'xau-ok' : 'xau-negative';
     const tickAgeMs = Number.isFinite(Number(open.lastMarkedAt)) ? Math.max(0, Date.now() - Number(open.lastMarkedAt)) : null;
     const tickClass = tickAgeMs !== null && tickAgeMs <= 15000 ? 'xau-ok' : 'xau-warn';
     panel.innerHTML = '<h2>🟡 XAU/USD · Posición abierta</h2>'
+      + '<div class="xau-live-result"><div class="headline">Resultado neto PAPER sobre '+xauEur(invested)+' invertidos</div><div class="amount '+pnlClass+'">'+(pnl>=0?'+':'')+xauEur(pnl)+'</div><div class="xau-note">Valor neto actual: <b>'+xauEur(currentNetValue)+'</b> · Rentabilidad: <b class="'+pnlClass+'">'+(roiPct>=0?'+':'')+xauFmt(roiPct,3)+' %</b></div></div>'
       + '<div class="xau-grid">'
+      + '<div class="xau-metric"><span>Dinero invertido</span><strong>'+xauEur(invested)+'</strong></div>'
+      + '<div class="xau-metric"><span>Valor neto actual</span><strong class="'+pnlClass+'">'+xauEur(currentNetValue)+'</strong></div>'
+      + '<div class="xau-metric"><span>Ganancia / pérdida neta</span><strong class="'+pnlClass+'">'+(pnl>=0?'+':'')+xauEur(pnl)+'</strong></div>'
       + '<div class="xau-metric"><span>Dirección</span><strong>'+xauEsc(String(open.side || '').toUpperCase())+'</strong></div>'
       + '<div class="xau-metric"><span>Entrada</span><strong>'+xauFmt(open.entryPrice, 2)+'</strong></div>'
       + '<div class="xau-metric"><span>Precio actual de salida</span><strong class="'+tickClass+'">'+xauFmt(open.lastMarkPrice, 4)+'</strong></div>'
       + '<div class="xau-metric"><span>Último tick</span><strong class="'+tickClass+'">'+xauTime(open.lastMarkedAt)+'</strong></div>'
       + '<div class="xau-metric"><span>Stop actual</span><strong>'+xauFmt(open.stopPrice, 6)+'</strong></div>'
       + '<div class="xau-metric"><span>Objetivo</span><strong>'+xauFmt(open.targetPrice, 6)+'</strong></div>'
-      + '<div class="xau-metric"><span>PnL no realizado</span><strong class="'+pnlClass+'">'+xauEur(open.unrealizedPnlEur)+'</strong></div>'
       + '<div class="xau-metric"><span>Trailing</span><strong class="'+(open.trailingActive?'xau-ok':'xau-warn')+'">'+(open.trailingActive?'ACTIVO':'AÚN NO')+'</strong></div>'
       + '<div class="xau-metric"><span>Beneficio protegido</span><strong>'+xauEur(open.protectedPnlEur)+'</strong></div>'
-      + '<div class="xau-metric"><span>Capital PAPER</span><strong>'+xauEur(open.budgetEur)+'</strong></div>'
       + '</div>'
       + '<div class="xau-note"><b>Tesorería XAU persistida</b></div>'
       + treasuryHtml(treasury)
-      + '<div class="xau-note">El precio, PnL, tesorería y curva proceden del estado persistido del motor. La tarjeta consulta producción cada 2,5 s. LIVE y órdenes reales desactivados.</div>';
+      + '<div class="xau-note">La tarjeta consulta producción cada segundo. El importe solo cambia cuando el motor recibe y persiste una cotización nueva; no se fabrican movimientos entre ticks. LIVE y órdenes reales desactivados.</div>';
   }
 
   async function refreshXau() {
@@ -86,5 +92,5 @@ export const DEMO_XAU_POSITION_CODE = String.raw`
   }
 
   refreshXau();
-  setInterval(refreshXau, 2500);
+  setInterval(refreshXau, 1000);
 })();` + DEMO_MARKET_UNIVERSE_CODE;
