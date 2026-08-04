@@ -2,6 +2,11 @@ name: XAU production smoke check
 
 on:
   workflow_dispatch:
+    inputs:
+      worker_base_url:
+        description: "URL pública del Worker (opcional si existe WORKER_BASE_URL)"
+        required: false
+        type: string
   schedule:
     - cron: "17 * * * *"
 
@@ -13,16 +18,25 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     env:
-      WORKER_BASE_URL: ${{ vars.WORKER_BASE_URL }}
+      REPOSITORY_WORKER_BASE_URL: ${{ vars.WORKER_BASE_URL }}
+      MANUAL_WORKER_BASE_URL: ${{ inputs.worker_base_url }}
     steps:
-      - name: Require production URL
+      - name: Resolve production URL
         shell: bash
         run: |
           set -euo pipefail
-          if [ -z "${WORKER_BASE_URL:-}" ]; then
-            echo "Repository variable WORKER_BASE_URL is required."
+          candidate="${MANUAL_WORKER_BASE_URL:-}"
+          if [ -z "$candidate" ]; then candidate="${REPOSITORY_WORKER_BASE_URL:-}"; fi
+          candidate="${candidate%/}"
+          if [ -z "$candidate" ]; then
+            echo "No production URL available. Configure WORKER_BASE_URL or supply worker_base_url when dispatching manually."
             exit 1
           fi
+          case "$candidate" in
+            https://*) ;;
+            *) echo "Production URL must use HTTPS."; exit 1 ;;
+          esac
+          echo "WORKER_BASE_URL=$candidate" >> "$GITHUB_ENV"
 
       - name: Fetch XAU readiness and status
         shell: bash
