@@ -6,6 +6,7 @@ import { DEMO_HISTORY_OUTCOMES_CODE, DEMO_HISTORY_OUTCOMES_STYLE } from "./demo-
 import { DEMO_LIVE_PRICES_SCRIPT } from "./demo-live-prices";
 import { DEMO_OPERATION_DOSSIERS_CODE, DEMO_OPERATION_DOSSIERS_STYLE } from "./demo-operation-dossiers";
 import { DEMO_PERFORMANCE_FORENSICS_CODE } from "./demo-performance-forensics";
+import { DEMO_XAU_POSITION_CODE, DEMO_XAU_POSITION_STYLE } from "./demo-xau-position";
 import { DEMO_ZERO_POSITION_DIAGNOSTICS_CODE, DEMO_ZERO_POSITION_DIAGNOSTICS_STYLE } from "./demo-zero-position-diagnostics";
 
 const DEMO_SINGLE_TREASURY_CODE = String.raw`
@@ -149,11 +150,11 @@ export async function demoDashboard(): Promise<Response> {
   const response = standaloneDemoDashboard();
   const liveScript = DEMO_LIVE_PRICES_SCRIPT.replace(
     "})();\n</script>",
-    `${DEMO_SINGLE_TREASURY_CODE}\n${DEMO_HISTORY_EVIDENCE_INTEGRITY_CODE}\n${DEMO_HISTORY_OUTCOMES_CODE}\n${DEMO_OPERATION_DOSSIERS_CODE}\n${DEMO_PERFORMANCE_FORENSICS_CODE}\n${DEMO_ZERO_POSITION_DIAGNOSTICS_CODE}\n${DEMO_FLATLINE_WATCHDOG_CODE}\n${DEMO_GLOBAL_LOSS_RECOVERY_CODE}\n})();\n</script>`,
+    `${DEMO_SINGLE_TREASURY_CODE}\n${DEMO_HISTORY_EVIDENCE_INTEGRITY_CODE}\n${DEMO_HISTORY_OUTCOMES_CODE}\n${DEMO_OPERATION_DOSSIERS_CODE}\n${DEMO_PERFORMANCE_FORENSICS_CODE}\n${DEMO_ZERO_POSITION_DIAGNOSTICS_CODE}\n${DEMO_FLATLINE_WATCHDOG_CODE}\n${DEMO_GLOBAL_LOSS_RECOVERY_CODE}\n${DEMO_XAU_POSITION_CODE}\n})();\n</script>`,
   );
   let html = await response.text();
   html = html
-    .replace("</head>", `${DEMO_HISTORY_OUTCOMES_STYLE}${DEMO_OPERATION_DOSSIERS_STYLE}${DEMO_ZERO_POSITION_DIAGNOSTICS_STYLE}${DEMO_FLATLINE_WATCHDOG_STYLE}</head>`)
+    .replace("</head>", `${DEMO_HISTORY_OUTCOMES_STYLE}${DEMO_OPERATION_DOSSIERS_STYLE}${DEMO_ZERO_POSITION_DIAGNOSTICS_STYLE}${DEMO_FLATLINE_WATCHDOG_STYLE}${DEMO_XAU_POSITION_STYLE}</head>`)
     .replace("const TARGET=50;", "const TARGET=100;")
     .replace("Cuenta equivalente de 50 €, separada del capital técnico multi-estrategia.", "Tesorería PAPER única de 100 €; no suma ficticia de carteras por estrategia. PnL histórico íntegro y balances por estrategia solo comparativos.")
     .replace("Cuenta equivalente de 50 €; no suma ficticia de nueve carteras.", "Tesorería PAPER única de 100 €; no suma ficticia de carteras por estrategia.")
