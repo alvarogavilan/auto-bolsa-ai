@@ -11,6 +11,11 @@ import {
 } from "./kraken-private-lease";
 import { createXauPaperCycleLedger, type XauPaperCycleLedger } from "./xau-usd-cycle-ledger";
 import {
+  parseXauPaperPositionBook,
+  XAU_PAPER_POSITION_KEY,
+  type XauPaperPositionBook,
+} from "./xau-usd-paper-position";
+import {
   runPersistentXauPaperCycle,
   XAU_PAPER_LEDGER_KEY,
   type XauPaperStateStore,
@@ -84,10 +89,20 @@ export class BotState extends BaseBotState {
     }
   }
 
+  private async xauPositionBook(): Promise<XauPaperPositionBook> {
+    const raw = await this.feeContext.storage.get<string>(XAU_PAPER_POSITION_KEY);
+    return parseXauPaperPositionBook(raw ?? null);
+  }
+
   private async xauStatusResponse(): Promise<Response> {
+    const [ledger, positionBook] = await Promise.all([
+      this.xauLedger(),
+      this.xauPositionBook(),
+    ]);
     return Response.json(
       {
-        ...(await this.xauLedger()),
+        ...ledger,
+        positionBook,
         mode: "paper",
         liveTrading: false,
         realOrderSubmission: false,
