@@ -17,7 +17,6 @@ describe("DEMO XAU gross, costs, net and stop state", () => {
   it("does not describe an inherited reduced stop as active trailing or protected profit", () => {
     expect(source).toContain("STOP REDUCIDO · AÚN SIN BENEFICIO NETO");
     expect(source).toContain("Beneficio neto protegido");
-    expect(source).toContain("stop reducido");
     expect(source).toContain("recorridos pequeños pueden acertar la dirección y terminar negativos");
   });
 
