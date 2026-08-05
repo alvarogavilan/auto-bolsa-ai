@@ -2,7 +2,7 @@ import coreWorker, {
   BotState,
   ResearchLabState,
 } from "./index";
-import { CoordinatedLiveExecutorState as LiveExecutorState } from "./live-executor-state-coordinated";
+import { GoldLiveExecutorState as LiveExecutorState } from "./live-executor-state-gold";
 import {
   auditPilotAccountCleanliness,
   enrichReadinessWithAccountCleanliness,
