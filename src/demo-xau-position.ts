@@ -2,16 +2,17 @@ import { DEMO_MARKET_UNIVERSE_CODE, DEMO_MARKET_UNIVERSE_STYLE } from "./demo-ma
 
 export const DEMO_XAU_POSITION_STYLE = String.raw`
 <style>
-#xau-paper-panel{margin:16px 0;padding:16px;border:1px solid #8b6f22;border-radius:16px;background:linear-gradient(135deg,rgba(139,111,34,.18),rgba(21,28,50,.96))}
-#xau-paper-panel h2{margin:0 0 10px}#xau-paper-panel .xau-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:8px}.xau-metric{padding:10px;border-radius:12px;background:rgba(7,11,24,.58);border:1px solid rgba(255,255,255,.09)}.xau-metric span{display:block;color:#aeb8d4;font-size:12px}.xau-metric strong{display:block;margin-top:4px}.xau-ok{color:#5ee6a8}.xau-warn{color:#ffd86b}.xau-negative{color:#ff8a8a}.xau-note{margin-top:10px;color:#c5cde3;font-size:13px}.xau-live-result{margin:12px 0;padding:14px;border-radius:14px;background:rgba(7,11,24,.76);border:1px solid rgba(255,216,107,.35)}.xau-live-result .headline{font-size:13px;color:#c5cde3}.xau-live-result .amount{font-size:28px;font-weight:800;margin-top:5px}
+#xau-paper-panel,#xau-history-panel{margin:16px 0;padding:16px;border:1px solid #8b6f22;border-radius:16px;background:linear-gradient(135deg,rgba(139,111,34,.18),rgba(21,28,50,.96))}
+#xau-paper-panel h2,#xau-history-panel h2{margin:0 0 10px}#xau-paper-panel .xau-grid,#xau-history-panel .xau-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:8px}.xau-metric{padding:10px;border-radius:12px;background:rgba(7,11,24,.58);border:1px solid rgba(255,255,255,.09)}.xau-metric span{display:block;color:#aeb8d4;font-size:12px}.xau-metric strong{display:block;margin-top:4px}.xau-ok{color:#5ee6a8}.xau-warn{color:#ffd86b}.xau-negative{color:#ff8a8a}.xau-note{margin-top:10px;color:#c5cde3;font-size:13px}.xau-live-result,.xau-history-trade{margin:12px 0;padding:14px;border-radius:14px;background:rgba(7,11,24,.76);border:1px solid rgba(255,216,107,.35)}.xau-live-result .headline{font-size:13px;color:#c5cde3}.xau-live-result .amount{font-size:28px;font-weight:800;margin-top:5px}.xau-history-trade h3{margin:0 0 10px;font-size:17px}
 </style>` + DEMO_MARKET_UNIVERSE_STYLE;
 
 export const DEMO_XAU_POSITION_CODE = String.raw`
 (() => {
   const xauFmt = (value, digits = 2) => Number.isFinite(Number(value)) ? Number(value).toLocaleString('es-ES',{minimumFractionDigits:digits,maximumFractionDigits:digits}) : '—';
   const xauEur = (value) => Number.isFinite(Number(value)) ? xauFmt(value, 4) + ' €' : '—';
-  const xauEsc = (value) => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const xauEsc = (value) => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot',"'":'&#39;'}[c]));
   const xauTime = (value) => Number.isFinite(Number(value)) ? new Date(Number(value)).toLocaleTimeString('es-ES') : '—';
+  const xauDateTime = (value) => Number.isFinite(Number(value)) ? new Date(Number(value)).toLocaleString('es-ES') : '—';
 
   function ensureXauPanel() {
     let panel = document.getElementById('xau-paper-panel');
@@ -22,6 +23,17 @@ export const DEMO_XAU_POSITION_CODE = String.raw`
     const positionsNode = document.getElementById('positions');
     const summaryNode = document.getElementById('summary');
     (positionsNode || summaryNode || document.body).prepend(panel);
+    return panel;
+  }
+
+  function ensureXauHistoryPanel() {
+    const historyNode = document.getElementById('history');
+    if (!historyNode) return null;
+    let panel = document.getElementById('xau-history-panel');
+    if (panel) return panel;
+    panel = document.createElement('section');
+    panel.id = 'xau-history-panel';
+    historyNode.prepend(panel);
     return panel;
   }
 
@@ -38,6 +50,36 @@ export const DEMO_XAU_POSITION_CODE = String.raw`
       + '</div>';
   }
 
+  function renderXauHistory(book) {
+    const panel = ensureXauHistoryPanel();
+    if (!panel) return;
+    const closed = Array.isArray(book && book.closed) ? book.closed.slice().reverse() : [];
+    const metrics = book && book.metrics ? book.metrics : {};
+    if (!closed.length) {
+      panel.innerHTML = '<h2>🟡 Historial XAU/USD</h2><div class="xau-note">Todavía no existe ninguna operación XAU cerrada. Una posición abierta no se contabiliza como beneficio realizado.</div>';
+      return;
+    }
+    panel.innerHTML = '<h2>🟡 Historial XAU/USD</h2><div class="xau-note">Cerradas: '+xauEsc(closed.length)+' · Ganadoras: '+xauEsc(metrics.winners || 0)+' · Perdedoras: '+xauEsc(metrics.losers || 0)+' · PnL realizado: '+xauEur(metrics.realizedPnlEur || 0)+'</div>'
+      + closed.map((trade) => {
+          const net = Number(trade.realizedPnlEur ?? trade.netPnlEur ?? trade.pnlEur);
+          const gross = Number(trade.grossRealizedPnlEur ?? trade.grossPnlEur);
+          const costs = Number(trade.estimatedRoundTripCostEur ?? trade.costsEur);
+          const netClass = net >= 0 ? 'xau-ok' : 'xau-negative';
+          return '<article class="xau-history-trade">'
+            + '<h3>XAU/USD · '+xauEsc(String(trade.side || '').toUpperCase())+' · <span class="'+netClass+'">'+(net>=0?'+':'')+xauEur(net)+'</span></h3>'
+            + '<div class="xau-grid">'
+            + '<div class="xau-metric"><span>Entrada</span><strong>'+xauFmt(trade.entryPrice, 4)+'</strong></div>'
+            + '<div class="xau-metric"><span>Salida</span><strong>'+xauFmt(trade.exitPrice ?? trade.closePrice ?? trade.lastMarkPrice, 4)+'</strong></div>'
+            + '<div class="xau-metric"><span>Invertido</span><strong>'+xauEur(trade.budgetEur)+'</strong></div>'
+            + '<div class="xau-metric"><span>Beneficio bruto</span><strong>'+(gross>=0?'+':'')+xauEur(gross)+'</strong></div>'
+            + '<div class="xau-metric"><span>Costes</span><strong>'+xauEur(costs)+'</strong></div>'
+            + '<div class="xau-metric"><span>Resultado neto</span><strong class="'+netClass+'">'+(net>=0?'+':'')+xauEur(net)+'</strong></div>'
+            + '<div class="xau-metric"><span>Motivo de cierre</span><strong>'+xauEsc(trade.closeReason ?? trade.exitReason ?? trade.reason ?? 'mercado')+'</strong></div>'
+            + '<div class="xau-metric"><span>Cerrada</span><strong>'+xauDateTime(trade.closedAt ?? trade.exitedAt ?? trade.updatedAt)+'</strong></div>'
+            + '</div></article>';
+        }).join('');
+  }
+
   function renderXau(status) {
     const panel = ensureXauPanel();
     const book = status && status.positionBook;
@@ -45,12 +87,12 @@ export const DEMO_XAU_POSITION_CODE = String.raw`
       panel.innerHTML = '<h2>🟡 XAU/USD · Operación PAPER</h2><div class="xau-note xau-warn">El endpoint responde, pero no expone todavía el libro de posiciones.</div>';
       return;
     }
+    renderXauHistory(book);
     const open = book.open;
     const metrics = book.metrics || {};
     const treasury = book.treasury || null;
     if (!open) {
-      panel.innerHTML = '<h2>🟡 XAU/USD · Operación PAPER</h2><div class="xau-note">Sin posición XAU abierta. Cerradas: '+xauEsc(metrics.closed || 0)+' · PnL realizado: '+xauEur(metrics.realizedPnlEur || 0)+'</div>'
-        + treasuryHtml(treasury);
+      panel.innerHTML = '<h2>🟡 XAU/USD · Operación PAPER</h2><div class="xau-note">Sin posición XAU abierta. Cerradas: '+xauEsc(metrics.closed || 0)+' · PnL realizado: '+xauEur(metrics.realizedPnlEur || 0)+'</div>' + treasuryHtml(treasury);
       return;
     }
     const pnl = Number(open.unrealizedPnlEur);
@@ -83,9 +125,7 @@ export const DEMO_XAU_POSITION_CODE = String.raw`
       + '<div class="xau-metric"><span>Estado del stop</span><strong class="'+stopStateClass+'">'+stopState+'</strong></div>'
       + '<div class="xau-metric"><span>Objetivo</span><strong>'+xauFmt(open.targetPrice, 6)+'</strong></div>'
       + '<div class="xau-metric"><span>Beneficio neto protegido</span><strong>'+xauEur(open.protectedPnlEur)+'</strong></div>'
-      + '</div>'
-      + '<div class="xau-note"><b>Tesorería XAU persistida</b></div>'
-      + treasuryHtml(treasury)
+      + '</div><div class="xau-note"><b>Tesorería XAU persistida</b></div>' + treasuryHtml(treasury)
       + '<div class="xau-note">Una SELL puede tener beneficio bruto y resultado neto negativo mientras los costes estimados no estén cubiertos. El stop reducido conserva la mejora de riesgo heredada, pero no se presenta como beneficio protegido. LIVE y órdenes reales desactivados.</div>';
   }
 
