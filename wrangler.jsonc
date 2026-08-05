@@ -5,7 +5,7 @@
   "compatibility_date": "2026-07-31",
   "vars": {
     "TRADING_MODE": "paper",
-    "PAIR": "XBTEUR",
+    "PAIR": "PAXGEUR",
     "INITIAL_CASH_EUR": "100"
   },
   "durable_objects": {
