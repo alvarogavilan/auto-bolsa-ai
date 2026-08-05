@@ -26,26 +26,29 @@ function input(now: number, bid = 2399.8, ask = 2400): XauPaperRuntimeInput {
 }
 
 describe("XAU/USD PAPER position lifecycle", () => {
-  it("reserves capital and marks the treasury while the position is open", () => {
+  it("reserves the dynamically selected capital and marks the treasury while open", () => {
     const firstInput = input(1_000);
-    const book = applyXauPaperPositionCycle(createXauPaperPositionBook(), buildXauUsdPaperInstruction(firstInput), firstInput);
-    expect(book.open?.budgetEur).toBe(10);
-    expect(book.treasury.committedCapitalEur).toBe(10);
-    expect(book.treasury.cashEur).toBe(90);
+    const instruction = buildXauUsdPaperInstruction(firstInput);
+    const book = applyXauPaperPositionCycle(createXauPaperPositionBook(), instruction, firstInput);
+    const selectedBudget = instruction.sizing.selectedBudgetEur;
+    expect(book.open?.budgetEur).toBe(selectedBudget);
+    expect(book.treasury.committedCapitalEur).toBe(selectedBudget);
+    expect(book.treasury.cashEur).toBe(100 - selectedBudget);
     expect(book.treasury.unrealizedPnlEur).toBe(book.open?.unrealizedPnlEur);
     expect(book.treasury.equityEur).toBe(100 + (book.open?.unrealizedPnlEur ?? 0));
     expect(book.treasury.equityCurve.at(-1)?.event).toBe("open");
   });
 
-  it("migrates an already-open legacy position without duplicating capital", () => {
+  it("migrates an already-open legacy position without duplicating dynamic capital", () => {
     const firstInput = input(1_000);
     const current = applyXauPaperPositionCycle(createXauPaperPositionBook(), buildXauUsdPaperInstruction(firstInput), firstInput);
+    const selectedBudget = current.open?.budgetEur ?? 0;
     const legacy = JSON.parse(JSON.stringify(current)) as Record<string, unknown>;
     delete legacy.treasury;
     const migrated = parseXauPaperPositionBook(JSON.stringify(legacy));
     expect(migrated.treasury.migratedExistingPosition).toBe(true);
-    expect(migrated.treasury.committedCapitalEur).toBe(10);
-    expect(migrated.treasury.cashEur).toBe(90);
+    expect(migrated.treasury.committedCapitalEur).toBe(selectedBudget);
+    expect(migrated.treasury.cashEur).toBe(100 - selectedBudget);
     expect(migrated.treasury.equityCurve.at(-1)?.event).toBe("migration");
   });
 
@@ -63,7 +66,7 @@ describe("XAU/USD PAPER position lifecycle", () => {
   it("lets a meaningful winner run, closes coherently and releases capital", () => {
     const firstInput = input(1_000);
     let book = applyXauPaperPositionCycle(createXauPaperPositionBook(), buildXauUsdPaperInstruction(firstInput), firstInput);
-    const rally = input(2_000, 2600, 2600.2);
+    const rally = input(2_000, 2700, 2700.2);
     book = applyXauPaperPositionCycle(book, buildXauUsdPaperInstruction(rally), rally);
     expect(book.open?.trailingActive).toBe(true);
     expect(book.open?.protectedPnlEur).toBeGreaterThanOrEqual(0.5);

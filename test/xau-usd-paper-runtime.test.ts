@@ -41,7 +41,10 @@ describe("XAU/USD PAPER runtime", () => {
     const instruction = buildXauUsdPaperInstruction(healthyInput());
     expect(instruction.allowed).toBe(true);
     expect(instruction.action).toBe("buy");
-    expect(instruction.budgetEur).toBe(10);
+    expect(instruction.budgetEur).toBe(instruction.sizing.selectedBudgetEur);
+    expect(instruction.budgetEur).toBe(6);
+    expect(instruction.sizing.requestedMaximumEur).toBe(10);
+    expect(instruction.sizing.rationale.length).toBeGreaterThan(0);
     expect(instruction.referencePrice).toBe(2400.4);
     expect(instruction.stopPrice).toBeLessThan(instruction.referencePrice as number);
     expect(instruction.initialTargetPrice).toBeGreaterThan(instruction.referencePrice as number);
@@ -69,7 +72,7 @@ describe("XAU/USD PAPER runtime", () => {
     expect(instruction.blockers.join(" ")).toContain("evento macro");
   });
 
-  it("enforces the 5-10 euro PAPER sizing range", () => {
+  it("enforces the minimum and caps the requested maximum at 30 euros", () => {
     const micro = healthyInput();
     micro.requestedBudgetEur = 4;
     expect(buildXauUsdPaperInstruction(micro).allowed).toBe(false);
@@ -78,6 +81,8 @@ describe("XAU/USD PAPER runtime", () => {
     oversized.requestedBudgetEur = 50;
     const instruction = buildXauUsdPaperInstruction(oversized);
     expect(instruction.allowed).toBe(true);
-    expect(instruction.budgetEur).toBe(10);
+    expect(instruction.sizing.requestedMaximumEur).toBe(30);
+    expect(instruction.budgetEur).toBe(18);
+    expect(instruction.budgetEur).toBeLessThanOrEqual(30);
   });
 });

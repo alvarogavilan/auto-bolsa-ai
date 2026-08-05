@@ -3,6 +3,7 @@ import { appendXauPaperCycle, createXauPaperCycleLedger } from "../src/xau-usd-c
 import type { XauPaperInstruction } from "../src/xau-usd-paper-runtime";
 
 function instruction(allowed: boolean, blockers: string[] = []): XauPaperInstruction {
+  const budgetEur = allowed ? 10 : 0;
   return {
     schemaVersion: "xau-usd-paper-instruction-v1",
     createdAt: 1_000,
@@ -10,7 +11,7 @@ function instruction(allowed: boolean, blockers: string[] = []): XauPaperInstruc
     mode: "paper",
     action: allowed ? "buy" : "hold",
     allowed,
-    budgetEur: allowed ? 10 : 0,
+    budgetEur,
     referencePrice: allowed ? 2400 : null,
     stopPrice: allowed ? 2390 : null,
     initialTargetPrice: allowed ? 2420 : null,
@@ -25,6 +26,15 @@ function instruction(allowed: boolean, blockers: string[] = []): XauPaperInstruc
       consensusPct: allowed ? 80 : 40,
       riskRegime: "normal",
       votes: [], vetoes: blockers, reasons: [], liveTrading: false,
+    },
+    sizing: {
+      requestedMaximumEur: 10,
+      confidenceFactor: allowed ? 0.8 : 0.25,
+      rewardRiskFactor: 0.35,
+      volatilityFactor: 1,
+      exposureHeadroomEur: 30,
+      selectedBudgetEur: budgetEur,
+      rationale: [allowed ? "Fixture aprobada." : "Fixture bloqueada."],
     },
     blockers,
     liveTrading: false,
