@@ -10,9 +10,24 @@ export const DEMO_XAU_POSITION_CODE = String.raw`
 (() => {
   const xauFmt = (value, digits = 2) => Number.isFinite(Number(value)) ? Number(value).toLocaleString('es-ES',{minimumFractionDigits:digits,maximumFractionDigits:digits}) : '—';
   const xauEur = (value) => Number.isFinite(Number(value)) ? xauFmt(value, 4) + ' €' : '—';
-  const xauEsc = (value) => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot',"'":'&#39;'}[c]));
+  const xauPct = (value, digits = 3) => Number.isFinite(Number(value)) ? (Number(value) >= 0 ? '+' : '') + xauFmt(value, digits) + ' %' : '—';
+  const xauEsc = (value) => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const xauTime = (value) => Number.isFinite(Number(value)) ? new Date(Number(value)).toLocaleTimeString('es-ES') : '—';
   const xauDateTime = (value) => Number.isFinite(Number(value)) ? new Date(Number(value)).toLocaleString('es-ES') : '—';
+  const finite = (value) => Number.isFinite(Number(value));
+  const sideMove = (side, entry, exit) => String(side || '').toLowerCase() === 'sell' ? Number(entry) - Number(exit) : Number(exit) - Number(entry);
+  const economics = (trade, exitValue, netValue, grossValue, costValue) => {
+    const entry = Number(trade.entryPrice);
+    const exit = Number(exitValue);
+    const capital = Number(trade.budgetEur);
+    const quantity = finite(trade.quantityOz) ? Number(trade.quantityOz) : (finite(capital) && finite(entry) && entry > 0 ? capital / entry : NaN);
+    const movement = finite(entry) && finite(exit) ? sideMove(trade.side, entry, exit) : NaN;
+    const marketMovePct = finite(entry) && entry > 0 && finite(movement) ? movement / entry * 100 : NaN;
+    const grossPct = finite(capital) && capital > 0 && finite(grossValue) ? Number(grossValue) / capital * 100 : NaN;
+    const costPct = finite(capital) && capital > 0 && finite(costValue) ? Number(costValue) / capital * 100 : NaN;
+    const netPct = finite(capital) && capital > 0 && finite(netValue) ? Number(netValue) / capital * 100 : NaN;
+    return {capital, quantity, movement, marketMovePct, grossPct, costPct, netPct};
+  };
 
   function ensureXauPanel() {
     let panel = document.getElementById('xau-paper-panel');
@@ -61,22 +76,27 @@ export const DEMO_XAU_POSITION_CODE = String.raw`
     }
     panel.innerHTML = '<h2>🟡 Historial XAU/USD</h2><div class="xau-note">Cerradas: '+xauEsc(closed.length)+' · Ganadoras: '+xauEsc(metrics.winners || 0)+' · Perdedoras: '+xauEsc(metrics.losers || 0)+' · PnL realizado: '+xauEur(metrics.realizedPnlEur || 0)+'</div>'
       + closed.map((trade) => {
+          const exit = Number(trade.exitPrice ?? trade.closePrice ?? trade.lastMarkPrice);
           const net = Number(trade.realizedPnlEur ?? trade.netPnlEur ?? trade.pnlEur);
           const gross = Number(trade.grossRealizedPnlEur ?? trade.grossPnlEur);
           const costs = Number(trade.estimatedRoundTripCostEur ?? trade.costsEur);
+          const econ = economics(trade, exit, net, gross, costs);
           const netClass = net >= 0 ? 'xau-ok' : 'xau-negative';
+          const grossClass = gross >= 0 ? 'xau-ok' : 'xau-negative';
           return '<article class="xau-history-trade">'
-            + '<h3>XAU/USD · '+xauEsc(String(trade.side || '').toUpperCase())+' · <span class="'+netClass+'">'+(net>=0?'+':'')+xauEur(net)+'</span></h3>'
+            + '<h3>XAU/USD · '+xauEsc(String(trade.side || '').toUpperCase())+' · <span class="'+netClass+'">'+(net>=0?'+':'')+xauEur(net)+' ('+xauPct(econ.netPct)+')</span></h3>'
             + '<div class="xau-grid">'
             + '<div class="xau-metric"><span>Entrada</span><strong>'+xauFmt(trade.entryPrice, 4)+'</strong></div>'
-            + '<div class="xau-metric"><span>Salida</span><strong>'+xauFmt(trade.exitPrice ?? trade.closePrice ?? trade.lastMarkPrice, 4)+'</strong></div>'
-            + '<div class="xau-metric"><span>Invertido</span><strong>'+xauEur(trade.budgetEur)+'</strong></div>'
-            + '<div class="xau-metric"><span>Beneficio bruto</span><strong>'+(gross>=0?'+':'')+xauEur(gross)+'</strong></div>'
-            + '<div class="xau-metric"><span>Costes</span><strong>'+xauEur(costs)+'</strong></div>'
-            + '<div class="xau-metric"><span>Resultado neto</span><strong class="'+netClass+'">'+(net>=0?'+':'')+xauEur(net)+'</strong></div>'
+            + '<div class="xau-metric"><span>Salida</span><strong>'+xauFmt(exit, 4)+'</strong></div>'
+            + '<div class="xau-metric"><span>Movimiento favorable</span><strong>'+xauFmt(econ.movement, 4)+' puntos · '+xauPct(econ.marketMovePct)+'</strong></div>'
+            + '<div class="xau-metric"><span>Capital asignado / exposición</span><strong>'+xauEur(econ.capital)+'</strong></div>'
+            + '<div class="xau-metric"><span>Cantidad aproximada</span><strong>'+xauFmt(econ.quantity, 6)+' oz XAU</strong></div>'
+            + '<div class="xau-metric"><span>Beneficio bruto</span><strong class="'+grossClass+'">'+(gross>=0?'+':'')+xauEur(gross)+' · '+xauPct(econ.grossPct)+'</strong></div>'
+            + '<div class="xau-metric"><span>Costes estimados</span><strong>'+xauEur(costs)+' · '+xauFmt(econ.costPct,3)+' %</strong></div>'
+            + '<div class="xau-metric"><span>Resultado neto real</span><strong class="'+netClass+'">'+(net>=0?'+':'')+xauEur(net)+' · '+xauPct(econ.netPct)+'</strong></div>'
             + '<div class="xau-metric"><span>Motivo de cierre</span><strong>'+xauEsc(trade.closeReason ?? trade.exitReason ?? trade.reason ?? 'mercado')+'</strong></div>'
             + '<div class="xau-metric"><span>Cerrada</span><strong>'+xauDateTime(trade.closedAt ?? trade.exitedAt ?? trade.updatedAt)+'</strong></div>'
-            + '</div></article>';
+            + '</div><div class="xau-note">Los puntos del oro no son un porcentaje: el rendimiento económico se calcula sobre el movimiento porcentual del precio y la exposición real. Los costes se descuentan después.</div></article>';
         }).join('');
   }
 
@@ -99,34 +119,36 @@ export const DEMO_XAU_POSITION_CODE = String.raw`
     const gross = Number(open.grossUnrealizedPnlEur);
     const costs = Number(open.estimatedRoundTripCostEur);
     const invested = Number(open.budgetEur);
-    const currentNetValue = Number.isFinite(invested) && Number.isFinite(pnl) ? invested + pnl : NaN;
-    const roiPct = Number.isFinite(invested) && invested > 0 && Number.isFinite(pnl) ? (pnl / invested) * 100 : NaN;
+    const mark = Number(open.lastMarkPrice);
+    const econ = economics(open, mark, pnl, gross, costs);
+    const currentNetValue = finite(invested) && finite(pnl) ? invested + pnl : NaN;
     const pnlClass = pnl >= 0 ? 'xau-ok' : 'xau-negative';
     const grossClass = gross >= 0 ? 'xau-ok' : 'xau-negative';
-    const stopMoved = Number.isFinite(Number(open.stopPrice)) && Number.isFinite(Number(open.initialStopPrice)) && Number(open.stopPrice) !== Number(open.initialStopPrice);
+    const stopMoved = finite(open.stopPrice) && finite(open.initialStopPrice) && Number(open.stopPrice) !== Number(open.initialStopPrice);
     const stopState = open.trailingActive ? 'TRAILING ACTIVO' : (stopMoved ? 'STOP REDUCIDO · AÚN SIN BENEFICIO NETO' : 'STOP INICIAL');
     const stopStateClass = open.trailingActive ? 'xau-ok' : 'xau-warn';
-    const tickAgeMs = Number.isFinite(Number(open.lastMarkedAt)) ? Math.max(0, Date.now() - Number(open.lastMarkedAt)) : null;
+    const tickAgeMs = finite(open.lastMarkedAt) ? Math.max(0, Date.now() - Number(open.lastMarkedAt)) : null;
     const tickClass = tickAgeMs !== null && tickAgeMs <= 15000 ? 'xau-ok' : 'xau-warn';
     panel.innerHTML = '<h2>🟡 XAU/USD · Posición abierta</h2>'
-      + '<div class="xau-live-result"><div class="headline">Resultado neto PAPER sobre '+xauEur(invested)+' invertidos</div><div class="amount '+pnlClass+'">'+(pnl>=0?'+':'')+xauEur(pnl)+'</div><div class="xau-note">Bruto: <b class="'+grossClass+'">'+(gross>=0?'+':'')+xauEur(gross)+'</b> · Costes estimados: <b>'+xauEur(costs)+'</b> · Neto: <b class="'+pnlClass+'">'+(pnl>=0?'+':'')+xauEur(pnl)+'</b></div><div class="xau-note">Valor neto actual: <b>'+xauEur(currentNetValue)+'</b> · Rentabilidad neta: <b class="'+pnlClass+'">'+(roiPct>=0?'+':'')+xauFmt(roiPct,3)+' %</b></div></div>'
+      + '<div class="xau-live-result"><div class="headline">Resultado neto PAPER sobre '+xauEur(invested)+' de exposición</div><div class="amount '+pnlClass+'">'+(pnl>=0?'+':'')+xauEur(pnl)+'</div><div class="xau-note">Movimiento XAU: <b>'+xauFmt(econ.movement,4)+' puntos · '+xauPct(econ.marketMovePct)+'</b></div><div class="xau-note">Bruto: <b class="'+grossClass+'">'+(gross>=0?'+':'')+xauEur(gross)+' ('+xauPct(econ.grossPct)+')</b> · Costes: <b>'+xauEur(costs)+' ('+xauFmt(econ.costPct,3)+' %)</b> · Neto: <b class="'+pnlClass+'">'+(pnl>=0?'+':'')+xauEur(pnl)+' ('+xauPct(econ.netPct)+')</b></div></div>'
       + '<div class="xau-grid">'
-      + '<div class="xau-metric"><span>Dinero invertido</span><strong>'+xauEur(invested)+'</strong></div>'
-      + '<div class="xau-metric"><span>Beneficio bruto</span><strong class="'+grossClass+'">'+(gross>=0?'+':'')+xauEur(gross)+'</strong></div>'
-      + '<div class="xau-metric"><span>Costes estimados</span><strong>'+xauEur(costs)+'</strong></div>'
-      + '<div class="xau-metric"><span>Ganancia / pérdida neta</span><strong class="'+pnlClass+'">'+(pnl>=0?'+':'')+xauEur(pnl)+'</strong></div>'
+      + '<div class="xau-metric"><span>Capital asignado / exposición</span><strong>'+xauEur(invested)+'</strong></div>'
+      + '<div class="xau-metric"><span>Cantidad aproximada</span><strong>'+xauFmt(econ.quantity,6)+' oz XAU</strong></div>'
       + '<div class="xau-metric"><span>Valor neto actual</span><strong class="'+pnlClass+'">'+xauEur(currentNetValue)+'</strong></div>'
+      + '<div class="xau-metric"><span>Beneficio bruto</span><strong class="'+grossClass+'">'+(gross>=0?'+':'')+xauEur(gross)+' · '+xauPct(econ.grossPct)+'</strong></div>'
+      + '<div class="xau-metric"><span>Costes estimados</span><strong>'+xauEur(costs)+' · '+xauFmt(econ.costPct,3)+' %</strong></div>'
+      + '<div class="xau-metric"><span>Ganancia / pérdida neta</span><strong class="'+pnlClass+'">'+(pnl>=0?'+':'')+xauEur(pnl)+' · '+xauPct(econ.netPct)+'</strong></div>'
       + '<div class="xau-metric"><span>Break-even neto</span><strong>'+xauFmt(open.netBreakEvenPrice, 6)+'</strong></div>'
       + '<div class="xau-metric"><span>Dirección</span><strong>'+xauEsc(String(open.side || '').toUpperCase())+'</strong></div>'
       + '<div class="xau-metric"><span>Entrada</span><strong>'+xauFmt(open.entryPrice, 2)+'</strong></div>'
-      + '<div class="xau-metric"><span>Precio actual de salida</span><strong class="'+tickClass+'">'+xauFmt(open.lastMarkPrice, 4)+'</strong></div>'
+      + '<div class="xau-metric"><span>Precio actual de salida</span><strong class="'+tickClass+'">'+xauFmt(mark, 4)+'</strong></div>'
       + '<div class="xau-metric"><span>Último tick</span><strong class="'+tickClass+'">'+xauTime(open.lastMarkedAt)+'</strong></div>'
       + '<div class="xau-metric"><span>Stop actual</span><strong>'+xauFmt(open.stopPrice, 6)+'</strong></div>'
       + '<div class="xau-metric"><span>Estado del stop</span><strong class="'+stopStateClass+'">'+stopState+'</strong></div>'
       + '<div class="xau-metric"><span>Objetivo</span><strong>'+xauFmt(open.targetPrice, 6)+'</strong></div>'
       + '<div class="xau-metric"><span>Beneficio neto protegido</span><strong>'+xauEur(open.protectedPnlEur)+'</strong></div>'
       + '</div><div class="xau-note"><b>Tesorería XAU persistida</b></div>' + treasuryHtml(treasury)
-      + '<div class="xau-note">Una SELL puede tener beneficio bruto y resultado neto negativo mientras los costes estimados no estén cubiertos. El stop reducido conserva la mejora de riesgo heredada, pero no se presenta como beneficio protegido. LIVE y órdenes reales desactivados.</div>';
+      + '<div class="xau-note">Una variación grande en puntos puede ser pequeña en porcentaje. Con 10 € de exposición, 0,05 € de costes equivalen al 0,5 %, por lo que los recorridos pequeños pueden acertar la dirección y terminar negativos. LIVE y órdenes reales desactivados.</div>';
   }
 
   async function refreshXau() {

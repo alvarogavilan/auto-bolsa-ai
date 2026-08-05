@@ -4,8 +4,8 @@ import { describe, expect, it } from "vitest";
 const source = readFileSync(new URL("../src/demo-xau-position.ts", import.meta.url), "utf8");
 
 describe("DEMO XAU live EUR result", () => {
-  it("shows invested capital, current net value and net EUR result", () => {
-    expect(source).toContain("Dinero invertido");
+  it("shows assigned exposure, current net value and net EUR result", () => {
+    expect(source).toContain("Capital asignado / exposición");
     expect(source).toContain("Valor neto actual");
     expect(source).toContain("Ganancia / pérdida neta");
     expect(source).toContain("invested + pnl");
