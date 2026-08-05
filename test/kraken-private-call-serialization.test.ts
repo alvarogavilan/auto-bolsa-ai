@@ -89,13 +89,15 @@ describe("Kraken private call serialization", () => {
   it("uses one persisted BotState lease for admin and LIVE private operations", () => {
     const botState = readFileSync(join(ROOT, "src/bot-state.ts"), "utf8");
     const coordinated = readFileSync(join(ROOT, "src/live-executor-state-coordinated.ts"), "utf8");
+    const gold = readFileSync(join(ROOT, "src/live-executor-state-gold.ts"), "utf8");
     const entry = readFileSync(join(ROOT, "src/index-fire-drill.ts"), "utf8");
     expect(botState).toContain('const KRAKEN_PRIVATE_LEASE_KEY = "kraken-private-lease-v1"');
     expect(botState).toContain("blockConcurrencyWhile");
     expect(botState).toContain("withOwnPrivateLease");
     expect(coordinated).toContain("acquireKrakenPrivateLease");
     expect(coordinated).toContain("releaseKrakenPrivateLease");
-    expect(entry).toContain("CoordinatedLiveExecutorState as LiveExecutorState");
+    expect(gold).toContain("extends CoordinatedLiveExecutorState");
+    expect(entry).toContain("GoldLiveExecutorState as LiveExecutorState");
   });
 
   it("does not arm LIVE or add private execution to cron", () => {
