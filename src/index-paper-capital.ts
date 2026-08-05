@@ -3,6 +3,7 @@ import worker, {
   ResearchLabState,
   LiveExecutorState,
 } from "./index-fire-drill";
+import { krakenGoldReadinessResponse } from "./index-kraken-gold";
 import { derivePaperEconomicPerformance, type PaperEconomicStrategyLike } from "./paper-economic-performance";
 import { BOT_STATE_SINGLETON_NAME, type Env } from "./types";
 import { buildNativeXauFastPriceInput, buildNativeXauPaperInput } from "./xau-native-paper-feed";
@@ -222,6 +223,9 @@ export default {
     if (request.method === "GET" && path === "/api/paper/economics") return paperEconomicsResponse(request, runtimeEnv, ctx);
     if (request.method === "GET" && path === "/api/xau/status") return botState(runtimeEnv).fetch("https://bot/xau/status");
     if (request.method === "GET" && path === "/api/xau/readiness") return xauReadinessResponse(runtimeEnv);
+    if (request.method === "GET" && path === "/api/kraken/gold-readiness") {
+      return krakenGoldReadinessResponse(request, runtimeEnv, ctx, worker);
+    }
     if (request.method === "POST" && path === "/api/xau/cycle") {
       if (!authorized(request, runtimeEnv)) return new Response("Unauthorized", { status: 401 });
       return botState(runtimeEnv).fetch("https://bot/xau/cycle", {
