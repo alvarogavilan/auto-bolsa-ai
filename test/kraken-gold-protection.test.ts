@@ -45,6 +45,16 @@ describe("Kraken gold protection policy", () => {
     expect(plan.effectiveStopPrice).toBe(2469.9);
   });
 
+  it("never lowers an already valid protective stop", () => {
+    const plan = buildKrakenGoldProtectionPlan({
+      ...base,
+      currentPrice: 2460,
+      highestPrice: 2460,
+      previousStopPrice: 2440,
+    });
+    expect(plan.effectiveStopPrice).toBeGreaterThanOrEqual(2440);
+  });
+
   it("fails closed when the existing stop cannot remain below market", () => {
     expect(() => buildKrakenGoldProtectionPlan({
       ...base,
