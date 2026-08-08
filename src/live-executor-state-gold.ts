@@ -7,7 +7,7 @@ import {
   startKrakenPrivateLeaseHeartbeat,
 } from "./kraken-private-lease";
 import { livePreflightCertificateStorageKey } from "./live-preflight-certificate-store";
-import type { Env } from "./types";
+import { BOT_STATE_SINGLETON_NAME, type Env } from "./types";
 
 const STORAGE_KEY = "live-executor-snapshot";
 const JOURNAL_STORAGE_PREFIX = "live-submission-journal-v1:";
@@ -50,7 +50,7 @@ function protectionRequired(state: LiveExecutorSnapshot, liveEnabled: boolean): 
  */
 export class GoldLiveExecutorState extends CoordinatedLiveExecutorState {
   private async nextGoldNonce(): Promise<string> {
-    const botState = this.env.BOT_STATE.get(this.env.BOT_STATE.idFromName("singleton"));
+    const botState = this.env.BOT_STATE.get(this.env.BOT_STATE.idFromName(BOT_STATE_SINGLETON_NAME));
     const response = await botState.fetch("https://bot/kraken/next-nonce", { method: "POST" });
     if (!response.ok) throw new Error(`No se pudo obtener nonce para protección: HTTP ${response.status}`);
     const body = await response.json() as { nonce?: unknown };
