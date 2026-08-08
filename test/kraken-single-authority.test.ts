@@ -81,11 +81,15 @@ describe("Kraken single nonce authority (architectural)", () => {
     expect(callers).toEqual([NONCE_CONSUMER_FILE]);
   });
 
-  it("keeps the extra addOrder call site strictly validate-only", () => {
+  it("keeps validate-only isolated while sharing only the FOK request shape", () => {
     const content = read("live-order-preflight.ts");
+    const fokGateway = read("kraken-fok-order.ts");
     expect(content).toMatch(/function\s+forceValidateOnlyOrderRequest/);
     expect(content).toMatch(/validate:\s*true/);
-    expect(content).toMatch(/return\s+addOrder\s*\(\s*forceValidateOnlyOrderRequest\(request\)/s);
+    expect(content).toContain("addKrakenFokLimitOrder");
+    expect(content).toMatch(/addKrakenFokLimitOrder\s*\(\s*\{[\s\S]*validate:\s*true/);
+    expect(fokGateway).toMatch(/timeinforce:\s*["']FOK["']/);
+    expect(fokGateway).not.toMatch(/Date\.now\s*\(/);
     expect(content).not.toMatch(/from\s*["']\.\/live-transport["']/);
     expect(content).not.toMatch(/\.createOrder\s*\(/);
   });

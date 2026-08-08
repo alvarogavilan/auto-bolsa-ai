@@ -1,11 +1,11 @@
 import {
-  addOrder,
   fetchBalance,
   isKrakenOrderRejection,
   openOrders,
   type KrakenAddOrderRequest,
   type KrakenAddOrderResult,
 } from "./kraken";
+import { addKrakenFokLimitOrder } from "./kraken-fok-order";
 import {
   validateOrderIntent,
   type LivePairMetadata,
@@ -89,7 +89,9 @@ export function forceValidateOnlyOrderRequest(
 
 /**
  * Pasarela real y deliberadamente separada de `LiveOrderTransport.createOrder`.
- * El indicador `validate` se fija aquí y no procede del llamador.
+ * Tanto validate-only como el envío LIVE usan limit + FOK a través de la misma
+ * implementación de Kraken, de modo que el certificado valida la semántica
+ * exacta que después puede alcanzar el matching engine.
  */
 export class KrakenValidateOnlyOrderGateway implements ValidateOnlyOrderGateway {
   constructor(
@@ -99,13 +101,19 @@ export class KrakenValidateOnlyOrderGateway implements ValidateOnlyOrderGateway 
   ) {}
 
   async validate(request: Readonly<KrakenAddOrderRequest>): Promise<KrakenAddOrderResult> {
+    const forced = forceValidateOnlyOrderRequest(request);
+    if (forced.ordertype !== "limit" || forced.price === undefined) {
+      throw new Error("El preflight LIVE exige una orden limit con precio explícito");
+    }
     const nonce = await this.nextNonce();
-    return addOrder(
-      forceValidateOnlyOrderRequest(request),
-      this.apiKey,
-      this.apiSecret,
-      nonce,
-    );
+    return addKrakenFokLimitOrder({
+      pair: forced.pair,
+      type: forced.type,
+      volume: forced.volume,
+      price: forced.price,
+      clOrdId: forced.clOrdId,
+      validate: true,
+    }, this.apiKey, this.apiSecret, nonce);
   }
 }
 
@@ -199,7 +207,8 @@ function localBlockers(
 
 /**
  * Valida una intención con reglas locales y después con Kraken en modo
- * `validate=true`. Nunca comparte el camino que crea órdenes reales.
+ * `validate=true`. Nunca comparte credenciales con el camino que crea órdenes
+ * reales, pero sí comparte la forma exacta limit + FOK.
  *
  * Una respuesta que contenga cualquier `txid` se considera una anomalía
  * crítica: no se interpreta como éxito aunque Kraken no devuelva error.
@@ -266,7 +275,7 @@ export async function runLiveOrderPreflight(
       realOrderCreated: false,
       clOrdId,
       blockers: [],
-      message: "Kraken validó la orden en modo validate-only sin crearla.",
+      message: "Kraken validó la orden limit FOK en modo validate-only sin crearla.",
       description: response.descr.order ?? null,
       anomaly: null,
     };
@@ -281,7 +290,7 @@ export async function runLiveOrderPreflight(
         realOrderCreated: false,
         clOrdId,
         blockers: [...error.codes],
-        message: "Kraken evaluó y rechazó la orden de validación.",
+        message: "Kraken evaluó y rechazó la orden FOK de validación.",
         description: null,
         anomaly: null,
       };
@@ -297,7 +306,7 @@ export async function runLiveOrderPreflight(
       realOrderCreated: null,
       clOrdId,
       blockers: [message],
-      message: "No se pudo certificar el resultado del preflight.",
+      message: "No se pudo certificar el resultado del preflight FOK.",
       description: null,
       anomaly: "unverified_transport_result",
     };

@@ -1,4 +1,5 @@
-import { addOrder, cancelOrder, closedOrders, fetchBalance, isKrakenOrderRejection, openOrders, queryOrders } from "./kraken";
+import { cancelOrder, closedOrders, fetchBalance, isKrakenOrderRejection, openOrders, queryOrders } from "./kraken";
+import { addKrakenFokLimitOrder } from "./kraken-fok-order";
 
 export type LiveOrderSide = "buy" | "sell";
 
@@ -71,10 +72,9 @@ export class KrakenLiveOrderTransport implements LiveOrderTransport {
     return this.serializePrivateCall(async () => {
       const nonce = await this.nextNonce();
       try {
-        const result = await addOrder({
+        const result = await addKrakenFokLimitOrder({
           pair: request.pair,
           type: request.side,
-          ordertype: "limit",
           volume: request.volumeBase,
           price: request.limitPrice,
           clOrdId: request.clOrdId,
