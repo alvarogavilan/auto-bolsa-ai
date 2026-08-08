@@ -1,8 +1,9 @@
-import { closedOrders, fetchOhlc, openOrders } from "./kraken";
+import { fetchOhlc } from "./kraken";
 import { discoverKrakenGoldInstrument } from "./kraken-gold-instrument";
 import { buildKrakenGoldProtectionPlan } from "./kraken-gold-protection";
 import { placeKrakenStopLossOrder } from "./kraken-stop-loss";
 import type { LiveExecutorSnapshot } from "./live-executor";
+import { KrakenLiveOrderTransport } from "./live-transport";
 
 export const GOLD_PROTECTION_STORAGE_KEY = "kraken-gold-protection-v1";
 
@@ -63,15 +64,9 @@ async function findProtectionByClOrdId(
   apiSecret: string,
   nextNonce: () => Promise<string>,
 ): Promise<{ txid: string; status: string } | null> {
-  const openNonce = await nextNonce();
-  const open = await openOrders(apiKey, apiSecret, openNonce);
-  const openMatch = open.find((order) => order.clOrdId === clOrdId);
-  if (openMatch) return { txid: openMatch.txid, status: openMatch.status };
-
-  const closedNonce = await nextNonce();
-  const closed = await closedOrders(apiKey, apiSecret, closedNonce);
-  const closedMatch = closed.find((order) => order.clOrdId === clOrdId);
-  return closedMatch ? { txid: closedMatch.txid, status: closedMatch.status } : null;
+  const transport = new KrakenLiveOrderTransport(apiKey, apiSecret, nextNonce);
+  const order = await transport.findByClOrdId(clOrdId);
+  return order ? { txid: order.exchangeOrderId, status: order.status } : null;
 }
 
 function blocked(record: GoldProtectionRecord | null, blocker: string): GoldProtectionResult {
