@@ -1,5 +1,8 @@
 import type { XauPaperInstruction } from "./xau-usd-paper-runtime";
 
+const MAX_RETAINED_CYCLES = 120;
+const MAX_LEDGER_RECORD_BYTES = 400_000;
+
 export interface XauPaperCycleRecord {
   schemaVersion: "xau-usd-paper-cycle-v1";
   cycleId: string;
@@ -49,6 +52,23 @@ export function createXauPaperCycleLedger(): XauPaperCycleLedger {
   };
 }
 
+function encodedBytes(value: unknown): number {
+  return new TextEncoder().encode(JSON.stringify(value)).byteLength;
+}
+
+function compactCycles(records: XauPaperCycleRecord[]): XauPaperCycleRecord[] {
+  const retained: XauPaperCycleRecord[] = [];
+  let bytes = 0;
+  for (const record of records.slice(0, MAX_RETAINED_CYCLES)) {
+    const recordBytes = encodedBytes(record);
+    if (retained.length > 0 && bytes + recordBytes > MAX_LEDGER_RECORD_BYTES) break;
+    retained.push(record);
+    bytes += recordBytes;
+    if (bytes >= MAX_LEDGER_RECORD_BYTES) break;
+  }
+  return retained;
+}
+
 export function appendXauPaperCycle(
   ledger: XauPaperCycleLedger,
   instruction: XauPaperInstruction,
@@ -69,7 +89,7 @@ export function appendXauPaperCycle(
   const text = blockers.join(" ").toLowerCase();
   return {
     ...ledger,
-    cycles: [record, ...ledger.cycles].slice(0, 500),
+    cycles: compactCycles([record, ...ledger.cycles]),
     metrics: {
       cycles: (current.cycles ?? 0) + 1,
       decisionCycles: (current.decisionCycles ?? ((current.approved ?? 0) + (current.blocked ?? 0))) + (monitoring ? 0 : 1),

@@ -60,4 +60,20 @@ describe("XAU/USD PAPER cycle ledger", () => {
     ledger = appendXauPaperCycle(ledger, instruction(false, ["Cotización XAU/USD inválida o cruzada."]));
     expect(ledger.metrics).toMatchObject({ macroLockouts: 1, weakConsensus: 1, invalidQuotes: 1 });
   });
+
+  it("compacts retained evidence before Durable Object storage can grow unbounded", () => {
+    let ledger = createXauPaperCycleLedger();
+    for (let index = 0; index < 600; index += 1) {
+      const sample = instruction(index % 7 === 0);
+      sample.createdAt = 1_000 + index;
+      sample.cycleKind = index % 5 === 0 ? "decision" : "monitoring";
+      sample.cabinetDecision.reasons = ["e".repeat(6_000)];
+      ledger = appendXauPaperCycle(ledger, sample);
+    }
+    const bytes = new TextEncoder().encode(JSON.stringify(ledger)).byteLength;
+    expect(ledger.metrics.cycles).toBe(600);
+    expect(ledger.cycles.length).toBeLessThanOrEqual(120);
+    expect(bytes).toBeLessThan(430_000);
+    expect(ledger.liveTrading).toBe(false);
+  });
 });
