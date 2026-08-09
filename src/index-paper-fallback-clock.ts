@@ -26,35 +26,72 @@ function record(value: unknown): Record<string, unknown> {
     : {};
 }
 
+function stringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string")
+    : [];
+}
+
 async function temporarySafeKrakenProbe(env: Env): Promise<Response> {
   try {
-    const [runtime, account] = await Promise.all([
-      buildPilotRuntimeReadiness(env, true),
-      auditPilotAccountCleanliness(env, true),
-    ]);
+    // First resolve the central runtime readiness. Its Kraken connection path owns
+    // the persisted 15-minute lockout breaker. Do not perform any second private
+    // call unless that central check confirms the private API is connected.
+    const runtime = await buildPilotRuntimeReadiness(env, true);
     const kraken = record(runtime.kraken);
     const connection = record(kraken.connection);
     const permissions = record(kraken.permissions);
     const market = record(runtime.market);
     const executor = record(runtime.executor);
     const paper = record(runtime.paper);
+    const blockers = stringArray(runtime.blockers);
+    const connectionError = typeof connection.error === "string" ? connection.error : null;
+
+    if (connection.connected !== true) {
+      return Response.json({
+        schemaVersion: "temporary-kraken-live-readiness-safe-v2",
+        checkedAt: Date.now(),
+        broker: "kraken",
+        pair: typeof market.pair === "string" ? market.pair : env.PAIR ?? "PAXGEUR",
+        privateApiConfigured: connection.configured === true,
+        privateApiConnected: false,
+        permissionsAuditComplete: permissions.auditComplete === true,
+        permissionsSafe: permissions.safePermissions === true,
+        accountAuditSkipped: true,
+        accountAuditSkipReason: "PRIVATE_API_NOT_CONNECTED_OR_LOCKED",
+        pairResolved: market.available !== false && typeof market.canonicalPair === "string",
+        paperEligibleForLiveReview: paper.eligibleForLiveReview === true,
+        balanceReconciled: executor.lastBalanceCheckStatus === "consistent",
+        emergencyStopActive: executor.emergencyStopActive === true,
+        manualLiquidationPending: executor.emergencyStopRequiresManualLiquidation === true,
+        infrastructureEligibleForManualReview: false,
+        blockers,
+        error: connectionError,
+        liveTradingEnabled: env.LIVE_TRADING_ENABLED === "true",
+        tradingMode: env.TRADING_MODE ?? null,
+        readOnly: true,
+        realOrderCreated: false,
+      }, { status: 503, headers: { "Cache-Control": "no-store" } });
+    }
+
+    // Only after the central connection has succeeded may the account-cleanliness
+    // audit use its two sequential read-only calls under the global private lease.
+    const account = await auditPilotAccountCleanliness(env, true);
     const eurBalance = typeof account.eurBalance === "number" ? account.eurBalance : null;
-    const blockers = Array.isArray(runtime.blockers)
-      ? runtime.blockers.filter((value): value is string => typeof value === "string")
-      : [];
 
     return Response.json({
-      schemaVersion: "temporary-kraken-live-readiness-safe-v1",
+      schemaVersion: "temporary-kraken-live-readiness-safe-v2",
       checkedAt: Date.now(),
       broker: "kraken",
       pair: typeof market.pair === "string" ? market.pair : env.PAIR ?? "PAXGEUR",
-      privateApiConfigured: connection.configured === true,
-      privateApiConnected: connection.connected === true,
+      privateApiConfigured: true,
+      privateApiConnected: true,
       permissionsAuditComplete: permissions.auditComplete === true,
       permissionsSafe: permissions.safePermissions === true,
       withdrawalsDisabled: permissions.withdrawalPermission === false,
       depositsDisabled: permissions.depositPermission === false,
       earnDisabled: permissions.earnPermission === false,
+      accountAuditSkipped: false,
       accountCleanForBaseline: account.accountCleanForBaseline === true,
       noOpenOrders: account.openOrderCount === 0,
       noNonEurAssets: account.nonEurAssetCount === 0,
@@ -76,7 +113,7 @@ async function temporarySafeKrakenProbe(env: Env): Promise<Response> {
     }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     return Response.json({
-      schemaVersion: "temporary-kraken-live-readiness-safe-v1",
+      schemaVersion: "temporary-kraken-live-readiness-safe-v2",
       checkedAt: Date.now(),
       ready: false,
       error: error instanceof Error ? error.message : "UNKNOWN_KRAKEN_SAFE_PROBE_FAILURE",
