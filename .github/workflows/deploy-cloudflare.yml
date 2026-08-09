@@ -132,12 +132,50 @@ jobs:
         with:
           script: |
             const fs = require('node:fs');
-            const summary = fs.readFileSync('xau-production-summary.json', 'utf8');
+            const summary = JSON.parse(fs.readFileSync('xau-production-summary.json', 'utf8'));
+            const status = summary.status ?? {};
+            const positionBook = status.positionBook ?? null;
+            const compact = {
+              observedAt: summary.observedAt,
+              schemaVersion: summary.schemaVersion,
+              mode: summary.mode,
+              operational: summary.operational,
+              feedMode: summary.feedMode,
+              decisionCycles: summary.decisionCycles,
+              approvedDecisionCycles: summary.approvedDecisionCycles,
+              blockedDecisionCycles: summary.blockedDecisionCycles,
+              monitoringSamples: summary.monitoringSamples,
+              latestDecisionOutcome: summary.latestDecisionOutcome,
+              latestDecisionBlockers: summary.latestDecisionBlockers,
+              blockerDiagnostics: summary.blockerDiagnostics,
+              ledgerMetrics: status.metrics ?? null,
+              openPosition: positionBook?.open ?? null,
+              treasury: positionBook ? {
+                initialCashEur: positionBook.initialCashEur,
+                cashEur: positionBook.cashEur,
+                committedCapitalEur: positionBook.committedCapitalEur,
+                realizedPnlEur: positionBook.realizedPnlEur,
+                unrealizedPnlEur: positionBook.unrealizedPnlEur,
+                equityEur: positionBook.equityEur,
+              } : null,
+              liveTrading: summary.liveTrading,
+              realOrderSubmission: summary.realOrderSubmission,
+            };
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const body = [
+              `Commit: \`${context.sha}\``,
+              `Evidencia completa: artefacto \`xau-production-evidence-${context.sha}\` del workflow ${runUrl}`,
+              '',
+              '```json',
+              JSON.stringify(compact, null, 2),
+              '```',
+            ].join('\n');
+            if (body.length >= 60000) throw new Error(`Compact XAU evidence unexpectedly too large: ${body.length}`);
             await github.rest.issues.create({
               owner: context.repo.owner,
               repo: context.repo.repo,
               title: `XAU production evidence · ${context.sha.slice(0, 7)}`,
-              body: [`Commit: \`${context.sha}\``, '', '```json', summary, '```'].join('\n'),
+              body,
             });
 
       - name: Publish deployment result
