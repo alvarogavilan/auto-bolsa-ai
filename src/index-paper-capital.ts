@@ -15,6 +15,7 @@ export { BotState, ResearchLabState, LiveExecutorState };
 const XAU_FAST_INTERVAL_MS = 3_000;
 const XAU_FAST_SAMPLES_PER_MINUTE = 19;
 const XAU_BLOCKER_DIAGNOSTIC_WINDOW = 50;
+const XAU_SCHEDULER_STALE_MS = 3 * 60_000;
 
 function paperRuntimeEnv(env: Env): Env {
   if (env.INITIAL_CASH_EUR) return env;
@@ -127,9 +128,56 @@ function xauBlockerDiagnostics(status: Record<string, unknown>): {
   };
 }
 
+async function xauDecisionInput(env: Env): Promise<XauPaperRuntimeInput> {
+  if (env.XAU_PAPER_FEED_URL) {
+    const response = await fetch(env.XAU_PAPER_FEED_URL, { headers: { Accept: "application/json" } });
+    if (!response.ok) throw new Error(`XAU feed HTTP ${response.status}`);
+    return response.json<XauPaperRuntimeInput>();
+  }
+  return buildNativeXauPaperInput();
+}
+
+interface XauFeedDiagnostic {
+  checkedAt: number;
+  ok: boolean;
+  source: string | null;
+  quoteAgeMs: number | null;
+  macroSourcesAvailable: number;
+  macroSourcesFresh: number;
+  error: string | null;
+}
+
+async function xauFeedDiagnostic(env: Env, now = Date.now()): Promise<XauFeedDiagnostic> {
+  try {
+    const input = await xauDecisionInput(env);
+    return {
+      checkedAt: now,
+      ok: true,
+      source: typeof input.quote?.source === "string" ? input.quote.source : null,
+      quoteAgeMs: typeof input.quote?.observedAt === "number" ? Math.max(0, now - input.quote.observedAt) : null,
+      macroSourcesAvailable: Number(input.cabinet?.macro?.sourcesAvailable) || 0,
+      macroSourcesFresh: Number(input.cabinet?.macro?.sourcesFresh) || 0,
+      error: null,
+    };
+  } catch (error) {
+    return {
+      checkedAt: now,
+      ok: false,
+      source: null,
+      quoteAgeMs: null,
+      macroSourcesAvailable: 0,
+      macroSourcesFresh: 0,
+      error: error instanceof Error ? error.message : "Unknown XAU feed failure",
+    };
+  }
+}
+
 async function xauReadinessResponse(env: Env): Promise<Response> {
   const runtimeEnv = paperRuntimeEnv(env);
-  const status = await xauStatus(runtimeEnv);
+  const [status, feedDiagnostic] = await Promise.all([
+    xauStatus(runtimeEnv),
+    xauFeedDiagnostic(runtimeEnv),
+  ]);
   const externalFeedConfigured = Boolean(runtimeEnv.XAU_PAPER_FEED_URL?.trim());
   const metrics = status.metrics && typeof status.metrics === "object" ? status.metrics as Record<string, unknown> : {};
   const cycles = typeof metrics.cycles === "number" ? metrics.cycles : 0;
@@ -144,19 +192,32 @@ async function xauReadinessResponse(env: Env): Promise<Response> {
   const latestDecisionBlockers = Array.isArray(latestDecisionCycle?.blockers)
     ? latestDecisionCycle.blockers.filter((value): value is string => typeof value === "string")
     : [];
+  const latestDecisionObservedAt = typeof latestDecisionCycle?.observedAt === "number" ? latestDecisionCycle.observedAt : null;
+  const latestDecisionAgeMs = latestDecisionObservedAt === null ? null : Math.max(0, Date.now() - latestDecisionObservedAt);
+  const schedulerStalled = latestDecisionAgeMs === null || latestDecisionAgeMs > XAU_SCHEDULER_STALE_MS;
   const blockerDiagnostics = xauBlockerDiagnostics(status);
+  const macroReady = feedDiagnostic.macroSourcesFresh >= 3;
+  const runtimeBlockers = [
+    ...(!feedDiagnostic.ok && feedDiagnostic.error ? [`XAU_FEED_UNAVAILABLE: ${feedDiagnostic.error}`] : []),
+    ...(schedulerStalled ? ["XAU_SCHEDULER_STALLED: no hay una decisión persistida en los últimos 3 minutos"] : []),
+  ];
 
   return Response.json({
     schemaVersion: "xau-usd-paper-readiness-v6",
     market: "XAU/USD",
     mode: "paper",
-    operational: true,
+    operational: feedDiagnostic.ok && !schedulerStalled,
     marketObservationEnabled: true,
-    entryProfile: externalFeedConfigured ? "full-technical-macro" : "strict-technical-paper-fallback",
-    feedMode: externalFeedConfigured ? "external-plus-native-fast-price" : "native-kraken-xaut-proxy",
+    entryProfile: externalFeedConfigured || macroReady ? "full-technical-macro" : "strict-technical-paper-fallback",
+    feedMode: externalFeedConfigured ? "external-plus-native-fast-price" : "native-kraken-xaut-plus-official-macro",
     externalFeedConfigured,
+    feedDiagnostic,
     automaticCycleEnabled: true,
     schedulerCron: "* * * * *",
+    schedulerStalled,
+    latestDecisionObservedAt,
+    latestDecisionAgeMs,
+    schedulerStaleAfterMs: XAU_SCHEDULER_STALE_MS,
     priceMonitoringIntervalSeconds: XAU_FAST_INTERVAL_MS / 1_000,
     fastSamplesPerMinute: XAU_FAST_SAMPLES_PER_MINUTE,
     decisionReanalysisSeconds: 60,
@@ -170,23 +231,14 @@ async function xauReadinessResponse(env: Env): Promise<Response> {
     latestDecisionBlockers,
     blockerDiagnostics,
     status,
-    paperEntryCapable: true,
-    paperEntryRequirements: externalFeedConfigured
+    paperEntryCapable: feedDiagnostic.ok,
+    paperEntryRequirements: externalFeedConfigured || macroReady
       ? ["Consenso técnico y macro completo", "evidencia fresca", "asimetría y spread válidos"]
       : ["Unanimidad técnica 100 %", "spread <= 0,05 %", "asimetría >= 2,5R", "sin veto de riesgo"],
-    blockers: latestDecisionOutcome === "blocked" ? latestDecisionBlockers : [],
+    blockers: [...runtimeBlockers, ...(latestDecisionOutcome === "blocked" ? latestDecisionBlockers : [])],
     liveTrading: false,
     realOrderSubmission: false,
   }, { headers: { "Cache-Control": "no-store" } });
-}
-
-async function xauDecisionInput(env: Env): Promise<XauPaperRuntimeInput> {
-  if (env.XAU_PAPER_FEED_URL) {
-    const response = await fetch(env.XAU_PAPER_FEED_URL, { headers: { Accept: "application/json" } });
-    if (!response.ok) throw new Error(`XAU feed HTTP ${response.status}`);
-    return response.json<XauPaperRuntimeInput>();
-  }
-  return buildNativeXauPaperInput();
 }
 
 async function submitXauCycle(env: Env, input: XauPaperRuntimeInput): Promise<void> {
@@ -248,9 +300,23 @@ export default {
 
   async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
     const runtimeEnv = paperRuntimeEnv(env);
-    if (shouldRunBaseStrategy(controller)) await worker.scheduled(controller, runtimeEnv, ctx);
-    await runXauDecisionCycle(runtimeEnv);
-    await runXauPaxgLiveCycle(runtimeEnv);
+    if (shouldRunBaseStrategy(controller)) {
+      try {
+        await worker.scheduled(controller, runtimeEnv, ctx);
+      } catch (error) {
+        console.error("BASE_STRATEGY_SCHEDULED_FAILURE", error);
+      }
+    }
+    try {
+      await runXauDecisionCycle(runtimeEnv);
+    } catch (error) {
+      console.error("XAU_DECISION_SCHEDULED_FAILURE", error);
+    }
+    try {
+      await runXauPaxgLiveCycle(runtimeEnv);
+    } catch (error) {
+      console.error("XAU_PAXG_SCHEDULED_FAILURE", error);
+    }
     ctx.waitUntil(runXauFastMonitoringSamples(runtimeEnv));
   },
 };

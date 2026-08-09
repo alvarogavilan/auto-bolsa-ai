@@ -40,7 +40,7 @@ describe("native XAU PAPER feed architecture", () => {
 
   it("persists an automatic native decision before starting background monitoring", () => {
     expect(runtimeSource).toContain("buildNativeXauPaperInput");
-    expect(runtimeSource).toContain('feedMode: externalFeedConfigured ? "external-plus-native-fast-price" : "native-kraken-xaut-proxy"');
+    expect(runtimeSource).toContain('feedMode: externalFeedConfigured ? "external-plus-native-fast-price" : "native-kraken-xaut-plus-official-macro"');
     const decision = runtimeSource.indexOf("await runXauDecisionCycle(runtimeEnv)");
     const monitoring = runtimeSource.indexOf("ctx.waitUntil(runXauFastMonitoringSamples(runtimeEnv))");
     expect(decision).toBeGreaterThan(-1);
