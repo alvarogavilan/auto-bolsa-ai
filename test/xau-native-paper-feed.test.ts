@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import fs from "node:fs";
 
 const feedSource = fs.readFileSync("src/xau-native-paper-feed.ts", "utf8");
+const macroSource = fs.readFileSync("src/xau-official-macro-feed.ts", "utf8");
 const runtimeSource = fs.readFileSync("src/index-paper-capital.ts", "utf8");
 const wranglerSource = fs.readFileSync("wrangler.jsonc", "utf8");
 
@@ -22,10 +23,15 @@ describe("native XAU PAPER feed architecture", () => {
     expect(feedSource).toContain('requireResult(tapeResponse, "post-trade")');
   });
 
-  it("keeps macro specialists neutral while exposing the strict technical PAPER fallback", () => {
-    expect(feedSource).toContain('dxyBiasForGold: "neutral"');
-    expect(feedSource).toContain('realYieldsBiasForGold: "neutral"');
-    expect(feedSource).toContain("sourcesFresh: 1");
+  it("uses official Fed/FRED macro series without weakening the strict PAPER fallback", () => {
+    expect(feedSource).toContain('buildOfficialXauMacroEvidence(now)');
+    expect(macroSource).toContain('id: "DTWEXBGS"');
+    expect(macroSource).toContain('id: "DFII10"');
+    expect(macroSource).toContain('id: "DFF"');
+    expect(macroSource).toContain('id: "CPIAUCSL"');
+    expect(macroSource).toContain("Promise.allSettled");
+    expect(macroSource).toContain('sourcesAvailable: 0');
+    expect(macroSource).toContain('sourcesFresh: 0');
     expect(runtimeSource).toContain('"strict-technical-paper-fallback"');
     expect(runtimeSource).toContain('"Unanimidad técnica 100 %"');
     expect(runtimeSource).toContain('"spread <= 0,05 %"');
