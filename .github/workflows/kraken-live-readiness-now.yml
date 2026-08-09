@@ -15,15 +15,21 @@ jobs:
     steps:
       - name: Read temporary production-safe Kraken probe
         id: probe
+        continue-on-error: true
         env:
           PROBE_URL: https://auto-bolsa-ai.k8mwkbp68y.workers.dev/api/ops/probe/kraken-20260810-ed735d0-b0c214b
         run: |
           set -euo pipefail
-          curl -fsS --retry 5 --retry-all-errors "$PROBE_URL" > kraken-live-readiness-safe.json
-          cat kraken-live-readiness-safe.json
+          code=$(curl -sS --retry 5 --retry-all-errors -o kraken-live-readiness-safe.raw -w '%{http_code}' "$PROBE_URL")
+          echo "http_status=$code" >> "$GITHUB_OUTPUT"
+          cat kraken-live-readiness-safe.raw || true
           node <<'NODE'
-          const d = require('./kraken-live-readiness-safe.json');
-          if (d.readOnly !== true || d.realOrderCreated !== false) process.exit(2);
+          const fs = require('node:fs');
+          const raw = fs.readFileSync('kraken-live-readiness-safe.raw','utf8');
+          let parsed = null;
+          try { parsed = JSON.parse(raw); } catch {}
+          fs.writeFileSync('kraken-live-readiness-safe.json', JSON.stringify({ raw, parsed }, null, 2));
+          if (!parsed || parsed.readOnly !== true || parsed.realOrderCreated !== false) process.exit(2);
           NODE
 
       - name: Upload safe readiness evidence
@@ -31,7 +37,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: kraken-live-readiness-now-${{ github.sha }}
-          path: kraken-live-readiness-safe.json
+          path: |
+            kraken-live-readiness-safe.raw
+            kraken-live-readiness-safe.json
           if-no-files-found: warn
           retention-days: 7
 
@@ -40,15 +48,19 @@ jobs:
         uses: actions/github-script@v7
         env:
           PROBE_OUTCOME: ${{ steps.probe.outcome }}
+          HTTP_STATUS: ${{ steps.probe.outputs.http_status }}
         with:
           script: |
             const fs = require('node:fs');
-            let payload = null;
-            try { payload = JSON.parse(fs.readFileSync('kraken-live-readiness-safe.json','utf8')); } catch {}
+            let evidence = null;
+            try { evidence = JSON.parse(fs.readFileSync('kraken-live-readiness-safe.json','utf8')); } catch {}
             const body = {
               checkedAt: new Date().toISOString(),
+              runId: context.runId,
               probeOutcome: process.env.PROBE_OUTCOME || 'unknown',
-              result: payload,
+              httpStatus: process.env.HTTP_STATUS || null,
+              result: evidence?.parsed ?? null,
+              raw: evidence?.parsed ? null : evidence?.raw ?? null,
               safety: 'READ_ONLY_DIAGNOSTIC_NO_REAL_ORDER',
             };
             await github.rest.issues.create({
@@ -62,4 +74,7 @@ jobs:
         if: always()
         env:
           PROBE_OUTCOME: ${{ steps.probe.outcome }}
-        run: test "$PROBE_OUTCOME" = "success"
+          HTTP_STATUS: ${{ steps.probe.outputs.http_status }}
+        run: |
+          test "$PROBE_OUTCOME" = "success"
+          test "$HTTP_STATUS" = "200"
