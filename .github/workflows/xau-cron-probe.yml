@@ -21,6 +21,7 @@ jobs:
           for attempt in $(seq 1 16); do
             now=$(date -u +%FT%TZ)
             curl -fsS --retry 3 --retry-all-errors "$url" -o readiness.json
+            set +e
             node - "$attempt" "$now" <<'NODE'
           const fs = require('node:fs');
           const [attempt, now] = process.argv.slice(2);
@@ -43,6 +44,7 @@ jobs:
           process.exit(2);
           NODE
             rc=$?
+            set -e
             if [ "$rc" -eq 0 ]; then
               echo "XAU scheduler recovered on attempt $attempt"
               exit 0
