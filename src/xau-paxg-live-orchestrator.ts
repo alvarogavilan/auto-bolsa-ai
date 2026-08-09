@@ -57,11 +57,10 @@ async function callExecutor(
   path: string,
   body?: unknown,
 ): Promise<{ ok: boolean; status: number; body: Record<string, unknown> }> {
-  const response = await executor(env).fetch(`https://live${path}`, {
-    method: body === undefined ? "GET" : "POST",
-    headers: { "Content-Type": "application/json" },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
+  const init: RequestInit = body === undefined
+    ? { method: "GET", headers: { "Content-Type": "application/json" } }
+    : { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) };
+  const response = await executor(env).fetch(`https://live${path}`, init);
   const parsed = object(await response.json().catch(() => ({})));
   return { ok: response.ok, status: response.status, body: parsed };
 }
