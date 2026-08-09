@@ -43,7 +43,8 @@ describe("XAU/USD PAPER readiness endpoint", () => {
     expect(source).toContain("blockedDecisionCycles: blocked");
     expect(source).toContain("latestDecisionOutcome");
     expect(source).toContain("latestDecisionBlockers");
-    expect(source).toContain("...latestDecisionBlockers");
+    expect(source).toContain("latestDecisionOutcome === \"blocked\" ? latestDecisionBlockers : []");
+    expect(source).toContain("runtimeBlockers");
   });
 
   it("isolates scheduled failures so one subsystem cannot suppress all later XAU monitoring", () => {
