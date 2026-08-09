@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 const ROOT = process.cwd();
 const source = readFileSync(join(ROOT, "src/index-fire-drill.ts"), "utf8");
 const paperWrapper = readFileSync(join(ROOT, "src/index-paper-capital.ts"), "utf8");
+const fallbackClock = readFileSync(join(ROOT, "src/index-paper-fallback-clock.ts"), "utf8");
 const wrangler = readFileSync(join(ROOT, "wrangler.jsonc"), "utf8");
 
 describe("GET /api/demo", () => {
@@ -33,9 +34,17 @@ describe("GET /api/demo", () => {
     expect(paperWrapper).toContain('from "./index-fire-drill"');
     expect(paperWrapper).toContain('INITIAL_CASH_EUR: "100"');
     expect(paperWrapper).toContain("getUTCMinutes() % 5 === 0");
-    expect(wrangler).toContain('"main": "src/index-paper-capital.ts"');
+    expect(wrangler).toContain('"main": "src/index-paper-fallback-clock.ts"');
     expect(wrangler).toContain('"TRADING_MODE": "paper"');
     expect(wrangler).toContain('"*/2 * * * *"');
+  });
+
+  it("mantiene el reloj alternativo estrictamente PAPER-only", () => {
+    expect(fallbackClock).toContain('url.pathname === "/api/xau/paper-clock"');
+    expect(fallbackClock).toContain('env.TRADING_MODE === "paper"');
+    expect(fallbackClock).toContain('env.LIVE_TRADING_ENABLED !== "true"');
+    expect(fallbackClock).toContain('reason: "PAPER_ONLY_CLOCK"');
+    expect(fallbackClock).toContain("realOrderSubmission: false");
   });
 
   it("evita caché para que el iPhone reciba estado actual", () => {

@@ -70,6 +70,7 @@ describe("pilot fire drill", () => {
     const core = readFileSync(join(ROOT, "src/index.ts"), "utf8");
     const adapter = readFileSync(join(ROOT, "src/index-fire-drill.ts"), "utf8");
     const paperWrapper = readFileSync(join(ROOT, "src/index-paper-capital.ts"), "utf8");
+    const fallbackClock = readFileSync(join(ROOT, "src/index-paper-fallback-clock.ts"), "utf8");
     const wrangler = readFileSync(join(ROOT, "wrangler.jsonc"), "utf8");
 
     expect(core).toContain('url.pathname === "/api/pilot/submit"');
@@ -83,6 +84,9 @@ describe("pilot fire drill", () => {
     expect(adapter).toContain("return coreWorker.scheduled(controller, env, ctx)");
     expect(paperWrapper).toContain('from "./index-fire-drill"');
     expect(paperWrapper).toContain('INITIAL_CASH_EUR: "100"');
-    expect(wrangler).toContain('"main": "src/index-paper-capital.ts"');
+    expect(fallbackClock).toContain('from "./index-paper-capital"');
+    expect(fallbackClock).toContain('env.TRADING_MODE === "paper"');
+    expect(fallbackClock).toContain('env.LIVE_TRADING_ENABLED !== "true"');
+    expect(wrangler).toContain('"main": "src/index-paper-fallback-clock.ts"');
   });
 });
