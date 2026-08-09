@@ -1,0 +1,57 @@
+name: XAU Cron Probe
+
+on:
+  push:
+    branches:
+      - ops/xau-cron-probe
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    steps:
+      - name: Wait for XAU scheduler recovery
+        shell: bash
+        run: |
+          set -euo pipefail
+          url="https://auto-bolsa-ai.k8mwkbp68y.workers.dev/api/xau/readiness"
+          for attempt in $(seq 1 16); do
+            now=$(date -u +%FT%TZ)
+            curl -fsS --retry 3 --retry-all-errors "$url" -o readiness.json
+            node - "$attempt" "$now" <<'NODE'
+          const fs = require('node:fs');
+          const [attempt, now] = process.argv.slice(2);
+          const d = JSON.parse(fs.readFileSync('readiness.json', 'utf8'));
+          const out = {
+            attempt: Number(attempt),
+            now,
+            operational: d.operational,
+            schedulerStalled: d.schedulerStalled,
+            latestDecisionObservedAt: d.latestDecisionObservedAt,
+            latestDecisionAgeMs: d.latestDecisionAgeMs,
+            decisionCycles: d.decisionCycles,
+            monitoringSamples: d.monitoringSamples,
+            feedDiagnostic: d.feedDiagnostic,
+            blockers: d.blockers,
+          };
+          console.log(JSON.stringify(out));
+          if (d.feedDiagnostic?.ok !== true) process.exit(3);
+          if (d.schedulerStalled === false && Number(d.latestDecisionAgeMs) <= 180000) process.exit(0);
+          process.exit(2);
+          NODE
+            rc=$?
+            if [ "$rc" -eq 0 ]; then
+              echo "XAU scheduler recovered on attempt $attempt"
+              exit 0
+            fi
+            if [ "$rc" -eq 3 ]; then
+              echo "Current XAU feed is unhealthy; aborting propagation wait."
+              exit 3
+            fi
+            if [ "$attempt" -lt 16 ]; then sleep 60; fi
+          done
+          echo "XAU scheduler did not recover within the propagation window."
+          exit 1
