@@ -1,12 +1,13 @@
 import worker, {
   BotState,
   ResearchLabState,
-  LiveExecutorState,
 } from "./index-fire-drill";
+import { LiveExecutorState } from "./live-executor-state-protected";
 import { krakenGoldReadinessResponse } from "./index-kraken-gold";
 import { derivePaperEconomicPerformance, type PaperEconomicStrategyLike } from "./paper-economic-performance";
 import { BOT_STATE_SINGLETON_NAME, type Env } from "./types";
 import { buildNativeXauFastPriceInput, buildNativeXauPaperInput } from "./xau-native-paper-feed";
+import { runXauPaxgLiveCycle } from "./xau-paxg-live-orchestrator";
 import type { XauPaperRuntimeInput } from "./xau-usd-paper-runtime";
 
 export { BotState, ResearchLabState, LiveExecutorState };
@@ -234,6 +235,14 @@ export default {
         body: await request.text(),
       });
     }
+    if (request.method === "POST" && path === "/api/pilot/auto-cycle") {
+      if (!authorized(request, runtimeEnv)) return new Response("Unauthorized", { status: 401 });
+      const result = await runXauPaxgLiveCycle(runtimeEnv);
+      return Response.json(result, {
+        status: result.action === "blocked" ? 409 : 200,
+        headers: { "Cache-Control": "no-store" },
+      });
+    }
     return worker.fetch(request, paperRuntimeEnv(env), ctx);
   },
 
@@ -241,6 +250,7 @@ export default {
     const runtimeEnv = paperRuntimeEnv(env);
     if (shouldRunBaseStrategy(controller)) await worker.scheduled(controller, runtimeEnv, ctx);
     await runXauDecisionCycle(runtimeEnv);
+    await runXauPaxgLiveCycle(runtimeEnv);
     ctx.waitUntil(runXauFastMonitoringSamples(runtimeEnv));
   },
 };
