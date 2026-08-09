@@ -135,6 +135,7 @@ jobs:
             const summary = JSON.parse(fs.readFileSync('xau-production-summary.json', 'utf8'));
             const status = summary.status ?? {};
             const positionBook = status.positionBook ?? null;
+            const treasury = positionBook?.treasury ?? null;
             const compact = {
               observedAt: summary.observedAt,
               schemaVersion: summary.schemaVersion,
@@ -150,13 +151,14 @@ jobs:
               blockerDiagnostics: summary.blockerDiagnostics,
               ledgerMetrics: status.metrics ?? null,
               openPosition: positionBook?.open ?? null,
-              treasury: positionBook ? {
-                initialCashEur: positionBook.initialCashEur,
-                cashEur: positionBook.cashEur,
-                committedCapitalEur: positionBook.committedCapitalEur,
-                realizedPnlEur: positionBook.realizedPnlEur,
-                unrealizedPnlEur: positionBook.unrealizedPnlEur,
-                equityEur: positionBook.equityEur,
+              treasury: treasury ? {
+                initialCapitalEur: treasury.initialCapitalEur,
+                cashEur: treasury.cashEur,
+                committedCapitalEur: treasury.committedCapitalEur,
+                realizedPnlEur: treasury.realizedPnlEur,
+                unrealizedPnlEur: treasury.unrealizedPnlEur,
+                equityEur: treasury.equityEur,
+                availableCapitalEur: treasury.availableCapitalEur,
               } : null,
               liveTrading: summary.liveTrading,
               realOrderSubmission: summary.realOrderSubmission,
