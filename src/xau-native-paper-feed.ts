@@ -1,3 +1,4 @@
+import { buildOfficialXauMacroEvidence } from "./xau-official-macro-feed";
 import type { XauPaperRuntimeInput } from "./xau-usd-paper-runtime";
 
 type Bias = "long" | "short" | "neutral";
@@ -103,9 +104,10 @@ export async function buildNativeXauFastPriceInput(now = Date.now()): Promise<Xa
 }
 
 export async function buildNativeXauPaperInput(now = Date.now()): Promise<XauPaperRuntimeInput> {
-  const [bookResponse, tapeResponse] = await Promise.all([
+  const [bookResponse, tapeResponse, macro] = await Promise.all([
     fetchJson<KrakenPreTradeResponse>(PRE_TRADE_URL),
     fetchJson<KrakenPostTradeResponse>(POST_TRADE_URL),
+    buildOfficialXauMacroEvidence(now),
   ]);
   const book = requireResult(bookResponse, "pre-trade");
   const tape = requireResult(tapeResponse, "post-trade");
@@ -150,16 +152,7 @@ export async function buildNativeXauPaperInput(now = Date.now()): Promise<XauPap
         distanceToInvalidationPct: invalidationPct,
         projectedMovePct,
       },
-      macro: {
-        dxyBiasForGold: "neutral",
-        realYieldsBiasForGold: "neutral",
-        centralBankBias: "neutral",
-        inflationBias: "neutral",
-        geopoliticalBias: "neutral",
-        highImpactEventWithinMinutes: null,
-        sourcesAvailable: 1,
-        sourcesFresh: 1,
-      },
+      macro,
       openXauExposureEur: 0,
       paperEquityEur: 100,
     },
