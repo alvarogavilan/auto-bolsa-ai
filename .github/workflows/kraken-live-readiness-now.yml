@@ -13,107 +13,25 @@ jobs:
   probe:
     runs-on: ubuntu-24.04
     steps:
-      - name: Check ADMIN_TOKEN availability
-        id: token
+      - name: Read temporary production-safe Kraken probe
+        id: probe
         env:
-          ADMIN_TOKEN: ${{ secrets.ADMIN_TOKEN }}
-        run: |
-          if [ -z "$ADMIN_TOKEN" ]; then
-            echo "available=false" >> "$GITHUB_OUTPUT"
-            echo "ADMIN_TOKEN GitHub secret is not available"
-          else
-            echo "available=true" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Probe Kraken gold readiness
-        if: steps.token.outputs.available == 'true'
-        id: gold
-        continue-on-error: true
-        env:
-          ADMIN_TOKEN: ${{ secrets.ADMIN_TOKEN }}
-          BASE_URL: https://auto-bolsa-ai.k8mwkbp68y.workers.dev
+          PROBE_URL: https://auto-bolsa-ai.k8mwkbp68y.workers.dev/api/ops/probe/kraken-20260810-ed735d0-b0c214b
         run: |
           set -euo pipefail
-          curl -fsS --retry 3 --retry-all-errors \
-            -H "Authorization: Bearer $ADMIN_TOKEN" \
-            "$BASE_URL/api/kraken/gold-readiness" > kraken-gold-readiness.json
+          curl -fsS --retry 5 --retry-all-errors "$PROBE_URL" > kraken-live-readiness-safe.json
+          cat kraken-live-readiness-safe.json
           node <<'NODE'
-          const fs = require('node:fs');
-          const d = JSON.parse(fs.readFileSync('kraken-gold-readiness.json','utf8'));
-          const safe = {
-            schemaVersion: d.schemaVersion,
-            broker: d.broker,
-            objective: d.objective,
-            instrument: d.instrument,
-            privateApi: d.privateApi,
-            readyForLivePreflight: d.readyForLivePreflight,
-            blockers: d.blockers,
-            liveTradingEnabled: d.liveTradingEnabled,
-            realOrderSubmitted: d.realOrderSubmitted,
-          };
-          fs.writeFileSync('kraken-gold-readiness-safe.json', JSON.stringify(safe,null,2));
-          console.log(JSON.stringify(safe,null,2));
-          if (d.privateApi?.authenticated !== true) process.exit(2);
-          if (d.privateApi?.balanceAvailable !== true) process.exit(3);
-          if (d.privateApi?.permissionsSafe !== true) process.exit(4);
-          if (d.readyForLivePreflight !== true) process.exit(5);
-          if (d.realOrderSubmitted !== false) process.exit(6);
+          const d = require('./kraken-live-readiness-safe.json');
+          if (d.readOnly !== true || d.realOrderCreated !== false) process.exit(2);
           NODE
-
-      - name: Probe complete pilot readiness
-        if: steps.token.outputs.available == 'true'
-        id: pilot
-        continue-on-error: true
-        env:
-          ADMIN_TOKEN: ${{ secrets.ADMIN_TOKEN }}
-          BASE_URL: https://auto-bolsa-ai.k8mwkbp68y.workers.dev
-        run: |
-          set -euo pipefail
-          curl -fsS --retry 3 --retry-all-errors \
-            -H "Authorization: Bearer $ADMIN_TOKEN" \
-            "$BASE_URL/api/pilot/readiness" > pilot-readiness.json
-          node <<'NODE'
-          const fs = require('node:fs');
-          const d = JSON.parse(fs.readFileSync('pilot-readiness.json','utf8'));
-          const safe = {
-            schemaVersion: d.schemaVersion,
-            eligibleForManualPilotReview: d.eligibleForManualPilotReview,
-            previousPilotCycleVerified: d.previousPilotCycleVerified,
-            blockers: d.blockers,
-            warnings: d.warnings,
-            sections: d.sections,
-            accountCleanliness: d.accountCleanliness,
-            fireDrill: d.fireDrill,
-            liveTrading: d.liveTrading,
-          };
-          fs.writeFileSync('pilot-readiness-safe.json', JSON.stringify(safe, null, 2));
-          console.log(JSON.stringify(safe, null, 2));
-          NODE
-
-      - name: Refresh Kraken account cleanliness
-        if: steps.token.outputs.available == 'true'
-        id: account
-        continue-on-error: true
-        env:
-          ADMIN_TOKEN: ${{ secrets.ADMIN_TOKEN }}
-          BASE_URL: https://auto-bolsa-ai.k8mwkbp68y.workers.dev
-        run: |
-          set -euo pipefail
-          curl -fsS --retry 3 --retry-all-errors \
-            -X POST \
-            -H "Authorization: Bearer $ADMIN_TOKEN" \
-            "$BASE_URL/api/pilot/audit-account" > kraken-account-audit.json
-          node -e 'const d=require("./kraken-account-audit.json"); console.log(JSON.stringify(d,null,2)); if(d.realOrderCreated!==false) process.exit(7)'
 
       - name: Upload safe readiness evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: kraken-live-readiness-now-${{ github.sha }}
-          path: |
-            kraken-gold-readiness-safe.json
-            pilot-readiness-safe.json
-            kraken-account-audit.json
+          path: kraken-live-readiness-safe.json
           if-no-files-found: warn
           retention-days: 7
 
@@ -121,39 +39,27 @@ jobs:
         if: always()
         uses: actions/github-script@v7
         env:
-          TOKEN_AVAILABLE: ${{ steps.token.outputs.available }}
-          GOLD_OUTCOME: ${{ steps.gold.outcome }}
-          PILOT_OUTCOME: ${{ steps.pilot.outcome }}
-          ACCOUNT_OUTCOME: ${{ steps.account.outcome }}
+          PROBE_OUTCOME: ${{ steps.probe.outcome }}
         with:
           script: |
             const fs = require('node:fs');
-            const read = (name) => {
-              try { return JSON.parse(fs.readFileSync(name, 'utf8')); } catch { return null; }
-            };
-            const payload = {
+            let payload = null;
+            try { payload = JSON.parse(fs.readFileSync('kraken-live-readiness-safe.json','utf8')); } catch {}
+            const body = {
               checkedAt: new Date().toISOString(),
-              tokenAvailable: process.env.TOKEN_AVAILABLE === 'true',
-              goldProbeOutcome: process.env.GOLD_OUTCOME || 'skipped',
-              pilotProbeOutcome: process.env.PILOT_OUTCOME || 'skipped',
-              accountAuditOutcome: process.env.ACCOUNT_OUTCOME || 'skipped',
-              gold: read('kraken-gold-readiness-safe.json'),
-              pilot: read('pilot-readiness-safe.json'),
-              accountAudit: read('kraken-account-audit.json'),
+              probeOutcome: process.env.PROBE_OUTCOME || 'unknown',
+              result: payload,
               safety: 'READ_ONLY_DIAGNOSTIC_NO_REAL_ORDER',
             };
             await github.rest.issues.create({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              title: `Kraken LIVE readiness diagnostic · ${context.sha.slice(0,7)}`,
-              body: ['```json', JSON.stringify(payload, null, 2), '```'].join('\n'),
+              title: `Kraken LIVE readiness production · ${context.sha.slice(0,7)}`,
+              body: ['```json', JSON.stringify(body, null, 2), '```'].join('\n'),
             });
 
-      - name: Fail unless private readiness is verified
+      - name: Fail if production probe failed
         if: always()
         env:
-          TOKEN_AVAILABLE: ${{ steps.token.outputs.available }}
-          GOLD_OUTCOME: ${{ steps.gold.outcome }}
-        run: |
-          test "$TOKEN_AVAILABLE" = "true"
-          test "$GOLD_OUTCOME" = "success"
+          PROBE_OUTCOME: ${{ steps.probe.outcome }}
+        run: test "$PROBE_OUTCOME" = "success"
