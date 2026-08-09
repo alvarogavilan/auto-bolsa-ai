@@ -1,0 +1,43 @@
+name: XAU Production Probe
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/xau-production-probe.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Read production XAU readiness
+        run: |
+          curl -fsS --retry 3 --retry-all-errors \
+            https://auto-bolsa-ai.k8mwkbp68y.workers.dev/api/xau/readiness \
+            -o readiness.json
+          node <<'NODE'
+          const fs = require('node:fs');
+          const r = JSON.parse(fs.readFileSync('readiness.json', 'utf8'));
+          const evidence = {
+            checkedAt: new Date().toISOString(),
+            operational: r.operational,
+            feedDiagnostic: r.feedDiagnostic,
+            schedulerStalled: r.schedulerStalled,
+            latestDecisionObservedAt: r.latestDecisionObservedAt,
+            latestDecisionAgeMs: r.latestDecisionAgeMs,
+            decisionCycles: r.decisionCycles,
+            monitoringSamples: r.monitoringSamples,
+            approvedDecisionCycles: r.approvedDecisionCycles,
+            blockedDecisionCycles: r.blockedDecisionCycles,
+            latestDecisionOutcome: r.latestDecisionOutcome,
+            liveTrading: r.liveTrading,
+            realOrderSubmission: r.realOrderSubmission,
+          };
+          console.log(JSON.stringify(evidence, null, 2));
+          if (r.liveTrading !== false || r.realOrderSubmission !== false) throw new Error('Safety regression: LIVE/real orders must remain disabled');
+          if (r.feedDiagnostic?.ok !== true) throw new Error(`XAU feed unavailable: ${r.feedDiagnostic?.error ?? 'unknown'}`);
+          if (r.schedulerStalled !== false) throw new Error(`XAU scheduler still stalled; latestDecisionAgeMs=${r.latestDecisionAgeMs}`);
+          if (!(typeof r.latestDecisionAgeMs === 'number' && r.latestDecisionAgeMs <= 180000)) throw new Error(`XAU decision is not fresh: ${r.latestDecisionAgeMs}`);
+          NODE
