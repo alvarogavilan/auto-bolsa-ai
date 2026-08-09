@@ -8,9 +8,11 @@ describe("PAPER runtime fallback capital", () => {
       vars?: Record<string, string>;
     };
     const wrapper = readFileSync("src/index-paper-capital.ts", "utf8");
+    const fallbackClock = readFileSync("src/index-paper-fallback-clock.ts", "utf8");
 
-    expect(config.main).toBe("src/index-paper-capital.ts");
+    expect(config.main).toBe("src/index-paper-fallback-clock.ts");
     expect(config.vars?.INITIAL_CASH_EUR).toBe("100");
+    expect(fallbackClock).toContain('from "./index-paper-capital"');
     expect(wrapper).toContain('INITIAL_CASH_EUR: "100"');
     expect(wrapper).toContain("paperRuntimeEnv(env)");
     expect(wrapper).toContain("worker.fetch(request, paperRuntimeEnv(env), ctx)");
