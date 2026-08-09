@@ -35,7 +35,7 @@ describe("GET /api/demo", () => {
     expect(paperWrapper).toContain("getUTCMinutes() % 5 === 0");
     expect(wrangler).toContain('"main": "src/index-paper-capital.ts"');
     expect(wrangler).toContain('"TRADING_MODE": "paper"');
-    expect(wrangler).toContain('"* * * * *"');
+    expect(wrangler).toContain('"*/2 * * * *"');
   });
 
   it("evita caché para que el iPhone reciba estado actual", () => {

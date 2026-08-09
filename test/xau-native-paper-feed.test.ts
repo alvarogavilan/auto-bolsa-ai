@@ -53,6 +53,6 @@ describe("native XAU PAPER feed architecture", () => {
     expect(runtimeSource).toContain("const XAU_FAST_SAMPLES_PER_MINUTE = 19");
     expect(runtimeSource).toContain("buildNativeXauFastPriceInput");
     expect(runtimeSource).toContain("getUTCMinutes() % 5 === 0");
-    expect(wranglerSource).toContain('"crons": ["* * * * *"]');
+    expect(wranglerSource).toContain('"crons": ["*/2 * * * *"]');
   });
 });
