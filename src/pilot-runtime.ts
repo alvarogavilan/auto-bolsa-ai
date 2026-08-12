@@ -6,6 +6,7 @@ import {
   LIVE_EXECUTOR_SINGLETON_NAME,
   type Env,
 } from "./types";
+import { calculateXauMicroLiveReadiness } from "./xau-live-readiness";
 
 const KRAKEN_SAFETY_CACHE_TTL_SECONDS = 10 * 60;
 
@@ -173,8 +174,9 @@ export async function buildPilotRuntimeReadiness(
 ): Promise<Record<string, unknown>> {
   const pair = env.PAIR || "XBTEUR";
   const executor = liveExecutorState(env);
-  const [paperResponse, labResponse, liveResponse, detailsResponse, kraken, pairResolution] = await Promise.all([
+  const [paperResponse, xauResponse, labResponse, liveResponse, detailsResponse, kraken, pairResolution] = await Promise.all([
     botState(env).fetch("https://bot/readiness"),
+    botState(env).fetch("https://bot/xau/status"),
     researchLabState(env).fetch("https://lab/status"),
     executor.fetch("https://live/status"),
     executor.fetch("https://live/readiness-details"),
@@ -183,6 +185,16 @@ export async function buildPilotRuntimeReadiness(
   ]);
 
   const paper = await paperResponse.json<PaperReadiness>();
+  const xauStatus = xauResponse.ok ? await xauResponse.json<unknown>() : null;
+  const xauMicroLive = xauStatus
+    ? calculateXauMicroLiveReadiness(xauStatus)
+    : {
+        schemaVersion: "xau-micro-live-readiness-v1" as const,
+        eligible: false,
+        fullScaleEligible: false as const,
+        pilotMaximumOrderNotionalEur: 5 as const,
+        blockers: [`No se pudo leer la evidencia XAU (HTTP ${xauResponse.status})`],
+      };
   const lab = await responseJson(labResponse);
   const live = await liveResponse.json<LiveExecutorSnapshot>();
   const details = await responseJson(detailsResponse);
@@ -192,8 +204,17 @@ export async function buildPilotRuntimeReadiness(
   const warnings: string[] = [];
   const passedChecks: string[] = [];
 
-  if (paper.eligibleForLiveReview) passedChecks.push("La evidencia PAPER cumple los mínimos para revisión humana");
-  else blockers.push("La evidencia PAPER todavía no cumple todos los mínimos definidos");
+  if (xauMicroLive.eligible) {
+    passedChecks.push("La evidencia XAU cumple el gate del piloto micro-LIVE de hasta 5 €");
+  } else {
+    blockers.push(...xauMicroLive.blockers.map((value) => `XAU micro-LIVE: ${value}`));
+  }
+
+  if (paper.eligibleForLiveReview) {
+    passedChecks.push("La evidencia PAPER general permite también revisión para escalado completo");
+  } else {
+    warnings.push("El gate PAPER general todavía bloquea el escalado de capital; no bloquea el piloto XAU limitado a 5 €");
+  }
 
   if (demo.status === "error") blockers.push("El DEMO está en estado de error");
   else if (demo.status === "safety_halt") warnings.push("El DEMO está detenido por una protección de seguridad");
@@ -223,23 +244,30 @@ export async function buildPilotRuntimeReadiness(
 
   const certificate = details.preflightCertificate as Record<string, unknown> | undefined;
   if (certificate?.status === "valid") passedChecks.push("Certificado validate=true vigente");
-  else if (certificate?.status === "expired") warnings.push("El certificado validate=true ha caducado");
+  else if (certificate?.status === "expired") warnings.push("El certificado validate=true ha caducado y deberá renovarse antes de cualquier ejecución");
   else if (certificate?.status === "invalid") blockers.push("El certificado validate=true es inválido");
+  else warnings.push("No hay certificado validate=true vigente; se generará únicamente en el preflight previo a una ejecución autorizada");
 
   if (env.LIVE_TRADING_ENABLED === "true") {
-    warnings.push("LIVE_TRADING_ENABLED aparece activo, pero la ruta pública de envío sigue bloqueada");
+    warnings.push("LIVE_TRADING_ENABLED aparece activo");
   } else {
-    passedChecks.push("El interruptor LIVE permanece apagado");
+    passedChecks.push("El interruptor LIVE permanece apagado hasta activación explícita del propietario");
   }
 
+  const infrastructureEligibleForManualReview = blockers.length === 0;
+
   return {
-    schemaVersion: "pilot-runtime-readiness-v2",
+    schemaVersion: "pilot-runtime-readiness-v3",
     generatedAt: Date.now(),
-    liveTrading: false,
+    liveTrading: env.LIVE_TRADING_ENABLED === "true" && env.TRADING_MODE === "live",
     executorBound: true,
     submissionArmed: false,
     submissionEndpointAvailable: false,
     maximumOrderNotionalEur: 5,
+    eligibleForManualPilotReview: infrastructureEligibleForManualReview && xauMicroLive.eligible,
+    microLivePilotEligible: xauMicroLive.eligible,
+    fullScalePaperEligible: paper.eligibleForLiveReview,
+    xauMicroLive,
     paper,
     demo,
     kraken,
@@ -278,9 +306,9 @@ export async function buildPilotRuntimeReadiness(
     blockers,
     warnings,
     passedChecks,
-    infrastructureEligibleForManualReview: blockers.length === 0,
-    message: blockers.length === 0
-      ? "Infraestructura elegible para revisión humana. El envío real continúa sin ruta y sin activación."
-      : `Piloto todavía bloqueado por ${blockers.length} condición(es).`,
+    infrastructureEligibleForManualReview,
+    message: infrastructureEligibleForManualReview && xauMicroLive.eligible
+      ? "Piloto XAU micro-LIVE técnicamente elegible para revisión manual, limitado a 5 €. LIVE permanece apagado."
+      : `Piloto XAU todavía bloqueado por ${blockers.length} condición(es).`,
   };
 }
