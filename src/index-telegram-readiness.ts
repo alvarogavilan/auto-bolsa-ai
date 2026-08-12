@@ -3,6 +3,7 @@ import worker, {
   ResearchLabState,
   LiveExecutorState,
 } from "./index-paper-fallback-clock";
+import { liveArmingConfigurationStatus } from "./live-activation-readiness";
 import { telegramTradeApprovalReadiness } from "./telegram-trade-approval";
 import { LIVE_EXECUTOR_SINGLETON_NAME, type Env } from "./types";
 
@@ -10,30 +11,6 @@ export { BotState, ResearchLabState, LiveExecutorState };
 
 function liveExecutor(env: Env): DurableObjectStub {
   return env.LIVE_EXECUTOR.get(env.LIVE_EXECUTOR.idFromName(LIVE_EXECUTOR_SINGLETON_NAME));
-}
-
-export function liveArmingConfigurationStatus(env: Env): {
-  tradingMode: string | null;
-  liveTradingEnabledConfigured: boolean;
-  liveTradingEnabledRequested: boolean;
-  configurationReadyForLiveReview: boolean;
-  submissionHardBlocked: true;
-  failClosed: true;
-  requiredVariableName: "LIVE_TRADING_ENABLED";
-} {
-  const tradingMode = env.TRADING_MODE?.trim() || null;
-  const rawGate = env.LIVE_TRADING_ENABLED?.trim();
-  const liveTradingEnabledConfigured = typeof rawGate === "string" && rawGate.length > 0;
-  const liveTradingEnabledRequested = rawGate === "true";
-  return {
-    tradingMode,
-    liveTradingEnabledConfigured,
-    liveTradingEnabledRequested,
-    configurationReadyForLiveReview: tradingMode === "live" && liveTradingEnabledRequested,
-    submissionHardBlocked: true,
-    failClosed: true,
-    requiredVariableName: "LIVE_TRADING_ENABLED",
-  };
 }
 
 function html(title: string, body: string, status = 200): Response {
