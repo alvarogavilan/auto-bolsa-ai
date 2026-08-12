@@ -1,7 +1,7 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "auto-bolsa-ai",
-  "main": "src/index-paper-fallback-clock.ts",
+  "main": "src/index-telegram-readiness.ts",
   "compatibility_date": "2026-07-31",
   "vars": {
     "TRADING_MODE": "paper",
