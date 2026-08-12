@@ -7,7 +7,7 @@ import { krakenGoldReadinessResponse } from "./index-kraken-gold";
 import { derivePaperEconomicPerformance, type PaperEconomicStrategyLike } from "./paper-economic-performance";
 import { BOT_STATE_SINGLETON_NAME, type Env } from "./types";
 import { buildNativeXauFastPriceInput, buildNativeXauPaperInput } from "./xau-native-paper-feed";
-import { runXauPaxgLiveCycle } from "./xau-paxg-live-orchestrator";
+import { runXauPaxgLiveCycle } from "./xau-paxg-live-orchestrator-guarded";
 import type { XauPaperRuntimeInput } from "./xau-usd-paper-runtime";
 
 export { BotState, ResearchLabState, LiveExecutorState };

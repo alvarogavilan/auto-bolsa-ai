@@ -6,6 +6,7 @@ import worker, {
 import { auditPilotAccountCleanliness } from "./pilot-account-cleanliness";
 import { buildPilotRuntimeReadiness } from "./pilot-runtime";
 import { BOT_STATE_SINGLETON_NAME, type Env } from "./types";
+import { calculateXauMicroLiveReadiness } from "./xau-live-readiness";
 import { buildNativeXauPaperInput } from "./xau-native-paper-feed";
 
 export { BotState, ResearchLabState, LiveExecutorState };
@@ -32,11 +33,27 @@ function stringArray(value: unknown): string[] {
     : [];
 }
 
+async function xauMicroLiveReadiness(env: Env): Promise<Response> {
+  const response = await botState(env).fetch("https://bot/xau/status");
+  if (!response.ok) {
+    return Response.json({
+      schemaVersion: "xau-micro-live-readiness-v1",
+      eligible: false,
+      blockers: [`XAU status HTTP ${response.status}`],
+      liveTradingEnabled: env.LIVE_TRADING_ENABLED === "true",
+      tradingMode: env.TRADING_MODE ?? null,
+    }, { status: 503, headers: { "Cache-Control": "no-store" } });
+  }
+  const readiness = calculateXauMicroLiveReadiness(await response.json<unknown>());
+  return Response.json({
+    ...readiness,
+    liveTradingEnabled: env.LIVE_TRADING_ENABLED === "true",
+    tradingMode: env.TRADING_MODE ?? null,
+  }, { headers: { "Cache-Control": "no-store" } });
+}
+
 async function temporarySafeKrakenProbe(env: Env): Promise<Response> {
   try {
-    // First resolve the central runtime readiness. Its Kraken connection path owns
-    // the persisted 15-minute lockout breaker. Do not perform any second private
-    // call unless that central check confirms the private API is connected.
     const runtime = await buildPilotRuntimeReadiness(env, true);
     const kraken = record(runtime.kraken);
     const connection = record(kraken.connection);
@@ -74,8 +91,6 @@ async function temporarySafeKrakenProbe(env: Env): Promise<Response> {
       }, { status: 503, headers: { "Cache-Control": "no-store" } });
     }
 
-    // Only after the central connection has succeeded may the account-cleanliness
-    // audit use its two sequential read-only calls under the global private lease.
     const account = await auditPilotAccountCleanliness(env, true);
     const eurBalance = typeof account.eurBalance === "number" ? account.eurBalance : null;
 
@@ -148,6 +163,10 @@ async function runDirectPaperDecision(env: Env): Promise<Record<string, unknown>
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
+
+    if (request.method === "GET" && url.pathname === "/api/xau/micro-live-readiness") {
+      return xauMicroLiveReadiness(env);
+    }
 
     if (request.method === "GET" && url.pathname === TEMP_SAFE_KRAKEN_PROBE_PATH) {
       if (!paperClockAllowed(env)) {
