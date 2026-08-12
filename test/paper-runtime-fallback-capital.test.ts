@@ -9,9 +9,11 @@ describe("PAPER runtime fallback capital", () => {
     };
     const wrapper = readFileSync("src/index-paper-capital.ts", "utf8");
     const fallbackClock = readFileSync("src/index-paper-fallback-clock.ts", "utf8");
+    const telegramWrapper = readFileSync("src/index-telegram-readiness.ts", "utf8");
 
-    expect(config.main).toBe("src/index-paper-fallback-clock.ts");
+    expect(config.main).toBe("src/index-telegram-readiness.ts");
     expect(config.vars?.INITIAL_CASH_EUR).toBe("100");
+    expect(telegramWrapper).toContain('from "./index-paper-fallback-clock"');
     expect(fallbackClock).toContain('from "./index-paper-capital"');
     expect(wrapper).toContain('INITIAL_CASH_EUR: "100"');
     expect(wrapper).toContain("paperRuntimeEnv(env)");
