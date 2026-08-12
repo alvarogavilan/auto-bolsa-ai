@@ -12,6 +12,30 @@ function liveExecutor(env: Env): DurableObjectStub {
   return env.LIVE_EXECUTOR.get(env.LIVE_EXECUTOR.idFromName(LIVE_EXECUTOR_SINGLETON_NAME));
 }
 
+export function liveArmingConfigurationStatus(env: Env): {
+  tradingMode: string | null;
+  liveTradingEnabledConfigured: boolean;
+  liveTradingEnabledRequested: boolean;
+  configurationReadyForLiveReview: boolean;
+  submissionHardBlocked: true;
+  failClosed: true;
+  requiredVariableName: "LIVE_TRADING_ENABLED";
+} {
+  const tradingMode = env.TRADING_MODE?.trim() || null;
+  const rawGate = env.LIVE_TRADING_ENABLED?.trim();
+  const liveTradingEnabledConfigured = typeof rawGate === "string" && rawGate.length > 0;
+  const liveTradingEnabledRequested = rawGate === "true";
+  return {
+    tradingMode,
+    liveTradingEnabledConfigured,
+    liveTradingEnabledRequested,
+    configurationReadyForLiveReview: tradingMode === "live" && liveTradingEnabledRequested,
+    submissionHardBlocked: true,
+    failClosed: true,
+    requiredVariableName: "LIVE_TRADING_ENABLED",
+  };
+}
+
 function html(title: string, body: string, status = 200): Response {
   return new Response(`<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title><style>body{font-family:-apple-system,BlinkMacSystemFont,sans-serif;background:#0b0d10;color:#f5f7fa;margin:0;padding:24px}.card{max-width:560px;margin:24px auto;background:#161a20;border:1px solid #2b313b;border-radius:18px;padding:22px}.ok{color:#5ee69d}.bad{color:#ff7c86}.muted{color:#aab2bf;line-height:1.5}</style></head><body><div class="card">${body}</div></body></html>`, {
     status,
@@ -56,6 +80,16 @@ export default {
         realOrderCreated: false,
       }, {
         status: readiness.botCanPost ? 200 : 503,
+        headers: { "Cache-Control": "no-store" },
+      });
+    }
+
+    if (request.method === "GET" && url.pathname === "/api/live/activation-readiness") {
+      return Response.json({
+        schemaVersion: "live-activation-readiness-v1",
+        ...liveArmingConfigurationStatus(env),
+        realOrderCreated: false,
+      }, {
         headers: { "Cache-Control": "no-store" },
       });
     }
