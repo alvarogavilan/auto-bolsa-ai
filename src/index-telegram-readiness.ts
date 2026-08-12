@@ -24,6 +24,10 @@ function html(title: string, body: string, status = 200): Response {
   });
 }
 
+function record(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
 async function rejectTrade(url: URL, env: Env): Promise<Response> {
   const token = url.searchParams.get("token") ?? "";
   if (!token) return html("Rechazo inválido", '<h1 class="bad">Rechazo inválido</h1><p class="muted">Falta el token de la operación.</p>', 400);
@@ -33,7 +37,7 @@ async function rejectTrade(url: URL, env: Env): Promise<Response> {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ token }),
   });
-  const result = await response.json<Record<string, unknown>>().catch(() => ({}));
+  const result = record(await response.json().catch(() => ({})));
   if (!response.ok || result.ok !== true) {
     return html("No se pudo rechazar", '<h1 class="bad">No se pudo rechazar</h1><p class="muted">La autorización ha caducado, ya se utilizó o la orden ya no está preparada. No se ha enviado una nueva orden a Kraken.</p>', 409);
   }
