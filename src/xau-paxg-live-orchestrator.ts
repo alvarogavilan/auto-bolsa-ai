@@ -77,7 +77,7 @@ async function buildExitRequest(instruction: XauPaperInstruction, state: LiveExe
   if (volumeBase < resolution.metadata.orderMinBase) throw new Error("El inventario PAXG restante es inferior al mínimo operable de Kraken");
   const limitPrice = floorToDecimals(ticker.bid, resolution.metadata.priceDecimals);
   const notionalEur = Math.round(volumeBase * limitPrice * 1_000_000) / 1_000_000;
-  if (!(notionalEur > 0) || notionalEur > 5.25) throw new Error(`La salida PAXG excede el perímetro del piloto (${notionalEur} EUR)`);
+  if (!(notionalEur > 0)) throw new Error("La salida PAXG no tiene un nocional válido");
   return { idempotencyKey: `xau-paxg-close:${instruction.createdAt}`, pair: env.PAIR || "PAXGEUR", side: "sell", volumeBase, limitPrice, notionalEur };
 }
 
@@ -114,8 +114,10 @@ async function requestCertifiedApproval(
   if (!token || !Number.isFinite(expiresAt)) return { ok: false, phase: "approval-create", error: "Approval token missing" };
 
   const approvalUrl = `${PUBLIC_WORKER_BASE_URL}/api/pilot/authorize-trade?token=${encodeURIComponent(token)}`;
+  const rejectUrl = `${PUBLIC_WORKER_BASE_URL}/api/pilot/authorize-trade?token=${encodeURIComponent(token)}&decision=reject`;
   const notification = await sendTelegramTradeApproval(env, {
     approvalUrl,
+    rejectUrl,
     pair: request.pair,
     side: request.side,
     notionalEur: request.notionalEur,

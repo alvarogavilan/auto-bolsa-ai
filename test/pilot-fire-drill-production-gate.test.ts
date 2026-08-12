@@ -9,12 +9,14 @@ const read = (path: string): string => readFileSync(join(ROOT, path), "utf8");
 describe("production fire-drill gate", () => {
   it("deploys the PAPER wrapper while preserving fire drill and core isolation", () => {
     const wrangler = read("wrangler.jsonc");
+    const telegramWrapper = read("src/index-telegram-readiness.ts");
     const fallbackClock = read("src/index-paper-fallback-clock.ts");
     const paperWrapper = read("src/index-paper-capital.ts");
     const adapter = read("src/index-fire-drill.ts");
     const core = read("src/index.ts");
 
-    expect(wrangler).toContain('"main": "src/index-paper-fallback-clock.ts"');
+    expect(wrangler).toContain('"main": "src/index-telegram-readiness.ts"');
+    expect(telegramWrapper).toContain('from "./index-paper-fallback-clock"');
     expect(fallbackClock).toContain('from "./index-paper-capital"');
     expect(fallbackClock).toContain('env.TRADING_MODE === "paper"');
     expect(fallbackClock).toContain('env.LIVE_TRADING_ENABLED !== "true"');

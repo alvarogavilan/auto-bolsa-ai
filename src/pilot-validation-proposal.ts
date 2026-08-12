@@ -14,7 +14,7 @@ const MIN_FEE_RESERVE_RATE = 0.01;
 const FEE_RESERVE_BUFFER_RATE = 0.0025;
 const MAX_EFFECTIVE_TAKER_RATE = 0.05;
 const MAX_FEE_AUDIT_AGE_MS = 15 * 60_000;
-const MAX_VALIDATION_NOTIONAL_EUR = 5;
+const MAX_VALIDATION_NOTIONAL_EUR = 10;
 const MAX_BALANCE_ALLOCATION_PCT = 0.5;
 const MAX_VALIDATION_SPREAD_PCT = 0.01;
 
@@ -122,7 +122,6 @@ export interface PilotValidationProposalDependencies {
   idempotencyKey: string;
 }
 
-/** Función pura y determinista para probar límites, cuantización, costes y aliases. */
 export function buildPilotValidationProposal(
   dependencies: PilotValidationProposalDependencies,
 ): PilotValidationProposal {
@@ -215,16 +214,11 @@ export function buildPilotValidationProposal(
   };
 }
 
-/** Construye la propuesta exclusivamente con cuenta privada y mercado público obtenidos por el servidor. */
 export async function buildPilotValidationProposalFromKraken(
   env: Env,
   now = Date.now(),
 ): Promise<PilotValidationProposal> {
   const pair = env.PAIR || "XBTEUR";
-
-  // Todas las lecturas privadas son secuenciales. La primera conexión obtiene
-  // también la tarifa efectiva; después se auditan permisos y limpieza de
-  // cuenta bajo la concesión global. Solo mercado público se paraleliza.
   const safety = await fetchPilotValidationSafety(env);
   const accountAudit = await auditPilotAccountCleanliness(env, true);
   const [resolution, tickers] = await Promise.all([

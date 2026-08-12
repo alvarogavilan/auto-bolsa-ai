@@ -6,6 +6,7 @@ const ROOT = process.cwd();
 const source = readFileSync(join(ROOT, "src/index-fire-drill.ts"), "utf8");
 const paperWrapper = readFileSync(join(ROOT, "src/index-paper-capital.ts"), "utf8");
 const fallbackClock = readFileSync(join(ROOT, "src/index-paper-fallback-clock.ts"), "utf8");
+const telegramWrapper = readFileSync(join(ROOT, "src/index-telegram-readiness.ts"), "utf8");
 const wrangler = readFileSync(join(ROOT, "wrangler.jsonc"), "utf8");
 
 describe("GET /api/demo", () => {
@@ -34,7 +35,8 @@ describe("GET /api/demo", () => {
     expect(paperWrapper).toContain('from "./index-fire-drill"');
     expect(paperWrapper).toContain('INITIAL_CASH_EUR: "100"');
     expect(paperWrapper).toContain("getUTCMinutes() % 5 === 0");
-    expect(wrangler).toContain('"main": "src/index-paper-fallback-clock.ts"');
+    expect(telegramWrapper).toContain('from "./index-paper-fallback-clock"');
+    expect(wrangler).toContain('"main": "src/index-telegram-readiness.ts"');
     expect(wrangler).toContain('"TRADING_MODE": "paper"');
     expect(wrangler).toContain('"*/2 * * * *"');
   });

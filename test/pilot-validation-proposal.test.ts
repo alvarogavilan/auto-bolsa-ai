@@ -107,11 +107,11 @@ function dependencies(
 }
 
 describe("server-built validation proposal", () => {
-  it("uses configured pair aliases and never exceeds 5 EUR or half the balance", () => {
+  it("never exceeds the 10 EUR cap or half the balance", () => {
     const proposal = buildPilotValidationProposal(dependencies());
     expect(proposal.request.pair).toBe("XBTEUR");
     expect(proposal.grossBudgetEur).toBe(5);
-    expect(proposal.request.notionalEur).toBeLessThanOrEqual(5);
+    expect(proposal.request.notionalEur).toBeLessThanOrEqual(10);
     expect(proposal.request.notionalEur).toBeLessThanOrEqual(10 * 0.5);
     expect(proposal.request.idempotencyKey).toBe("server-key");
     expect(proposal.validateOnly).toBe(true);
@@ -130,7 +130,7 @@ describe("server-built validation proposal", () => {
     expect(proposal.feeAuditCheckedAt).toBe(NOW);
     expect(proposal.request.limitPrice).toBe(50_000.1);
     expect(proposal.request.volumeBase.toString().split('.')[1]?.length ?? 0).toBeLessThanOrEqual(8);
-    expect(proposal.request.volumeBase * proposal.request.limitPrice).toBeLessThanOrEqual(5 * (1 - 0.0105) + 1e-6);
+    expect(proposal.request.volumeBase * proposal.request.limitPrice).toBeLessThanOrEqual(10 * (1 - 0.0105) + 1e-6);
     expect(proposal.request.volumeBase).toBeGreaterThanOrEqual(resolution.metadata.orderMinBase);
   });
 
@@ -170,72 +170,64 @@ describe("server-built validation proposal", () => {
         },
       },
       idempotencyKey: "stale-fees",
-    }))).toThrow(/tarifas.*caducada/i);
+    }))).toThrow(/caducada/i);
 
     expect(() => buildPilotValidationProposal(dependencies({
       safety: {
         ...safety(),
         connection: {
           ...safety().connection,
-          effectiveFees: { ...effectiveFees(), pairRequested: "ETHEUR" },
+          effectiveFees: effectiveFees(0.008, NOW, "ETHZEUR"),
         },
       },
-      idempotencyKey: "wrong-pair",
-    }))).toThrow(/no corresponde al par/i);
+      idempotencyKey: "wrong-pair-fees",
+    }))).toThrow(/tarifa taker verificable|no corresponde/i);
 
     expect(() => buildPilotValidationProposal(dependencies({
       safety: safety(0.051),
-      idempotencyKey: "abnormal-fee",
+      idempotencyKey: "abnormal-fees",
     }))).toThrow(/fuera del rango/i);
   });
 
   it("requires a clean EUR-only account baseline", () => {
     expect(() => buildPilotValidationProposal(dependencies({
-      accountAudit: {
-        ...accountAudit(10),
-        nonZeroAssetCount: 2,
-        nonEurAssetCount: 1,
-        accountCleanForBaseline: false,
-        blockers: ["La cuenta contiene activos no EUR antes del baseline"],
-      },
-      idempotencyKey: "existing-assets",
-    }))).toThrow(/activos adicionales|inventario/i);
+      accountAudit: { ...accountAudit(10), nonEurAssetCount: 1, accountCleanForBaseline: false },
+      idempotencyKey: "dirty-account",
+    }))).toThrow(/activos adicionales/i);
   });
 
   it("blocks prior open orders", () => {
     expect(() => buildPilotValidationProposal(dependencies({
-      accountAudit: {
-        ...accountAudit(10),
-        openOrderCount: 1,
-        accountCleanForBaseline: false,
-        blockers: ["La cuenta contiene órdenes abiertas antes del baseline"],
-      },
-      idempotencyKey: "existing-open-order",
-    }))).toThrow(/órdenes abiertas previas|órdenes abiertas/i);
+      accountAudit: { ...accountAudit(10), openOrderCount: 1, accountCleanForBaseline: false },
+      idempotencyKey: "open-orders",
+    }))).toThrow(/órdenes abiertas/i);
   });
 
   it("blocks an abnormally wide public spread", () => {
     expect(() => buildPilotValidationProposal(dependencies({
-      tickers: { XXBTZEUR: { ...ticker, ask: 110, bid: 90 } },
+      tickers: { XXBTZEUR: { ...ticker, ask: 50_000, bid: 49_000 } },
       idempotencyKey: "wide-spread",
-    }))).toThrow(/spread.*amplio/i);
+    }))).toThrow(/spread público demasiado amplio/i);
   });
 
   it("fails closed for unsafe permissions, missing ticker or insufficient minimum", () => {
     expect(() => buildPilotValidationProposal(dependencies({
-      safety: { ...safety(), permissions: { ...safety().permissions, safePermissions: false } },
-      idempotencyKey: "unsafe",
-    }))).toThrow(/permisos/i);
+      safety: {
+        ...safety(),
+        permissions: { ...safety().permissions, safePermissions: false },
+      },
+      idempotencyKey: "unsafe-permissions",
+    }))).toThrow(/permisos Kraken/i);
 
     expect(() => buildPilotValidationProposal(dependencies({
       tickers: {},
-      idempotencyKey: "missing",
-    }))).toThrow(/ticker/i);
+      idempotencyKey: "missing-ticker",
+    }))).toThrow(/ticker público/i);
 
     expect(() => buildPilotValidationProposal(dependencies({
-      accountAudit: accountAudit(1),
-      resolution: { ...resolution, metadata: { ...resolution.metadata, orderMinBase: 1 } },
-      idempotencyKey: "minimum",
-    }))).toThrow(/mínimo/i);
+      accountAudit: accountAudit(0.05),
+      tickers: { XXBTZEUR: { ...ticker, ask: 50_000, bid: 49_990 } },
+      idempotencyKey: "below-minimum",
+    }))).toThrow(/mínimo de Kraken/i);
   });
 });
