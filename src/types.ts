@@ -22,6 +22,12 @@ export interface Env {
   KRAKEN_API_KEY?: string;
   KRAKEN_API_SECRET?: string;
   XAU_PAPER_FEED_URL?: string;
+  /** Bot privado de Telegram usado para solicitudes de autorización de operaciones. */
+  TELEGRAM_BOT_TOKEN?: string;
+  TELEGRAM_CHAT_ID?: string;
+  /** Alias compatibles con el bot privado de BetPro para reutilizar el mismo destino. */
+  BETPRO_TELEGRAM_BOT_TOKEN?: string;
+  BETPRO_TELEGRAM_CHAT_ID?: string;
   // Interruptor estructural del ejecutor LIVE. Debe permanecer ausente o "false"
   // hasta una activación manual posterior, separada y explícita.
   LIVE_TRADING_ENABLED?: string;
