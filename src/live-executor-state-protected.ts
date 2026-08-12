@@ -31,12 +31,6 @@ async function sha256(value: string): Promise<string> {
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-/**
- * Extiende el ejecutor persistente sin alterar su máquina de estados. Tras una
- * reconciliación verificada, obliga a que el inventario PAXG y su stop remoto
- * queden coherentes. Además, ningún `/submit` real puede ejecutarse sin una
- * autorización humana de un solo uso ligada exactamente al `clOrdId`.
- */
 export class LiveExecutorState extends BaseLiveExecutorState {
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -151,6 +145,39 @@ export class LiveExecutorState extends BaseLiveExecutorState {
         await this.ctx.storage.put(APPROVAL_STORAGE_KEY, match.approval);
       }
       return Response.json({ ok: true, clOrdId: match.approval.clOrdId, approvedAt: match.approval.approvedAt, expiresAt: match.approval.expiresAt });
+    }
+
+    if (request.method === "POST" && url.pathname === "/approval/reject") {
+      const body = object(await request.json().catch(() => ({})));
+      const token = typeof body.token === "string" ? body.token : "";
+      const match = await this.inspectApprovalToken(token, now);
+      if (!match) return Response.json({ ok: false, error: "APPROVAL_INVALID_OR_EXPIRED" }, { status: 409 });
+
+      match.approval.consumedAt = now;
+      await this.ctx.storage.put(APPROVAL_STORAGE_KEY, match.approval);
+
+      const cancelled = await super.fetch(new Request("https://live/emergency-cancel-all", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reason: "Orden preparada rechazada por autorización humana" }),
+      }));
+      if (!cancelled.ok) {
+        return Response.json({ ok: false, error: "PREPARED_ORDER_REJECTION_FAILED", clOrdId: match.approval.clOrdId }, { status: 409 });
+      }
+
+      await super.fetch(new Request("https://live/clear-emergency-stop", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reason: "Rechazo humano completado sin envío a Kraken" }),
+      }));
+
+      return Response.json({
+        ok: true,
+        rejected: true,
+        clOrdId: match.approval.clOrdId,
+        rejectedAt: now,
+        realOrderCreated: false,
+      });
     }
 
     if (request.method === "POST" && url.pathname === "/submit") {
