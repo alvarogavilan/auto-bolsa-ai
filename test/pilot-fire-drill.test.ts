@@ -14,13 +14,9 @@ afterEach(() => {
 
 describe("pilot fire drill", () => {
   it("passes every fail-closed scenario without any Kraken network call", async () => {
-    const network = vi.fn(async () => {
-      throw new Error("The fire drill must never call fetch");
-    });
+    const network = vi.fn(async () => { throw new Error("The fire drill must never call fetch"); });
     globalThis.fetch = network as typeof fetch;
-
     const report = await runPilotFireDrill(1_800_000_000_000);
-
     expect(report.schemaVersion).toBe("pilot-fire-drill-v1");
     expect(report.passed).toBe(true);
     expect(report.passedChecks).toBe(6);
@@ -50,7 +46,6 @@ describe("pilot fire drill", () => {
   it("shows the fire drill in the authenticated iPhone console", async () => {
     const response = await fireDrillPilotDashboard();
     const html = await response.text();
-
     expect(response.headers.get("Cache-Control")).toBe("no-store");
     expect(html).toContain("Simulacro integral de seguridad");
     expect(html).toContain("Ejecutar 6 pruebas de seguridad");
@@ -61,7 +56,6 @@ describe("pilot fire drill", () => {
     expect(html).not.toContain("createOrder(");
     expect(html).not.toContain("AddOrder");
     expect(html).not.toContain("LIVE_TRADING_ENABLED");
-
     const script = html.match(/<script>([\s\S]*?)<\/script>/)?.[1] ?? "";
     expect(() => new Function(script)).not.toThrow();
   });
@@ -71,8 +65,8 @@ describe("pilot fire drill", () => {
     const adapter = readFileSync(join(ROOT, "src/index-fire-drill.ts"), "utf8");
     const paperWrapper = readFileSync(join(ROOT, "src/index-paper-capital.ts"), "utf8");
     const fallbackClock = readFileSync(join(ROOT, "src/index-paper-fallback-clock.ts"), "utf8");
+    const telegramWrapper = readFileSync(join(ROOT, "src/index-telegram-readiness.ts"), "utf8");
     const wrangler = readFileSync(join(ROOT, "wrangler.jsonc"), "utf8");
-
     expect(core).toContain('url.pathname === "/api/pilot/submit"');
     expect(core).toContain("PILOT_SUBMISSION_NOT_ARMED");
     expect(core).toContain('url.pathname.startsWith("/api/live")');
@@ -87,6 +81,7 @@ describe("pilot fire drill", () => {
     expect(fallbackClock).toContain('from "./index-paper-capital"');
     expect(fallbackClock).toContain('env.TRADING_MODE === "paper"');
     expect(fallbackClock).toContain('env.LIVE_TRADING_ENABLED !== "true"');
-    expect(wrangler).toContain('"main": "src/index-paper-fallback-clock.ts"');
+    expect(telegramWrapper).toContain('from "./index-paper-fallback-clock"');
+    expect(wrangler).toContain('"main": "src/index-telegram-readiness.ts"');
   });
 });
