@@ -74,11 +74,13 @@ describe("pilot runtime remains fail-closed", () => {
     expect(runtime).not.toContain("fingerprintKrakenCredentials");
   });
 
-  it("keeps submission unarmed in the readiness report", () => {
+  it("keeps submission unarmed in the readiness report while reporting the actual mode", () => {
     const runtime = runtimeSource();
     expect(runtime).toContain("submissionArmed: false");
     expect(runtime).toContain("submissionEndpointAvailable: false");
     expect(runtime).toContain("maximumOrderNotionalEur: 5");
-    expect(runtime).toContain("liveTrading: false");
+    expect(runtime).toContain('env.LIVE_TRADING_ENABLED === "true" && env.TRADING_MODE === "live"');
+    expect(runtime).toContain("microLivePilotEligible");
+    expect(runtime).toContain("fullScalePaperEligible");
   });
 });
