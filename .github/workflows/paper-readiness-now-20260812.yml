@@ -1,0 +1,41 @@
+name: PAPER readiness now 2026-08-12
+
+on:
+  push:
+    branches: [ops/paper-readiness-now-20260812]
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Read PAPER readiness
+        id: probe
+        env:
+          URL: https://auto-bolsa-ai.k8mwkbp68y.workers.dev/api/readiness
+        run: |
+          set -euo pipefail
+          code=$(curl -sS --max-time 30 -o readiness.raw -w '%{http_code}' "$URL")
+          echo "http_status=$code" >> "$GITHUB_OUTPUT"
+          node <<'NODE'
+          const fs=require('node:fs');
+          const raw=fs.readFileSync('readiness.raw','utf8');
+          let d=null; try{d=JSON.parse(raw)}catch{}
+          fs.writeFileSync('readiness.json',JSON.stringify(d,null,2));
+          console.log(JSON.stringify(d,null,2));
+          if(!d) process.exit(2);
+          NODE
+
+      - name: Publish PAPER readiness
+        if: always()
+        uses: actions/github-script@v7
+        env:
+          HTTP_STATUS: ${{ steps.probe.outputs.http_status }}
+        with:
+          script: |
+            const fs=require('node:fs');
+            let d=null; try{d=JSON.parse(fs.readFileSync('readiness.json','utf8'))}catch{}
+            await github.rest.issues.create({owner:context.repo.owner,repo:context.repo.repo,title:`PAPER readiness now · ${context.sha.slice(0,7)}`,body:['```json',JSON.stringify({checkedAt:new Date().toISOString(),runId:context.runId,httpStatus:process.env.HTTP_STATUS||null,readiness:d},null,2),'```'].join('\n')});
