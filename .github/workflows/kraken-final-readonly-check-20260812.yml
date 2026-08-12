@@ -1,0 +1,51 @@
+name: Kraken final readonly check 2026-08-12
+
+on:
+  push:
+    branches: [ops/kraken-final-readonly-check-20260812]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      WORKER_BASE_URL: https://auto-bolsa-ai.k8mwkbp68y.workers.dev
+    steps:
+      - name: Fetch one read-only Kraken safety snapshot
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --silent --show-error --connect-timeout 10 --max-time 60 \
+            -D kraken-check.headers \
+            "$WORKER_BASE_URL/api/ops/probe/kraken-20260810-ed735d0-b0c214b" \
+            -o kraken-check.json
+          status=$(awk 'toupper($1) ~ /^HTTP\// {code=$2} END {print code}' kraken-check.headers)
+          echo "HTTP $status"
+          cat kraken-check.json
+          node <<'NODE'
+          const fs = require('node:fs');
+          const x = JSON.parse(fs.readFileSync('kraken-check.json','utf8'));
+          if (x.readOnly !== true) throw new Error('Probe must be read-only');
+          if (x.realOrderCreated !== false) throw new Error('Probe must not create an order');
+          if (x.liveTradingEnabled !== false) throw new Error('LIVE must still be disabled during final check');
+          if (x.privateApiConnected !== true) throw new Error(`Kraken private API not connected: ${x.error ?? 'unknown'}`);
+          if (x.permissionsAuditComplete !== true || x.permissionsSafe !== true) throw new Error('Kraken permissions are not safe');
+          if (x.withdrawalsDisabled !== true || x.depositsDisabled !== true || x.earnDisabled !== true) throw new Error('Unsafe Kraken funding permission state');
+          if (x.accountCleanForBaseline !== true || x.noOpenOrders !== true || x.noNonEurAssets !== true) throw new Error('Kraken account baseline is not clean');
+          if (x.eurBalanceAtLeast5 !== true) throw new Error('EUR balance is below 5 EUR pilot threshold');
+          if (x.pairResolved !== true) throw new Error('PAXG/EUR is not resolved');
+          if (x.balanceReconciled !== true) throw new Error('LIVE executor balance is not reconciled');
+          if (x.emergencyStopActive === true || x.manualLiquidationPending === true) throw new Error('Emergency state blocks pilot');
+          NODE
+
+      - name: Upload snapshot
+        uses: actions/upload-artifact@v4
+        with:
+          name: kraken-final-readonly-check-20260812
+          path: |
+            kraken-check.json
+            kraken-check.headers
+          retention-days: 7
