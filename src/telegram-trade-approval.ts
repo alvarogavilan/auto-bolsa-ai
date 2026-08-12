@@ -2,6 +2,7 @@ import type { Env } from "./types";
 
 export interface TelegramTradeApprovalMessage {
   approvalUrl: string;
+  rejectUrl: string;
   pair: string;
   side: "buy" | "sell";
   notionalEur: number;
@@ -100,12 +101,12 @@ export async function sendTelegramTradeApproval(
     "🟡 AUTO BOLSA · AUTORIZACIÓN NECESARIA",
     "",
     `${message.side === "buy" ? "Comprar" : "Vender"} ${message.pair}`,
-    `Importe máximo: ${message.notionalEur.toFixed(2)} €`,
+    `Importe: ${message.notionalEur.toFixed(2)} €`,
     `Precio límite: ${message.limitPrice}`,
     message.stopPrice && message.stopPrice > 0 ? `Stop inicial: ${message.stopPrice}` : null,
     `Caduca: ${expires}`,
     "",
-    "La orden ya ha pasado el preflight validate=true. No se enviará dinero hasta que confirmes esta operación concreta.",
+    "La orden ya ha pasado el preflight validate=true. Aprobar exige una confirmación final; Rechazar cancela localmente la orden preparada y nunca la envía a Kraken.",
   ].filter(Boolean).join("\n");
 
   const response = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
@@ -116,7 +117,10 @@ export async function sendTelegramTradeApproval(
       text,
       disable_web_page_preview: true,
       reply_markup: {
-        inline_keyboard: [[{ text: "✅ Revisar y autorizar operación", url: message.approvalUrl }]],
+        inline_keyboard: [[
+          { text: "✅ APROBAR", url: message.approvalUrl },
+          { text: "❌ RECHAZAR", url: message.rejectUrl },
+        ]],
       },
     }),
   });
