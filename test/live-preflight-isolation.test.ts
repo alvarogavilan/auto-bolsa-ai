@@ -19,7 +19,7 @@ describe("validate-only preflight isolation in the persistent pilot", () => {
     expect(state).toMatch(/createLivePreflightCertificate\(intent, result\)/);
   });
 
-  it("deploys validate-only preparation without exposing any submission path", () => {
+  it("deploys LIVE configuration while submission remains explicitly unarmed", () => {
     const index = read("src/index.ts");
     const wrangler = read("wrangler.jsonc");
 
@@ -38,7 +38,7 @@ describe("validate-only preflight isolation in the persistent pilot", () => {
     expect(wrangler).toMatch(/LIVE_EXECUTOR/);
     expect(wrangler).toMatch(/LiveExecutorState/);
     expect(wrangler).not.toMatch(/LIVE_TRADING_ENABLED/);
-    expect(wrangler).toMatch(/["']TRADING_MODE["']\s*:\s*["']paper["']/);
+    expect(wrangler).toMatch(/["']TRADING_MODE["']\s*:\s*["']live["']/);
 
     const scheduled = index.slice(index.indexOf("async scheduled"));
     expect(scheduled).not.toContain("liveExecutorState(");

@@ -20,7 +20,7 @@ describe("GET /api/demo", () => {
     expect(source).toContain("sourceHealth:");
   });
 
-  it("es estrictamente PAPER y nunca arma órdenes reales", () => {
+  it("mantiene la DEMO estrictamente PAPER y nunca arma órdenes reales", () => {
     expect(source).toContain('mode: "paper"');
     expect(source).toContain("liveTrading: false");
     expect(source).toContain("realOrdersEnabled: false");
@@ -37,7 +37,7 @@ describe("GET /api/demo", () => {
     expect(paperWrapper).toContain("getUTCMinutes() % 5 === 0");
     expect(telegramWrapper).toContain('from "./index-paper-fallback-clock"');
     expect(wrangler).toContain('"main": "src/index-telegram-readiness.ts"');
-    expect(wrangler).toContain('"TRADING_MODE": "paper"');
+    expect(wrangler).toContain('"TRADING_MODE": "live"');
     expect(wrangler).toContain('"*/2 * * * *"');
   });
 
