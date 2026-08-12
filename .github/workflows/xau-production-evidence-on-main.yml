@@ -105,6 +105,7 @@ jobs:
       - name: Publish auditable evidence issue
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         shell: bash
         run: |
           set -euo pipefail
@@ -116,4 +117,4 @@ jobs:
             cat xau-production-summary.json
             echo '```'
           } > issue-body.md
-          gh issue create --title "$title" --body-file issue-body.md
+          gh issue create --repo "$GH_REPO" --title "$title" --body-file issue-body.md
