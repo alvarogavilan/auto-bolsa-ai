@@ -3,6 +3,7 @@ import worker, {
   ResearchLabState,
   LiveExecutorState,
 } from "./index-paper-fallback-clock";
+import { liveArmingConfigurationStatus } from "./live-activation-readiness";
 import { telegramTradeApprovalReadiness } from "./telegram-trade-approval";
 import { LIVE_EXECUTOR_SINGLETON_NAME, type Env } from "./types";
 
@@ -56,6 +57,16 @@ export default {
         realOrderCreated: false,
       }, {
         status: readiness.botCanPost ? 200 : 503,
+        headers: { "Cache-Control": "no-store" },
+      });
+    }
+
+    if (request.method === "GET" && url.pathname === "/api/live/activation-readiness") {
+      return Response.json({
+        schemaVersion: "live-activation-readiness-v1",
+        ...liveArmingConfigurationStatus(env),
+        realOrderCreated: false,
+      }, {
         headers: { "Cache-Control": "no-store" },
       });
     }
