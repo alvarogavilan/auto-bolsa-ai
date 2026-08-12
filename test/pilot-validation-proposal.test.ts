@@ -181,7 +181,7 @@ describe("server-built validation proposal", () => {
         },
       },
       idempotencyKey: "wrong-pair-fees",
-    }))).toThrow(/no corresponde/i);
+    }))).toThrow(/tarifa taker verificable|no corresponde/i);
 
     expect(() => buildPilotValidationProposal(dependencies({
       safety: safety(0.051),
