@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { liveArmingConfigurationStatus } from "../src/index-telegram-readiness";
+import { liveArmingConfigurationStatus } from "../src/live-activation-readiness";
 import { telegramTradeApprovalConfigured } from "../src/telegram-trade-approval";
 
 describe("Telegram trade approval readiness", () => {
