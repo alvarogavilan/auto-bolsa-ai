@@ -1,6 +1,6 @@
 import { fetchAllTickers, type KrakenTicker } from "./kraken-markets";
 import { fetchLivePairResolution, type LivePairResolution } from "./live-pair-metadata";
-import type { LiveExecutorSnapshot } from "./live-executor";
+import type { LiveExecutorSnapshot, LiveInventory } from "./live-executor";
 import { buildPilotValidationProposalFromKraken } from "./pilot-validation-proposal";
 import { sendTelegramManualTradeAlert } from "./telegram-manual-trade-alert";
 import { telegramTradeApprovalConfigured } from "./telegram-trade-approval";
@@ -57,6 +57,10 @@ async function executorSnapshot(env: Env): Promise<LiveExecutorSnapshot | null> 
   return object(await response.json().catch(() => ({}))) as unknown as LiveExecutorSnapshot;
 }
 
+function emptyInventory(): LiveInventory {
+  return { pair: null, quantityBase: 0, averageCostEur: null, reservedQuantityBase: 0 };
+}
+
 export interface XauPaxgManualAlertCycleResult {
   schemaVersion: "xau-paxg-manual-alert-v1";
   ran: boolean;
@@ -108,13 +112,7 @@ export async function runXauPaxgManualAlertCycle(env: Env): Promise<XauPaxgManua
     if (instruction.action === "buy") {
       const proposal = await buildPilotValidationProposalFromKraken(env);
       const state = await executorSnapshot(env);
-      const inventory = state?.inventory ?? {
-        pair: null,
-        quantityBase: 0,
-        reservedQuantityBase: 0,
-        averageEntryPrice: null,
-        updatedAt: 0,
-      };
+      const inventory = state?.inventory ?? emptyInventory();
       if (inventory.quantityBase > EPSILON) {
         return {
           schemaVersion: "xau-paxg-manual-alert-v1",
