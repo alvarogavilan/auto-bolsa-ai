@@ -10,9 +10,9 @@ afterEach(() => {
 
 describe("manual Telegram trade alerts", () => {
   it("sends actionable manual Kraken details without approval or real submission controls", async () => {
-    let requestBody: Record<string, unknown> | null = null;
+    let requestBody: any = null;
     globalThis.fetch = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
-      requestBody = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
+      requestBody = JSON.parse(String(init?.body ?? "{}"));
       return new Response(JSON.stringify({ ok: true, result: { message_id: 1 } }), {
         status: 200,
         headers: { "Content-Type": "application/json" },
@@ -35,8 +35,8 @@ describe("manual Telegram trade alerts", () => {
     });
 
     expect(result.ok).toBe(true);
-    expect(requestBody?.chat_id).toBe("-1004476828218");
-    const text = String(requestBody?.text ?? "");
+    expect(requestBody.chat_id).toBe("-1004476828218");
+    const text = String(requestBody.text ?? "");
     expect(text).toContain("OPERACIÓN PARA EJECUCIÓN MANUAL");
     expect(text).toContain("PAXGEUR");
     expect(text).toContain("9.75 €");
@@ -44,9 +44,8 @@ describe("manual Telegram trade alerts", () => {
     expect(text).not.toContain("APROBAR");
     expect(text).not.toContain("RECHAZAR");
 
-    const markup = requestBody?.reply_markup as { inline_keyboard?: Array<Array<{ text?: string; url?: string }>> } | undefined;
-    expect(markup?.inline_keyboard?.[0]?.[0]?.text).toBe("📱 ABRIR KRAKEN");
-    expect(markup?.inline_keyboard?.[0]?.[0]?.url).toBe("https://pro.kraken.com/");
+    expect(requestBody.reply_markup?.inline_keyboard?.[0]?.[0]?.text).toBe("📱 ABRIR KRAKEN");
+    expect(requestBody.reply_markup?.inline_keyboard?.[0]?.[0]?.url).toBe("https://pro.kraken.com/");
   });
 
   it("fails closed when Telegram is not configured", async () => {
