@@ -4,22 +4,28 @@ import {
   runXauPaxgLiveCycle as runBaseXauPaxgLiveCycle,
   type XauPaxgLiveCycleResult,
 } from "./xau-paxg-live-orchestrator";
+import { runXauPaxgManualAlertCycle } from "./xau-paxg-manual-alert-orchestrator";
 
 function bot(env: Env): DurableObjectStub {
   return env.BOT_STATE.get(env.BOT_STATE.idFromName(BOT_STATE_SINGLETON_NAME));
 }
 
 /**
- * Autoridad final antes de cualquier ciclo real de oro.
- * Mantiene intacto el gate PAPER general para escalar capital, pero el piloto
- * de ejecución de <=5 EUR se gobierna exclusivamente con evidencia XAU propia.
+ * Autoridad final del ciclo XAU/PAXG.
+ *
+ * - Si LIVE real no está armado, NO prepara ni envía órdenes: transforma una
+ *   decisión aprobada en una alerta de ejecución manual por Telegram.
+ * - Si LIVE real estuviera armado externamente, conserva la ruta certificada
+ *   original y todos sus gates de evidencia.
  */
-export async function runXauPaxgLiveCycle(env: Env): Promise<XauPaxgLiveCycleResult> {
+export async function runXauPaxgLiveCycle(
+  env: Env,
+): Promise<XauPaxgLiveCycleResult | Awaited<ReturnType<typeof runXauPaxgManualAlertCycle>>> {
   const liveEnabled = env.LIVE_TRADING_ENABLED === "true"
     && env.TRADING_MODE === "live"
     && (env.PAIR || "") === "PAXGEUR";
 
-  if (!liveEnabled) return runBaseXauPaxgLiveCycle(env);
+  if (!liveEnabled) return runXauPaxgManualAlertCycle(env);
 
   const response = await bot(env).fetch("https://bot/xau/status");
   if (!response.ok) {
