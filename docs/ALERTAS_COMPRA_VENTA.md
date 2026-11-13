@@ -22,10 +22,24 @@ Si no llega ningún mensaje, **no hagas nada**.
 7. Si Telegram falla, el mensaje se reintenta en el siguiente ciclo (no se pierde ni se duplica).
 8. No se compra si el precio de Kraken no es verificable o la diferencia compra/venta supera el 1 %.
 
+## Pantalla principal
+
+Al abrir la app (`/`) aparece **la orden a ejecutar ahora**: COMPRA, VENDE, MANTÉN o ESPERA.
+
+- Se recalcula cada 5 segundos con el precio vivo de Kraken.
+- Las compras muestran una cuenta atrás; al llegar a cero no se compra.
+- Si la pantalla lleva más de 20 s sin actualizarse, o el motor lleva más de 6 min sin decidir, tapa la orden con «NO EJECUTES».
+- Si el precio ya se escapó más de un 0,3 % del límite original, la compra desaparece.
+- Debajo: mercado en vivo, el voto de los 9 especialistas de oro y noticias de fuentes oficiales.
+
+El panel de simulación anterior sigue en `/demo`.
+
 ## Endpoints
 
 | Ruta | Uso |
 |---|---|
+| `GET /api/order-now` | La orden vigente (lo que pinta la pantalla principal). |
+| `GET /api/news-brief` | Titulares de fuentes oficiales (caché 2 min). |
 | `GET /api/signals/status` | Qué deberías tener comprado ahora y últimas alertas. |
 | `POST /api/signals/test` (ADMIN_TOKEN) | Envía un mensaje de prueba a Telegram. |
 | `POST /api/signals/run` (ADMIN_TOKEN) | Fuerza un ciclo de alertas y devuelve el detalle (incluye señales descartadas por falta de evidencia). |

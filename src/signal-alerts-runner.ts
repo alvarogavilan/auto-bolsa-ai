@@ -177,6 +177,19 @@ async function readJson(stub: DurableObjectStub, url: string): Promise<unknown |
   }
 }
 
+export async function loadSignalInputs(env: Env, options: { includeGold?: boolean; includeCrypto?: boolean } = {}): Promise<{
+  state: SignalAlertState;
+  xauStatus: unknown | null;
+  labView: LabAlertView | null;
+}> {
+  const [state, xauStatus, labView] = await Promise.all([
+    readSignalAlertState(env),
+    options.includeGold !== false ? readJson(bot(env), "https://bot/xau/status") : Promise.resolve(null),
+    options.includeCrypto !== false ? readJson(lab(env), "https://lab/alerts-view") : Promise.resolve(null),
+  ]);
+  return { state, xauStatus, labView: labView as LabAlertView | null };
+}
+
 /**
  * Ciclo completo: lee estrategias, planifica y entrega alertas COMPRA/VENDE.
  * Las VENDE van primero: salir a tiempo es prioritario sobre entrar.
@@ -193,14 +206,10 @@ export async function runSignalAlerts(
   }
   const includeGold = options.includeGold !== false;
   const includeCrypto = options.includeCrypto !== false;
-  const [state, xauStatus, labView] = await Promise.all([
-    readSignalAlertState(env),
-    includeGold ? readJson(bot(env), "https://bot/xau/status") : Promise.resolve(null),
-    includeCrypto ? readJson(lab(env), "https://lab/alerts-view") : Promise.resolve(null),
-  ]);
+  const { state, xauStatus, labView } = await loadSignalInputs(env, { includeGold, includeCrypto });
   const plan = planSignalAlerts({
     xauStatus,
-    lab: labView as LabAlertView | null,
+    lab: labView,
     holdings: state.holdings,
     now,
     includeGold: includeGold && xauStatus !== null,

@@ -8,7 +8,12 @@ import { derivePaperEconomicPerformance, type PaperEconomicStrategyLike } from "
 import { BOT_STATE_SINGLETON_NAME, LIVE_EXECUTOR_SINGLETON_NAME, type Env } from "./types";
 import { buildNativeXauFastPriceInput, buildNativeXauPaperInput } from "./xau-native-paper-feed";
 import { runXauPaxgLiveCycle } from "./xau-paxg-live-orchestrator-guarded";
-import { readSignalAlertState, runSignalAlerts, sendTelegramText } from "./signal-alerts-runner";
+import { loadSignalInputs, readSignalAlertState, runSignalAlerts, sendTelegramText } from "./signal-alerts-runner";
+import { planSignalAlerts } from "./signal-alerts";
+import { buildOrderNow } from "./order-now";
+import { homeOrderScreen } from "./home-order-screen";
+import { fetchTickers, type KrakenTicker } from "./kraken-markets";
+import { buildNewsIntelligence } from "./news-intelligence";
 import type { XauPaperRuntimeInput } from "./xau-usd-paper-runtime";
 
 export { BotState, ResearchLabState, LiveExecutorState };
@@ -240,6 +245,37 @@ async function signalStatusResponse(env: Env): Promise<Response> {
   }, { headers: { "Cache-Control": "no-store" } });
 }
 
+async function orderNowResponse(env: Env): Promise<Response> {
+  const now = Date.now();
+  const { state, xauStatus, labView } = await loadSignalInputs(env);
+  const plan = planSignalAlerts({ xauStatus, lab: labView, holdings: state.holdings, now, includeGold: xauStatus !== null, includeCrypto: labView !== null });
+  const pairs = new Set<string>(["PAXGEUR", "XBTEUR", "ETHEUR"]);
+  for (const holding of Object.values(state.holdings)) pairs.add(holding.pair);
+  for (const buy of plan.buys) pairs.add(buy.pair);
+  let tickers: Record<string, KrakenTicker> = {};
+  let tickersAvailable = true;
+  try { tickers = await fetchTickers([...pairs]); } catch { tickersAvailable = false; }
+  return Response.json(buildOrderNow({ now, xauStatus, holdings: state.holdings, plan, tickers, tickersAvailable }), { headers: { "Cache-Control": "no-store" } });
+}
+
+const NEWS_BRIEF_TTL_SECONDS = 120;
+
+async function newsBriefResponse(request: Request, ctx: ExecutionContext): Promise<Response> {
+  const cacheKey = new Request(new URL("/api/news-brief", request.url).toString());
+  const cached = await caches.default.match(cacheKey);
+  if (cached) return cached;
+  const report = await buildNewsIntelligence();
+  const response = Response.json({
+    schemaVersion: "news-brief-v1",
+    generatedAt: report.generatedAt,
+    sourcesConfigured: report.sourcesConfigured,
+    sourcesAvailable: report.sourcesAvailable,
+    signals: report.signals.slice(0, 8).map((signal) => ({ title: signal.title, source: signal.source, link: signal.link, urgency: signal.urgency, direction: signal.direction, impactScore: signal.impactScore, publishedAt: signal.publishedAt })),
+  }, { headers: { "Cache-Control": `public, max-age=${NEWS_BRIEF_TTL_SECONDS}` } });
+  ctx.waitUntil(caches.default.put(cacheKey, response.clone()));
+  return response;
+}
+
 function shouldRunBaseStrategy(controller: ScheduledController): boolean { return new Date(controller.scheduledTime).getUTCMinutes() % 5 === 0; }
 
 export default {
@@ -255,6 +291,9 @@ export default {
       if (!authorized(request, runtimeEnv)) return new Response("Unauthorized", { status: 401 });
       return botState(runtimeEnv).fetch("https://bot/xau/cycle", { method: "POST", headers: { "Content-Type": "application/json" }, body: await request.text() });
     }
+    if (request.method === "GET" && path === "/") return homeOrderScreen();
+    if (request.method === "GET" && path === "/api/order-now") return orderNowResponse(runtimeEnv);
+    if (request.method === "GET" && path === "/api/news-brief") return newsBriefResponse(request, ctx);
     if (request.method === "GET" && path === "/api/signals/status") return signalStatusResponse(runtimeEnv);
     if (request.method === "POST" && path === "/api/signals/run") {
       if (!authorized(request, runtimeEnv)) return new Response("Unauthorized", { status: 401 });
