@@ -30,6 +30,7 @@ import {
   type PaperBenchmarkMap,
 } from "./strategy-benchmark";
 import type { Env } from "./types";
+import { buildLabAlertView } from "./signal-alerts-lab-view";
 
 const STORAGE_KEY = "multi-horizon-paper-lab";
 const EXECUTION_GATES_KEY = "fast-execution-gates";
@@ -139,6 +140,10 @@ export class ResearchLabState extends DurableObject<Env> {
       if (!state) return Response.json({ initialized: false, mode: "paper", message: "El laboratorio se inicializará con el próximo mapa de mercados válido.", eligibleForLiveReview: false, liveTrading: false });
       const now = Date.now();
       return Response.json({ initialized: true, state, newsAppliedToPaper: true, trendContinuationAppliedToPaper: true, treasuryGateAppliedToEveryPaperEntry: true, completeTradeEvidencePersisted: true, ...this.buildAnalysis(state, executionGates, benchmarks, now), liveTrading: false });
+    }
+    if (request.method === "GET" && url.pathname === "/alerts-view") {
+      const state = await this.read();
+      return Response.json(buildLabAlertView(state, Date.now()), { headers: { "Cache-Control": "no-store" } });
     }
     if (request.method === "POST" && url.pathname === "/tick") {
       let body: unknown; try { body = await request.json(); } catch { return Response.json({ error: "INVALID_RESEARCH_LAB_JSON", liveTrading: false }, { status: 400 }); }

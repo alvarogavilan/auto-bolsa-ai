@@ -8,6 +8,7 @@ import { derivePaperEconomicPerformance, type PaperEconomicStrategyLike } from "
 import { BOT_STATE_SINGLETON_NAME, LIVE_EXECUTOR_SINGLETON_NAME, type Env } from "./types";
 import { buildNativeXauFastPriceInput, buildNativeXauPaperInput } from "./xau-native-paper-feed";
 import { runXauPaxgLiveCycle } from "./xau-paxg-live-orchestrator-guarded";
+import { readSignalAlertState, runSignalAlerts, sendTelegramText } from "./signal-alerts-runner";
 import type { XauPaperRuntimeInput } from "./xau-usd-paper-runtime";
 
 export { BotState, ResearchLabState, LiveExecutorState };
@@ -213,7 +214,30 @@ async function runXauFastMonitoringSamples(env: Env): Promise<void> {
   for (let sample = 0; sample < XAU_FAST_SAMPLES_PER_MINUTE; sample += 1) {
     await sleep(XAU_FAST_INTERVAL_MS);
     try { await submitXauCycle(env, await buildNativeXauFastPriceInput()); } catch { /* siguiente muestra */ }
+    // Las salidas (stop) del oro se detectan aquí, segundos después de producirse.
+    if (!liveArmed(env) && sample % 3 === 2) {
+      try { await runSignalAlerts(env, { includeCrypto: false }); } catch { /* siguiente muestra */ }
+    }
   }
+}
+
+function liveArmed(env: Env): boolean {
+  return env.LIVE_TRADING_ENABLED === "true" && env.TRADING_MODE === "live" && (env.PAIR || "") === "PAXGEUR";
+}
+
+async function signalStatusResponse(env: Env): Promise<Response> {
+  const state = await readSignalAlertState(env);
+  const holdings = Object.values(state.holdings);
+  return Response.json({
+    schemaVersion: "signal-alert-status-v1",
+    telegramConfigured: Boolean((env.TELEGRAM_BOT_TOKEN || env.BETPRO_TELEGRAM_BOT_TOKEN) && (env.TELEGRAM_CHAT_ID || env.BETPRO_TELEGRAM_CHAT_ID)),
+    resumen: holdings.length === 0
+      ? "Sin posiciones abiertas. Espera a recibir «🟢 COMPRA AHORA»."
+      : holdings.map((holding) => `Tienes ${holding.asset} de la alerta ${holding.alertId}: espera «🔴 VENDE AHORA».`).join(" "),
+    holdings,
+    recentAlerts: state.log.slice(0, 20),
+    realOrderSubmission: false,
+  }, { headers: { "Cache-Control": "no-store" } });
 }
 
 function shouldRunBaseStrategy(controller: ScheduledController): boolean { return new Date(controller.scheduledTime).getUTCMinutes() % 5 === 0; }
@@ -231,10 +255,25 @@ export default {
       if (!authorized(request, runtimeEnv)) return new Response("Unauthorized", { status: 401 });
       return botState(runtimeEnv).fetch("https://bot/xau/cycle", { method: "POST", headers: { "Content-Type": "application/json" }, body: await request.text() });
     }
+    if (request.method === "GET" && path === "/api/signals/status") return signalStatusResponse(runtimeEnv);
+    if (request.method === "POST" && path === "/api/signals/run") {
+      if (!authorized(request, runtimeEnv)) return new Response("Unauthorized", { status: 401 });
+      return Response.json(await runSignalAlerts(runtimeEnv), { headers: { "Cache-Control": "no-store" } });
+    }
+    if (request.method === "POST" && path === "/api/signals/test") {
+      if (!authorized(request, runtimeEnv)) return new Response("Unauthorized", { status: 401 });
+      const sent = await sendTelegramText(runtimeEnv, "✅ PRUEBA · Auto Bolsa\n\nLas alertas funcionan. Solo recibirás dos tipos de mensaje:\n🟢 COMPRA AHORA\n🔴 VENDE AHORA\n\nEsto es una prueba: no hagas nada.");
+      return Response.json(sent, { status: sent.ok ? 200 : 502, headers: { "Cache-Control": "no-store" } });
+    }
+    if (request.method === "POST" && path === "/api/signals/reset-holding") {
+      if (!authorized(request, runtimeEnv)) return new Response("Unauthorized", { status: 401 });
+      const key = new URL(request.url).searchParams.get("key") ?? "";
+      return botState(runtimeEnv).fetch("https://bot/signal-alerts/reset-holding", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ key }) });
+    }
     if (request.method === "POST" && path === "/api/pilot/auto-cycle") {
       if (!authorized(request, runtimeEnv)) return new Response("Unauthorized", { status: 401 });
       const result = await runXauPaxgLiveCycle(runtimeEnv);
-      return Response.json(result, { status: result.action === "blocked" ? 409 : 200, headers: { "Cache-Control": "no-store" } });
+      return Response.json(result, { status: "action" in result && result.action === "blocked" ? 409 : 200, headers: { "Cache-Control": "no-store" } });
     }
     return worker.fetch(request, paperRuntimeEnv(env), ctx);
   },
