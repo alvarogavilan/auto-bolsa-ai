@@ -74,7 +74,11 @@ function load(){fetch('/api/order-now',{cache:'no-store'}).then(function(r){if(!
 function news(){fetch('/api/news-brief').then(function(r){return r.json()}).then(function(j){var n=$('news');n.textContent='';$('newsTitle').textContent='Noticias oficiales · '+j.sourcesAvailable+'/'+j.sourcesConfigured+' fuentes';
   (j.signals||[]).forEach(function(s){var r=el('div','row');var a=el(s.link&&/^https:/.test(s.link)?'a':'span','',(s.urgency==='breaking'?'🚨 ':'')+s.title);if(a.tagName==='A'){a.href=s.link;a.rel='noopener noreferrer';a.target='_blank';a.style.color='inherit'}r.appendChild(a);r.appendChild(el('span','small',s.source));n.appendChild(r)});
   if(!(j.signals||[]).length)n.appendChild(el('div','small','Sin noticias de alto impacto ahora.'))}).catch(function(){})}
-load();news();setInterval(load,POLL);setInterval(tick,1000);setInterval(news,120000);
+function radar(){fetch('/api/radar').then(function(r){return r.json()}).then(function(j){var n=$('radar');n.textContent='';$('radarTitle').textContent='Radar mundial · '+j.sourcesAvailable+'/'+j.sourcesConfigured+' fuentes · '+j.itemsAnalysed+' titulares';
+  j.pulses.filter(function(x){return ['gold','bitcoin','macro','stocks','geopolitics'].indexOf(x.topic)>=0}).forEach(function(x){var r=el('div','row');r.appendChild(el('span','',x.label+' · '+x.mentions+' menciones'));var v=el('span','',x.verdict);v.className=x.verdict==='Sin datos'||x.tone===0?'small':x.tone>0?'up':'down';r.appendChild(v);n.appendChild(r)});
+  if(j.fearGreed){var r=el('div','row');r.appendChild(el('span','','Miedo/Codicia crypto'));r.appendChild(el('span','small',j.fearGreed.value+' · '+j.fearGreed.label));n.appendChild(r)}
+  n.appendChild(el('div','small','Informativo: no cambia la orden.'))}).catch(function(){})}
+load();news();radar();setInterval(radar,180000);setInterval(load,POLL);setInterval(tick,1000);setInterval(news,120000);
 document.addEventListener('visibilitychange',function(){if(!document.hidden)load()});
 `;
 
@@ -86,6 +90,7 @@ export function homeOrderScreen(): Response {
 <div id="others"></div>
 <section class="card"><h2>Mercado en vivo (Kraken)</h2><div id="market"></div></section>
 <section class="card"><h2 id="teamTitle">Tu equipo de oro</h2><div id="team"></div></section>
+<section class="card"><h2 id="radarTitle">Radar mundial</h2><div id="radar"></div><a class="btn" style="background:transparent;color:var(--ink);border:1px solid var(--line)" href="/radar">Ver radar completo: medios, redes, empresas y mercados</a></section>
 <section class="card"><h2 id="newsTitle">Noticias oficiales</h2><div id="news"></div></section>
 <p><a class="link" href="/demo">Panel de simulación</a><a class="link" href="/technical">Panel técnico</a><a class="link" href="/api/signals/status">Historial de alertas</a></p>
 <p class="small">Auto Bolsa no envía órdenes: las ejecutas tú. Las señales se basan en simulación y no garantizan beneficios.</p>

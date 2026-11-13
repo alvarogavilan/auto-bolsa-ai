@@ -14,6 +14,8 @@ import { buildOrderNow } from "./order-now";
 import { homeOrderScreen } from "./home-order-screen";
 import { fetchTickers, type KrakenTicker } from "./kraken-markets";
 import { buildNewsIntelligence } from "./news-intelligence";
+import { fetchWorldBoard, fetchWorldRadar } from "./world-radar";
+import { radarScreen } from "./radar-screen";
 import type { XauPaperRuntimeInput } from "./xau-usd-paper-runtime";
 
 export { BotState, ResearchLabState, LiveExecutorState };
@@ -276,6 +278,15 @@ async function newsBriefResponse(request: Request, ctx: ExecutionContext): Promi
   return response;
 }
 
+async function cachedJson(request: Request, ctx: ExecutionContext, path: string, ttlSeconds: number, build: () => Promise<unknown>): Promise<Response> {
+  const cacheKey = new Request(new URL(path, request.url).toString());
+  const cached = await caches.default.match(cacheKey);
+  if (cached) return cached;
+  const response = Response.json(await build(), { headers: { "Cache-Control": `public, max-age=${ttlSeconds}` } });
+  ctx.waitUntil(caches.default.put(cacheKey, response.clone()));
+  return response;
+}
+
 function shouldRunBaseStrategy(controller: ScheduledController): boolean { return new Date(controller.scheduledTime).getUTCMinutes() % 5 === 0; }
 
 export default {
@@ -293,6 +304,9 @@ export default {
     }
     if (request.method === "GET" && path === "/") return homeOrderScreen();
     if (request.method === "GET" && path === "/api/order-now") return orderNowResponse(runtimeEnv);
+    if (request.method === "GET" && path === "/radar") return radarScreen();
+    if (request.method === "GET" && path === "/api/radar") return cachedJson(request, ctx, "/api/radar", 180, () => fetchWorldRadar());
+    if (request.method === "GET" && path === "/api/world-markets") return cachedJson(request, ctx, "/api/world-markets", 60, () => fetchWorldBoard());
     if (request.method === "GET" && path === "/api/news-brief") return newsBriefResponse(request, ctx);
     if (request.method === "GET" && path === "/api/signals/status") return signalStatusResponse(runtimeEnv);
     if (request.method === "POST" && path === "/api/signals/run") {

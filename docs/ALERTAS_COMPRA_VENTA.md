@@ -34,11 +34,22 @@ Al abrir la app (`/`) aparece **la orden a ejecutar ahora**: COMPRA, VENDE, MANT
 
 El panel de simulación anterior sigue en `/demo`.
 
+## Radar Mundial (`/radar`)
+
+Vigilancia gratuita y sin claves de 41 fuentes: medios financieros internacionales y españoles, Google News por tema, redes públicas (Reddit, Hacker News, Mastodon, Stocktwits, CoinGecko, índice Miedo/Codicia), hechos relevantes de empresas (SEC 8-K) y un tablero de 30 mercados (índices, divisas, materias primas, empresas).
+
+- Calcula un pulso por tema (oro, Bitcoin, bolsa, macro, geopolítica…) con el tono de medios y de redes por separado.
+- **Es informativo: no cambia ninguna orden.** El tono de titulares no ha demostrado mejorar el resultado en simulación.
+- Cada fuente muestra si responde o no; una fuente caída nunca rompe el radar.
+- X/Twitter, Bloomberg y Reuters no tienen acceso gratuito y no están incluidos.
+
 ## Endpoints
 
 | Ruta | Uso |
 |---|---|
 | `GET /api/order-now` | La orden vigente (lo que pinta la pantalla principal). |
+| `GET /api/radar` | Radar Mundial completo (caché 3 min). |
+| `GET /api/world-markets` | Tablero mundial de mercados (caché 1 min). |
 | `GET /api/news-brief` | Titulares de fuentes oficiales (caché 2 min). |
 | `GET /api/signals/status` | Qué deberías tener comprado ahora y últimas alertas. |
 | `POST /api/signals/test` (ADMIN_TOKEN) | Envía un mensaje de prueba a Telegram. |
