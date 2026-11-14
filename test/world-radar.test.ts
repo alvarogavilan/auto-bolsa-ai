@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { buildWorldRadar, fetchWorldRadar, parseRadarSource, parseStooqCsv, scoreTone } from "../src/world-radar";
+import { buildWorldRadar, fetchWorldRadar, parseRadarSource, parseYahooSpark, scoreTone } from "../src/world-radar";
 import { RADAR_SOURCES, WORLD_BOARD, type RadarSource } from "../src/world-radar-sources";
 import { radarScreen } from "../src/radar-screen";
 
@@ -74,8 +74,13 @@ describe("world radar", () => {
     expect(report.pulses.find((pulse) => pulse.topic === "bitcoin")?.verdict).toBe("Muy positivo");
   });
 
-  it("parses the Stooq world board and skips missing quotes", () => {
-    const quotes = parseStooqCsv("Symbol,Date,Time,Open,High,Low,Close,Volume\n^SPX,2026-11-12,22:00:00,6000,6100,5990,6060,1\nXAUUSD,2026-11-13,10:00:00,4000,4050,3990,3960,0\nNOPE,N/D,N/D,N/D,N/D,N/D,N/D,N/D\n");
+  it("parses the Yahoo world board with change versus previous close", () => {
+    const quotes = parseYahooSpark({ spark: { result: [
+      { symbol: "^GSPC", response: [{ meta: { regularMarketPrice: 6060, chartPreviousClose: 6000, regularMarketTime: 1794606199 } }] },
+      { symbol: "GC=F", response: [{ meta: { regularMarketPrice: 3960, chartPreviousClose: 4000 } }] },
+      { symbol: "UNKNOWN", response: [{ meta: { regularMarketPrice: 1 } }] },
+      { symbol: "AAPL", response: [{ meta: {} }] },
+    ] } });
     expect(quotes).toHaveLength(2);
     expect(quotes[0]?.label).toBe("S&P 500");
     expect(quotes[0]?.changePct).toBeCloseTo(1);

@@ -79,7 +79,9 @@ function radar(){fetch('/api/radar').then(function(r){return r.json()}).then(fun
   j.pulses.filter(function(x){return ['gold','bitcoin','macro','stocks','geopolitics'].indexOf(x.topic)>=0}).forEach(function(x){var r=el('div','row');r.appendChild(el('span','',x.label+' · '+x.mentions+' menciones'));var v=el('span','',x.verdict);v.className=x.verdict==='Sin datos'||x.tone===0?'small':x.tone>0?'up':'down';r.appendChild(v);n.appendChild(r)});
   if(j.fearGreed){var r=el('div','row');r.appendChild(el('span','','Miedo/Codicia crypto'));r.appendChild(el('span','small',j.fearGreed.value+' · '+j.fearGreed.label));n.appendChild(r)}
   n.appendChild(el('div','small','Informativo: no cambia la orden.'))}).catch(function(){})}
-load();news();radar();setInterval(radar,180000);setInterval(load,POLL);setInterval(tick,1000);setInterval(news,120000);
+function telegram(){fetch('/api/telegram/readiness',{cache:'no-store'}).then(function(r){return r.json()}).then(function(j){var bad=!j.configured||!j.connected||!j.chatResolved;$('tgwarn').style.display=bad?'block':'none';
+  $('tgtext').textContent=!j.configured?'Falta configurar el bot de Telegram. Hasta entonces las órdenes solo aparecen en esta pantalla.':!j.connected?'El token del bot de Telegram no es válido. Hasta arreglarlo las órdenes solo aparecen en esta pantalla.':'El bot no encuentra tu chat. Abre tu bot en Telegram y pulsa «Iniciar», o añádelo al grupo o canal donde quieres los avisos. Hasta entonces las órdenes solo aparecen en esta pantalla.'}).catch(function(){})}
+load();news();radar();telegram();setInterval(telegram,600000);setInterval(radar,180000);setInterval(load,POLL);setInterval(tick,1000);setInterval(news,120000);
 document.addEventListener('visibilitychange',function(){if(!document.hidden)load()});
 `;
 
@@ -88,6 +90,7 @@ export function homeOrderScreen(): Response {
 <div class="top"><span><span id="dot" class="dot bad"></span><span id="fresh">Conectando…</span></span><span>Auto Bolsa</span></div>
 <section id="order" class="card order wait"><h1 id="headline">Cargando orden…</h1><p id="sub" class="sub"></p><div id="count" class="count" style="display:none"></div><ol id="steps"></ol><ul id="warnings" class="warn"></ul><p id="reason" class="reason"></p><a id="kraken" class="btn" style="display:none" href="https://crypto.com/exchange/" rel="noopener noreferrer" target="_blank">Abrir Crypto.com</a>
 <div class="stale"><b>NO EJECUTES</b><p>Esta pantalla no se ha actualizado en los últimos 20 segundos. Comprueba tu conexión.</p></div></section>
+<section id="tgwarn" class="card" style="display:none;border-color:var(--sell)"><h2 style="color:var(--sell)">Telegram no puede avisarte</h2><p id="tgtext" style="margin:0;font-size:15px"></p></section>
 <div id="others"></div>
 <section class="card"><h2 id="marketTitle">Mercado en vivo</h2><div id="market"></div></section>
 <section class="card"><h2 id="teamTitle">Tu equipo de oro</h2><div id="team"></div></section>
