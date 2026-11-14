@@ -22,6 +22,16 @@ import {
 } from "./xau-usd-persistent-orchestrator";
 import type { XauPaperRuntimeInput } from "./xau-usd-paper-runtime";
 import type { Env } from "./types";
+import { RADAR_TRACK_KEY, parseRadarTrack, recordRadarSnapshot, type RadarSnapshot, type RadarTrackState } from "./radar-track-record";
+import {
+  SIGNAL_ALERT_STATE_KEY,
+  claimSignalAlert,
+  commitSignalAlert,
+  parseSignalAlertState,
+  releaseSignalAlert,
+  type SignalAlertCommit,
+  type SignalAlertState,
+} from "./signal-alerts-store";
 
 const KRAKEN_EFFECTIVE_FEES_KEY = "kraken-effective-fees-v1";
 const KRAKEN_EFFECTIVE_FEES_TTL_MS = 10 * 60_000;
@@ -313,8 +323,62 @@ export class BotState extends BaseBotState {
     }, { status: base.status, headers: { "Cache-Control": "no-store" } });
   }
 
+  private async signalAlertResponse(request: Request, path: string): Promise<Response> {
+    const storage = this.feeContext.storage;
+    if (request.method === "GET" && path === "/signal-alerts/state") {
+      return Response.json(parseSignalAlertState(await storage.get<SignalAlertState>(SIGNAL_ALERT_STATE_KEY)), { headers: { "Cache-Control": "no-store" } });
+    }
+    if (request.method !== "POST") return new Response("Method not allowed", { status: 405 });
+    let body: Record<string, unknown>;
+    try { body = await request.json<Record<string, unknown>>(); } catch { return Response.json({ error: "INVALID_JSON" }, { status: 400 }); }
+    return this.feeContext.blockConcurrencyWhile(async () => {
+      const state = parseSignalAlertState(await storage.get<SignalAlertState>(SIGNAL_ALERT_STATE_KEY));
+      const key = typeof body.key === "string" ? body.key : "";
+      if (path === "/signal-alerts/claim") {
+        if (!key) return Response.json({ error: "KEY_REQUIRED" }, { status: 400 });
+        const claimed = claimSignalAlert(state, key, Date.now());
+        if (claimed) await storage.put(SIGNAL_ALERT_STATE_KEY, state);
+        return Response.json({ claimed });
+      }
+      if (path === "/signal-alerts/release") {
+        if (!key) return Response.json({ error: "KEY_REQUIRED" }, { status: 400 });
+        releaseSignalAlert(state, key);
+        await storage.put(SIGNAL_ALERT_STATE_KEY, state);
+        return Response.json({ released: true });
+      }
+      if (path === "/signal-alerts/commit") {
+        commitSignalAlert(state, body as unknown as SignalAlertCommit);
+        await storage.put(SIGNAL_ALERT_STATE_KEY, state);
+        return Response.json({ committed: true });
+      }
+      if (path === "/signal-alerts/reset-holding") {
+        if (!key) return Response.json({ error: "KEY_REQUIRED" }, { status: 400 });
+        delete state.holdings[key];
+        await storage.put(SIGNAL_ALERT_STATE_KEY, state);
+        return Response.json({ removed: true });
+      }
+      return new Response("Not found", { status: 404 });
+    });
+  }
+
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
+    if (request.method === "GET" && url.pathname === "/radar-track/state") {
+      return Response.json(parseRadarTrack(await this.feeContext.storage.get<RadarTrackState>(RADAR_TRACK_KEY)));
+    }
+    if (request.method === "POST" && url.pathname === "/radar-track/record") {
+      const snapshot = await request.json<RadarSnapshot>().catch(() => null);
+      if (!snapshot || typeof snapshot.at !== "number" || !snapshot.topics) return Response.json({ error: "INVALID_SNAPSHOT" }, { status: 400 });
+      return this.feeContext.blockConcurrencyWhile(async () => {
+        const state = parseRadarTrack(await this.feeContext.storage.get<RadarTrackState>(RADAR_TRACK_KEY));
+        const recorded = recordRadarSnapshot(state, snapshot);
+        if (recorded) await this.feeContext.storage.put(RADAR_TRACK_KEY, state);
+        return Response.json({ recorded, snapshots: state.snapshots.length });
+      });
+    }
+    if (url.pathname.startsWith("/signal-alerts/")) {
+      return this.signalAlertResponse(request, url.pathname);
+    }
     if (request.method === "GET" && url.pathname === "/xau/status") {
       return this.xauStatusResponse();
     }

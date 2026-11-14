@@ -8,6 +8,18 @@ import { derivePaperEconomicPerformance, type PaperEconomicStrategyLike } from "
 import { BOT_STATE_SINGLETON_NAME, LIVE_EXECUTOR_SINGLETON_NAME, type Env } from "./types";
 import { buildNativeXauFastPriceInput, buildNativeXauPaperInput } from "./xau-native-paper-feed";
 import { runXauPaxgLiveCycle } from "./xau-paxg-live-orchestrator-guarded";
+import { loadSignalInputs, readSignalAlertState, runSignalAlerts, sendTelegramText } from "./signal-alerts-runner";
+import { planSignalAlerts } from "./signal-alerts";
+import { buildOrderNow } from "./order-now";
+import { homeOrderScreen } from "./home-order-screen";
+import type { KrakenTicker } from "./kraken-markets";
+import { executionVenue, fetchVenueTickers } from "./execution-venue";
+import { buildNewsIntelligence } from "./news-intelligence";
+import { fetchWorldBoard, fetchWorldRadar } from "./world-radar";
+import { radarScreen } from "./radar-screen";
+import { TRACKED, evaluateRadarTrack, parseRadarTrack, type RadarSnapshot } from "./radar-track-record";
+import { findTicker } from "./order-now";
+import { appInstallResponse } from "./app-install";
 import type { XauPaperRuntimeInput } from "./xau-usd-paper-runtime";
 
 export { BotState, ResearchLabState, LiveExecutorState };
@@ -213,7 +225,92 @@ async function runXauFastMonitoringSamples(env: Env): Promise<void> {
   for (let sample = 0; sample < XAU_FAST_SAMPLES_PER_MINUTE; sample += 1) {
     await sleep(XAU_FAST_INTERVAL_MS);
     try { await submitXauCycle(env, await buildNativeXauFastPriceInput()); } catch { /* siguiente muestra */ }
+    // Las salidas (stop) del oro se detectan aquí, segundos después de producirse.
+    if (!liveArmed(env) && sample % 3 === 2) {
+      try { await runSignalAlerts(env, { includeCrypto: false }); } catch { /* siguiente muestra */ }
+    }
   }
+}
+
+function liveArmed(env: Env): boolean {
+  return env.LIVE_TRADING_ENABLED === "true" && env.TRADING_MODE === "live" && (env.PAIR || "") === "PAXGEUR";
+}
+
+async function signalStatusResponse(env: Env): Promise<Response> {
+  const state = await readSignalAlertState(env);
+  const holdings = Object.values(state.holdings);
+  return Response.json({
+    schemaVersion: "signal-alert-status-v1",
+    telegramConfigured: Boolean((env.TELEGRAM_BOT_TOKEN || env.BETPRO_TELEGRAM_BOT_TOKEN) && (env.TELEGRAM_CHAT_ID || env.BETPRO_TELEGRAM_CHAT_ID)),
+    resumen: holdings.length === 0
+      ? "Sin posiciones abiertas. Espera a recibir «🟢 COMPRA AHORA»."
+      : holdings.map((holding) => `Tienes ${holding.asset} de la alerta ${holding.alertId}: espera «🔴 VENDE AHORA».`).join(" "),
+    holdings,
+    recentAlerts: state.log.slice(0, 20),
+    realOrderSubmission: false,
+  }, { headers: { "Cache-Control": "no-store" } });
+}
+
+async function orderNowResponse(env: Env): Promise<Response> {
+  const now = Date.now();
+  const { state, xauStatus, labView } = await loadSignalInputs(env);
+  const plan = planSignalAlerts({ xauStatus, lab: labView, holdings: state.holdings, now, includeGold: xauStatus !== null, includeCrypto: labView !== null });
+  const pairs = new Set<string>(["PAXGEUR", "XBTEUR", "ETHEUR"]);
+  for (const holding of Object.values(state.holdings)) pairs.add(holding.pair);
+  for (const buy of plan.buys) pairs.add(buy.pair);
+  let tickers: Record<string, KrakenTicker> = {};
+  let tickersAvailable = true;
+  try { tickers = await fetchVenueTickers(env, [...pairs]); } catch { tickersAvailable = false; }
+  return Response.json(buildOrderNow({ now, xauStatus, holdings: state.holdings, plan, tickers, tickersAvailable, venue: executionVenue(env) }), { headers: { "Cache-Control": "no-store" } });
+}
+
+const NEWS_BRIEF_TTL_SECONDS = 120;
+
+async function newsBriefResponse(request: Request, ctx: ExecutionContext): Promise<Response> {
+  const cacheKey = new Request(new URL("/api/news-brief", request.url).toString());
+  const cached = await caches.default.match(cacheKey);
+  if (cached) return cached;
+  const report = await buildNewsIntelligence();
+  const response = Response.json({
+    schemaVersion: "news-brief-v1",
+    generatedAt: report.generatedAt,
+    sourcesConfigured: report.sourcesConfigured,
+    sourcesAvailable: report.sourcesAvailable,
+    signals: report.signals.slice(0, 8).map((signal) => ({ title: signal.title, source: signal.source, link: signal.link, urgency: signal.urgency, direction: signal.direction, impactScore: signal.impactScore, publishedAt: signal.publishedAt })),
+  }, { headers: { "Cache-Control": `public, max-age=${NEWS_BRIEF_TTL_SECONDS}` } });
+  ctx.waitUntil(caches.default.put(cacheKey, response.clone()));
+  return response;
+}
+
+async function cachedJson(request: Request, ctx: ExecutionContext, path: string, ttlSeconds: number, build: () => Promise<unknown>): Promise<Response> {
+  const cacheKey = new Request(new URL(path, request.url).toString());
+  const cached = await caches.default.match(cacheKey);
+  if (cached) return cached;
+  const response = Response.json(await build(), { headers: { "Cache-Control": `public, max-age=${ttlSeconds}` } });
+  ctx.waitUntil(caches.default.put(cacheKey, response.clone()));
+  return response;
+}
+
+/** Construye el radar y guarda una muestra tono+precio para el verificador de aciertos. */
+async function radarWithSnapshot(env: Env, ctx: ExecutionContext): Promise<unknown> {
+  const report = await fetchWorldRadar();
+  ctx.waitUntil((async () => {
+    const tickers = await fetchVenueTickers(env, TRACKED.map((entry) => entry.pair));
+    const snapshot: RadarSnapshot = { at: report.generatedAt, topics: {} };
+    for (const { topic, pair } of TRACKED) {
+      const pulse = report.pulses.find((item) => item.topic === topic);
+      const quote = findTicker(tickers, pair);
+      if (pulse && quote && quote.bid > 0 && quote.ask > 0) snapshot.topics[topic] = { tone: pulse.tone, mentions: pulse.mentions, priceEur: (quote.bid + quote.ask) / 2 };
+    }
+    await botState(env).fetch("https://bot/radar-track/record", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(snapshot) });
+  })().catch((error) => console.error("RADAR_SNAPSHOT_FAILURE", error)));
+  return report;
+}
+
+async function radarTrackResponse(env: Env): Promise<Response> {
+  const response = await botState(env).fetch("https://bot/radar-track/state");
+  const state = parseRadarTrack(response.ok ? await response.json<unknown>() : null);
+  return Response.json(evaluateRadarTrack(state, Date.now()), { headers: { "Cache-Control": "no-store" } });
 }
 
 function shouldRunBaseStrategy(controller: ScheduledController): boolean { return new Date(controller.scheduledTime).getUTCMinutes() % 5 === 0; }
@@ -231,10 +328,33 @@ export default {
       if (!authorized(request, runtimeEnv)) return new Response("Unauthorized", { status: 401 });
       return botState(runtimeEnv).fetch("https://bot/xau/cycle", { method: "POST", headers: { "Content-Type": "application/json" }, body: await request.text() });
     }
+    if (request.method === "GET") { const install = appInstallResponse(path); if (install) return install; }
+    if (request.method === "GET" && path === "/") return homeOrderScreen();
+    if (request.method === "GET" && path === "/api/order-now") return orderNowResponse(runtimeEnv);
+    if (request.method === "GET" && path === "/radar") return radarScreen();
+    if (request.method === "GET" && path === "/api/radar") return cachedJson(request, ctx, "/api/radar", 180, () => radarWithSnapshot(runtimeEnv, ctx));
+    if (request.method === "GET" && path === "/api/radar/track-record") return radarTrackResponse(runtimeEnv);
+    if (request.method === "GET" && path === "/api/world-markets") return cachedJson(request, ctx, "/api/world-markets", 60, () => fetchWorldBoard());
+    if (request.method === "GET" && path === "/api/news-brief") return newsBriefResponse(request, ctx);
+    if (request.method === "GET" && path === "/api/signals/status") return signalStatusResponse(runtimeEnv);
+    if (request.method === "POST" && path === "/api/signals/run") {
+      if (!authorized(request, runtimeEnv)) return new Response("Unauthorized", { status: 401 });
+      return Response.json(await runSignalAlerts(runtimeEnv), { headers: { "Cache-Control": "no-store" } });
+    }
+    if (request.method === "POST" && path === "/api/signals/test") {
+      if (!authorized(request, runtimeEnv)) return new Response("Unauthorized", { status: 401 });
+      const sent = await sendTelegramText(runtimeEnv, "✅ PRUEBA · Auto Bolsa\n\nLas alertas funcionan. Solo recibirás dos tipos de mensaje:\n🟢 COMPRA AHORA\n🔴 VENDE AHORA\n\nEsto es una prueba: no hagas nada.");
+      return Response.json(sent, { status: sent.ok ? 200 : 502, headers: { "Cache-Control": "no-store" } });
+    }
+    if (request.method === "POST" && path === "/api/signals/reset-holding") {
+      if (!authorized(request, runtimeEnv)) return new Response("Unauthorized", { status: 401 });
+      const key = new URL(request.url).searchParams.get("key") ?? "";
+      return botState(runtimeEnv).fetch("https://bot/signal-alerts/reset-holding", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ key }) });
+    }
     if (request.method === "POST" && path === "/api/pilot/auto-cycle") {
       if (!authorized(request, runtimeEnv)) return new Response("Unauthorized", { status: 401 });
       const result = await runXauPaxgLiveCycle(runtimeEnv);
-      return Response.json(result, { status: result.action === "blocked" ? 409 : 200, headers: { "Cache-Control": "no-store" } });
+      return Response.json(result, { status: "action" in result && result.action === "blocked" ? 409 : 200, headers: { "Cache-Control": "no-store" } });
     }
     return worker.fetch(request, paperRuntimeEnv(env), ctx);
   },

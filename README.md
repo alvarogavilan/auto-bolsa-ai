@@ -4,16 +4,12 @@ Motor de trading automatizado para Kraken Spot, con simulación, gestión estric
 
 ## Estado actual
 
-- **Modo PAPER obligatorio**: no envía órdenes reales.
-- Trading real bloqueado por código en todas las rutas `/api/live/*`.
-- Consulta velas públicas de Kraken para `XBTEUR` cada cinco minutos.
-- Estrategia inicial: cruce EMA 9/21, filtro RSI 14, stop loss y take profit.
-- Capital simulado inicial: 50 EUR.
-- Exposición máxima: 20% del efectivo y máximo 10 EUR por entrada.
-- Límite de pérdida diaria: 1%.
-- Drawdown máximo: 5%.
-- Sin margen, futuros, apalancamiento, martingala ni retiradas.
-- Existe un ejecutor LIVE encapsulado y permanentemente desactivado (`LIVE_TRADING_ENABLED` ausente): ver [docs/live-executor.md](docs/live-executor.md).
+- **Ejecución manual**: Auto Bolsa no envía órdenes reales (`LIVE_TRADING_ENABLED` ausente). Te avisa por Telegram con «🟢 COMPRA AHORA» / «🔴 VENDE AHORA» y tú ejecutas en Crypto.com. Ver [docs/ALERTAS_COMPRA_VENTA.md](docs/ALERTAS_COMPRA_VENTA.md).
+- **Oro (especialidad)**: gabinete técnico + macro sobre XAU/USD cada minuto, con muestreo rápido de precio; se ejecuta como PAXG/EUR en Crypto.com.
+- **Crypto**: laboratorio multi‑horizonte (rápido, intradía, swing) sobre los pares EUR más líquidos de Kraken.
+- Solo se alerta una estrategia con historial simulado suficiente y positivo; las demás siguen en simulación.
+- Sin margen, futuros, apalancamiento, cortos ni martingala.
+- El ejecutor LIVE automático sigue encapsulado y desactivado: ver [docs/live-executor.md](docs/live-executor.md).
 
 ## Arquitectura
 

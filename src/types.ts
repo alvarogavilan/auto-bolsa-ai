@@ -18,6 +18,8 @@ export interface Env {
   TRADING_MODE: string;
   PAIR: string;
   INITIAL_CASH_EUR: string;
+  /** Plataforma de ejecución manual: "cryptocom" (por defecto) o "kraken". */
+  EXECUTION_VENUE?: string;
   ADMIN_TOKEN?: string;
   KRAKEN_API_KEY?: string;
   KRAKEN_API_SECRET?: string;

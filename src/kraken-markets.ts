@@ -71,6 +71,27 @@ export async function fetchTradableAssetPairs(): Promise<KrakenAssetPair[]> {
   }));
 }
 
+export async function fetchTickers(pairs: string[]): Promise<Record<string, KrakenTicker>> {
+  if (pairs.length === 0) return {};
+  const result = await publicGet<Record<string, Record<string, unknown>>>(`/public/Ticker?pair=${pairs.map(encodeURIComponent).join(",")}`);
+  return Object.fromEntries(
+    Object.entries(result).map(([key, raw]) => [
+      key,
+      {
+        ask: arrayNumber(raw.a, 0),
+        bid: arrayNumber(raw.b, 0),
+        last: arrayNumber(raw.c, 0),
+        volume24h: arrayNumber(raw.v, 1),
+        vwap24h: arrayNumber(raw.p, 1),
+        trades24h: arrayNumber(raw.t, 1),
+        low24h: arrayNumber(raw.l, 1),
+        high24h: arrayNumber(raw.h, 1),
+        open24h: numberValue(raw.o),
+      },
+    ]),
+  );
+}
+
 export async function fetchAllTickers(): Promise<Record<string, KrakenTicker>> {
   const result = await publicGet<Record<string, Record<string, unknown>>>("/public/Ticker");
   return Object.fromEntries(
