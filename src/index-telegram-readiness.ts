@@ -79,7 +79,20 @@ export default {
       return rejectTrade(url, env);
     }
 
-    return worker.fetch(request, env, ctx);
+    try {
+      return await worker.fetch(request, env, ctx);
+    } catch (error) {
+      // Sin esto Cloudflare responde un «error code: 1101» opaco. El mensaje
+      // (p. ej. un límite diario de Durable Objects) es lo que permite arreglarlo.
+      const message = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+      console.error("WORKER_UNHANDLED", url.pathname, message);
+      return Response.json({
+        error: "WORKER_UNHANDLED_EXCEPTION",
+        path: url.pathname,
+        message: message.slice(0, 500),
+        realOrderCreated: false,
+      }, { status: 500, headers: { "Cache-Control": "no-store" } });
+    }
   },
 
   async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
