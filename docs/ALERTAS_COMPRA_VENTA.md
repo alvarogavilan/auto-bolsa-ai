@@ -1,13 +1,21 @@
 # Alertas «COMPRA AHORA» / «VENDE AHORA»
 
-Auto Bolsa **no opera por ti**. Analiza el oro (XAU/USD → PAXG/EUR en Kraken) y las crypto en EUR de Kraken, y te envía por Telegram solo dos tipos de mensaje:
+Auto Bolsa **no opera por ti**. Analiza el oro (XAU/USD → PAXG/EUR) y las crypto en EUR, y te envía por Telegram solo dos tipos de mensaje:
 
 | Mensaje | Qué haces |
 |---|---|
-| 🟢 **COMPRA AHORA** | Sigues los 5 pasos del mensaje en Kraken (orden Límite, precio e importe exactos). |
+| 🟢 **COMPRA AHORA** | Sigues los 5 pasos del mensaje en Crypto.com (orden Límite, precio e importe exactos). |
 | 🔴 **VENDE AHORA** | Vendes **todo** lo comprado con esa alerta, orden a **Mercado**, aunque vaya en pérdidas. |
 
 Si no llega ningún mensaje, **no hagas nada**.
+
+## Dónde se ejecuta: Crypto.com
+
+El precio, el par y las instrucciones de cada orden salen de **Crypto.com Exchange** (`PAXG_EUR`, `BTC_EUR`, `ETH_EUR`…). Las estrategias siguen analizando con datos de Kraken, que es donde está el historial simulado.
+
+- Si una crypto no tiene par en EUR en Crypto.com, no se envía la compra.
+- Si usas la app normal de Crypto.com (sin órdenes límite), compra solo si el precio que te muestra es igual o menor que el precio límite del mensaje.
+- Para volver a Kraken: variable `EXECUTION_VENUE=kraken`.
 
 ## Reglas fijas del motor
 
@@ -17,16 +25,16 @@ Si no llega ningún mensaje, **no hagas nada**.
    - Oro: ≥ 10 operaciones cerradas, resultado acumulado positivo, capital conservado, caída máxima ≤ 5 %.
    - Crypto: ≥ 14 días, ≥ 30 operaciones cerradas, resultado positivo, profit factor ≥ 1,1, caída ≤ 5 %.
 4. Una VENDE solo se envía para algo que antes se mandó comprar, y nunca caduca.
-5. Nunca se pide vender en corto (en Kraken Spot no puedes vender lo que no tienes).
+5. Nunca se pide vender en corto (no puedes vender lo que no tienes).
 6. Como máximo 1 posición de oro y 1 de crypto abiertas a la vez.
 7. Si Telegram falla, el mensaje se reintenta en el siguiente ciclo (no se pierde ni se duplica).
-8. No se compra si el precio de Kraken no es verificable o la diferencia compra/venta supera el 1 %.
+8. No se compra si el precio de Crypto.com no es verificable o la diferencia compra/venta supera el 1 %.
 
 ## Pantalla principal
 
 Al abrir la app (`/`) aparece **la orden a ejecutar ahora**: COMPRA, VENDE, MANTÉN o ESPERA.
 
-- Se recalcula cada 5 segundos con el precio vivo de Kraken.
+- Se recalcula cada 5 segundos con el precio vivo de Crypto.com.
 - Las compras muestran una cuenta atrás; al llegar a cero no se compra.
 - Si la pantalla lleva más de 20 s sin actualizarse, o el motor lleva más de 6 min sin decidir, tapa la orden con «NO EJECUTES».
 - Si el precio ya se escapó más de un 0,3 % del límite original, la compra desaparece.

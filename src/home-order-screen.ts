@@ -2,7 +2,7 @@ import { APP_HEAD_TAGS } from "./app-install";
 /**
  * Pantalla principal: «la orden a ejecutar ahora».
  *
- * - Consulta /api/order-now cada 5 s (precio vivo de Kraken en cada consulta).
+ * - Consulta /api/order-now cada 5 s (precio vivo de la plataforma de ejecución).
  * - Si pasan más de 20 s sin una respuesta válida, tapa la orden con un aviso
  *   rojo: una orden vieja es peor que ninguna.
  * - Todo el contenido dinámico se escribe con textContent (sin HTML inyectado).
@@ -52,7 +52,7 @@ function render(){
   $('sub').textContent=sub.join(' · ');
   fill($('steps'),p.steps,'li');fill($('warnings'),p.warnings.map(function(w){return '⚠️ '+w}),'li');
   $('reason').textContent=[p.reason?'Motivo: '+p.reason:'',p.evidence?'Historial simulado: '+p.evidence:''].filter(Boolean).join('  ·  ');
-  $('kraken').style.display=(p.action==='buy'||p.action==='sell')?'block':'none';
+  $('kraken').style.display=(p.action==='buy'||p.action==='sell')?'block':'none';if(d.venue){$('kraken').textContent='Abrir '+d.venue.name;if(/^https:/.test(d.venue.url))$('kraken').href=d.venue.url;$('marketTitle').textContent='Mercado en vivo ('+d.venue.name+')'}
   var o=$('others');o.textContent='';
   d.others.forEach(function(c){var m=el('div','card mini '+c.action);m.appendChild(el('h3','',c.headline));var ol=el('ol');c.steps.forEach(function(s){ol.appendChild(el('li','',s))});m.appendChild(ol);o.appendChild(m)});
   var mk=$('market');mk.textContent='';
@@ -86,10 +86,10 @@ document.addEventListener('visibilitychange',function(){if(!document.hidden)load
 export function homeOrderScreen(): Response {
   const html = `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">${APP_HEAD_TAGS}<title>Auto Bolsa · Orden ahora</title><style>${STYLE}</style></head><body><main>
 <div class="top"><span><span id="dot" class="dot bad"></span><span id="fresh">Conectando…</span></span><span>Auto Bolsa</span></div>
-<section id="order" class="card order wait"><h1 id="headline">Cargando orden…</h1><p id="sub" class="sub"></p><div id="count" class="count" style="display:none"></div><ol id="steps"></ol><ul id="warnings" class="warn"></ul><p id="reason" class="reason"></p><a id="kraken" class="btn" style="display:none" href="https://pro.kraken.com/" rel="noopener noreferrer" target="_blank">Abrir Kraken</a>
+<section id="order" class="card order wait"><h1 id="headline">Cargando orden…</h1><p id="sub" class="sub"></p><div id="count" class="count" style="display:none"></div><ol id="steps"></ol><ul id="warnings" class="warn"></ul><p id="reason" class="reason"></p><a id="kraken" class="btn" style="display:none" href="https://crypto.com/exchange/" rel="noopener noreferrer" target="_blank">Abrir Crypto.com</a>
 <div class="stale"><b>NO EJECUTES</b><p>Esta pantalla no se ha actualizado en los últimos 20 segundos. Comprueba tu conexión.</p></div></section>
 <div id="others"></div>
-<section class="card"><h2>Mercado en vivo (Kraken)</h2><div id="market"></div></section>
+<section class="card"><h2 id="marketTitle">Mercado en vivo</h2><div id="market"></div></section>
 <section class="card"><h2 id="teamTitle">Tu equipo de oro</h2><div id="team"></div></section>
 <section class="card"><h2 id="radarTitle">Radar mundial</h2><div id="radar"></div><a class="btn" style="background:transparent;color:var(--ink);border:1px solid var(--line)" href="/radar">Ver radar completo: medios, redes, empresas y mercados</a></section>
 <section class="card"><h2 id="newsTitle">Noticias oficiales</h2><div id="news"></div></section>

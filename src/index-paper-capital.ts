@@ -12,7 +12,8 @@ import { loadSignalInputs, readSignalAlertState, runSignalAlerts, sendTelegramTe
 import { planSignalAlerts } from "./signal-alerts";
 import { buildOrderNow } from "./order-now";
 import { homeOrderScreen } from "./home-order-screen";
-import { fetchTickers, type KrakenTicker } from "./kraken-markets";
+import type { KrakenTicker } from "./kraken-markets";
+import { executionVenue, fetchVenueTickers } from "./execution-venue";
 import { buildNewsIntelligence } from "./news-intelligence";
 import { fetchWorldBoard, fetchWorldRadar } from "./world-radar";
 import { radarScreen } from "./radar-screen";
@@ -259,8 +260,8 @@ async function orderNowResponse(env: Env): Promise<Response> {
   for (const buy of plan.buys) pairs.add(buy.pair);
   let tickers: Record<string, KrakenTicker> = {};
   let tickersAvailable = true;
-  try { tickers = await fetchTickers([...pairs]); } catch { tickersAvailable = false; }
-  return Response.json(buildOrderNow({ now, xauStatus, holdings: state.holdings, plan, tickers, tickersAvailable }), { headers: { "Cache-Control": "no-store" } });
+  try { tickers = await fetchVenueTickers(env, [...pairs]); } catch { tickersAvailable = false; }
+  return Response.json(buildOrderNow({ now, xauStatus, holdings: state.holdings, plan, tickers, tickersAvailable, venue: executionVenue(env) }), { headers: { "Cache-Control": "no-store" } });
 }
 
 const NEWS_BRIEF_TTL_SECONDS = 120;
@@ -294,7 +295,7 @@ async function cachedJson(request: Request, ctx: ExecutionContext, path: string,
 async function radarWithSnapshot(env: Env, ctx: ExecutionContext): Promise<unknown> {
   const report = await fetchWorldRadar();
   ctx.waitUntil((async () => {
-    const tickers = await fetchTickers(TRACKED.map((entry) => entry.pair));
+    const tickers = await fetchVenueTickers(env, TRACKED.map((entry) => entry.pair));
     const snapshot: RadarSnapshot = { at: report.generatedAt, topics: {} };
     for (const { topic, pair } of TRACKED) {
       const pulse = report.pulses.find((item) => item.topic === topic);

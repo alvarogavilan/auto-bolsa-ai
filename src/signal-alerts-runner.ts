@@ -1,4 +1,5 @@
-import { fetchTickers, type KrakenTicker } from "./kraken-markets";
+import { executionVenue, fetchVenueTickers, type ExecutionVenue } from "./execution-venue";
+import type { KrakenTicker } from "./kraken-markets";
 import {
   buyAlertText,
   buyExecution,
@@ -13,7 +14,6 @@ import type { SignalAlertLogEntry, SignalAlertState, SignalHolding } from "./sig
 import { BOT_STATE_SINGLETON_NAME, type Env } from "./types";
 
 const TELEGRAM_API = "https://api.telegram.org";
-const KRAKEN_URL = "https://pro.kraken.com/";
 const RESEARCH_LAB_NAME = "auto-bolsa-ai-research-lab";
 
 function botToken(env: Env): string | null {
@@ -61,7 +61,7 @@ async function commit(env: Env, body: { openHolding?: SignalHolding | null; clos
   await postJson(bot(env), "/signal-alerts/commit", body);
 }
 
-export async function sendTelegramText(env: Env, text: string): Promise<{ ok: boolean; status: number; error?: string }> {
+export async function sendTelegramText(env: Env, text: string, venue: ExecutionVenue = executionVenue(env)): Promise<{ ok: boolean; status: number; error?: string }> {
   const token = botToken(env);
   const destination = chatId(env);
   if (!token || !destination) return { ok: false, status: 503, error: "TELEGRAM_NOT_CONFIGURED" };
@@ -72,7 +72,7 @@ export async function sendTelegramText(env: Env, text: string): Promise<{ ok: bo
       chat_id: destination,
       text,
       disable_web_page_preview: true,
-      reply_markup: { inline_keyboard: [[{ text: "📱 ABRIR KRAKEN", url: KRAKEN_URL }]] },
+      reply_markup: { inline_keyboard: [[{ text: `📱 ABRIR ${venue.name.toUpperCase()}`, url: venue.url }]] },
     }),
   });
   if (!response.ok) {
@@ -82,20 +82,9 @@ export async function sendTelegramText(env: Env, text: string): Promise<{ ok: bo
   return { ok: true, status: response.status };
 }
 
-function normalizePair(value: string): string {
-  return value.toUpperCase().replace(/[^A-Z0-9]/g, "");
-}
-
-function tickerFor(tickers: Record<string, KrakenTicker>, pair: string): KrakenTicker | null {
-  const wanted = normalizePair(pair);
-  for (const [key, ticker] of Object.entries(tickers)) if (normalizePair(key) === wanted) return ticker;
-  const only = Object.values(tickers);
-  return only.length === 1 ? only[0] ?? null : null;
-}
-
-async function ticker(pair: string): Promise<KrakenTicker | null> {
+async function ticker(env: Env, pair: string): Promise<KrakenTicker | null> {
   try {
-    return tickerFor(await fetchTickers([pair]), pair);
+    return (await fetchVenueTickers(env, [pair]))[pair] ?? null;
   } catch {
     return null;
   }
@@ -113,9 +102,9 @@ export interface SignalAlertRunResult {
 
 async function deliverSell(env: Env, alert: PlannedSellAlert, now: number, result: SignalAlertRunResult): Promise<void> {
   if (!(await claim(env, alert.key))) return;
-  const quote = await ticker(alert.holding.pair);
+  const quote = await ticker(env, alert.holding.pair);
   const bid = quote && quote.bid > 0 ? quote.bid : null;
-  const sent = await sendTelegramText(env, sellAlertText(alert, bid)).catch((error: unknown) => ({ ok: false, status: 0, error: String(error) }));
+  const sent = await sendTelegramText(env, sellAlertText(alert, bid, executionVenue(env).name)).catch((error: unknown) => ({ ok: false, status: 0, error: String(error) }));
   if (!sent.ok) {
     await release(env, alert.key);
     result.failures.push(`${alert.key}: ${sent.error ?? sent.status}`);
@@ -130,9 +119,9 @@ async function deliverSell(env: Env, alert: PlannedSellAlert, now: number, resul
 
 async function deliverBuy(env: Env, alert: PlannedBuyAlert, now: number, result: SignalAlertRunResult): Promise<void> {
   if (now > alert.expiresAt) return;
-  const quote = await ticker(alert.pair);
+  const quote = await ticker(env, alert.pair);
   if (!quote || !(quote.ask > 0) || !(quote.bid > 0) || quote.ask < quote.bid) {
-    result.failures.push(`${alert.key}: sin precio verificable en Kraken para ${alert.displayPair}`);
+    result.failures.push(`${alert.key}: sin precio verificable en ${executionVenue(env).name} para ${alert.displayPair}`);
     return;
   }
   const spreadPct = (quote.ask - quote.bid) / quote.ask;
@@ -142,7 +131,7 @@ async function deliverBuy(env: Env, alert: PlannedBuyAlert, now: number, result:
   }
   if (!(await claim(env, alert.key))) return;
   const execution = buyExecution(alert, quote.ask);
-  const sent = await sendTelegramText(env, buyAlertText(alert, execution)).catch((error: unknown) => ({ ok: false, status: 0, error: String(error) }));
+  const sent = await sendTelegramText(env, buyAlertText(alert, execution, executionVenue(env).name)).catch((error: unknown) => ({ ok: false, status: 0, error: String(error) }));
   if (!sent.ok) {
     await release(env, alert.key);
     result.failures.push(`${alert.key}: ${sent.error ?? sent.status}`);

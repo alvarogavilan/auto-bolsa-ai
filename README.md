@@ -4,8 +4,8 @@ Motor de trading automatizado para Kraken Spot, con simulación, gestión estric
 
 ## Estado actual
 
-- **Ejecución manual**: Auto Bolsa no envía órdenes reales (`LIVE_TRADING_ENABLED` ausente). Te avisa por Telegram con «🟢 COMPRA AHORA» / «🔴 VENDE AHORA» y tú ejecutas en Kraken. Ver [docs/ALERTAS_COMPRA_VENTA.md](docs/ALERTAS_COMPRA_VENTA.md).
-- **Oro (especialidad)**: gabinete técnico + macro sobre XAU/USD cada minuto, con muestreo rápido de precio; se ejecuta como PAXG/EUR en Kraken Spot.
+- **Ejecución manual**: Auto Bolsa no envía órdenes reales (`LIVE_TRADING_ENABLED` ausente). Te avisa por Telegram con «🟢 COMPRA AHORA» / «🔴 VENDE AHORA» y tú ejecutas en Crypto.com. Ver [docs/ALERTAS_COMPRA_VENTA.md](docs/ALERTAS_COMPRA_VENTA.md).
+- **Oro (especialidad)**: gabinete técnico + macro sobre XAU/USD cada minuto, con muestreo rápido de precio; se ejecuta como PAXG/EUR en Crypto.com.
 - **Crypto**: laboratorio multi‑horizonte (rápido, intradía, swing) sobre los pares EUR más líquidos de Kraken.
 - Solo se alerta una estrategia con historial simulado suficiente y positivo; las demás siguen en simulación.
 - Sin margen, futuros, apalancamiento, cortos ni martingala.

@@ -13,7 +13,7 @@ import type { SignalHolding } from "./signal-alerts-store";
  * 3. Una VENDE solo se envía para algo que antes se mandó COMPRAR, y se envía
  *    siempre (sin caducidad) cuando la estrategia cierra esa posición.
  * 4. Nunca se pide vender en corto: las señales bajistas sin inventario se
- *    ignoran porque en Kraken Spot no se puede vender lo que no se tiene.
+ *    ignoran porque en mercado al contado no se puede vender lo que no se tiene.
  * 5. Como máximo una posición de oro y una de crypto abiertas a la vez.
  */
 
@@ -312,12 +312,12 @@ export function buyExecution(alert: PlannedBuyAlert, askEur: number): BuyExecuti
   };
 }
 
-export function buyAlertText(alert: PlannedBuyAlert, execution: BuyExecution): string {
+export function buyAlertText(alert: PlannedBuyAlert, execution: BuyExecution, venueName = "Crypto.com"): string {
   const decimals = priceDecimals(execution.limitPriceEur);
   return [
     `🟢 COMPRA AHORA · ${alert.asset}`,
     "",
-    "Qué hacer (en Kraken):",
+    `Qué hacer (en ${venueName}):`,
     `1. Busca ${alert.displayPair}`,
     "2. Pulsa Comprar → tipo de orden «Límite»",
     `3. Precio límite: ${formatEurPrice(execution.limitPriceEur, decimals)}`,
@@ -327,6 +327,7 @@ export function buyAlertText(alert: PlannedBuyAlert, execution: BuyExecution): s
     "⛔ NO compres si:",
     `• lees esto después de las ${madridTime(alert.expiresAt)} (la señal caduca)`,
     "• la orden no se ha completado en 10 minutos → cancélala y no hagas nada más",
+    "• tu app no deja poner orden límite y el precio que te muestra es mayor que ese precio límite",
     "",
     "Después: no hagas nada. Recibirás «🔴 VENDE AHORA» cuando toque salir.",
     execution.stopPriceEur !== null || execution.targetPriceEur !== null
@@ -341,7 +342,7 @@ export function buyAlertText(alert: PlannedBuyAlert, execution: BuyExecution): s
   ].filter((line): line is string => line !== null).join("\n");
 }
 
-export function sellAlertText(alert: PlannedSellAlert, bidEur: number | null): string {
+export function sellAlertText(alert: PlannedSellAlert, bidEur: number | null, venueName = "Crypto.com"): string {
   const holding = alert.holding;
   const unit = holding.market === "gold" ? "PAXG" : holding.asset;
   const result = bidEur !== null && holding.entryPriceEur > 0
@@ -350,7 +351,7 @@ export function sellAlertText(alert: PlannedSellAlert, bidEur: number | null): s
   return [
     `🔴 VENDE AHORA · ${holding.asset}`,
     "",
-    "Qué hacer (en Kraken):",
+    `Qué hacer (en ${venueName}):`,
     `1. Busca ${holding.displayPair}`,
     "2. Pulsa Vender → tipo de orden «Mercado»",
     `3. Cantidad: TODO lo comprado con la alerta ${holding.alertId} (≈ ${holding.quantityBase.toFixed(8)} ${unit})`,

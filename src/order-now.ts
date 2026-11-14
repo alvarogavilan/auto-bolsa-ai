@@ -13,7 +13,7 @@ import type { SignalHolding } from "./signal-alerts-store";
 
 /**
  * «Orden ahora»: la única instrucción que el usuario debe ejecutar en este
- * instante. Se recalcula en cada petición con el precio vivo de Kraken.
+ * instante. Se recalcula en cada petición con el precio vivo de la plataforma de ejecución.
  *
  * Prioridad: VENDE > COMPRA > MANTÉN > ESPERA.
  */
@@ -58,6 +58,7 @@ export interface OrderNowPayload {
   team: { market: "ORO (XAU/USD)"; bias: string; consensusPct: number; votes: TeamVote[]; vetoes: string[] } | null;
   market: Array<{ label: string; bidEur: number; askEur: number; change24hPct: number | null }>;
   discarded: string[];
+  venue: { name: string; url: string };
   realOrderSubmission: false;
 }
 
@@ -93,6 +94,7 @@ function amount(value: number): string {
 }
 
 function buyCard(input: {
+  venueName: string;
   asset: string;
   displayPair: string;
   alertId: string;
@@ -114,7 +116,7 @@ function buyCard(input: {
     displayPair: input.displayPair,
     alertId: input.alertId,
     steps: [
-      `Abre Kraken y busca ${input.displayPair}`,
+      `Abre ${input.venueName} y busca ${input.displayPair}`,
       "Pulsa Comprar → tipo de orden «Límite»",
       `Precio límite: ${formatEurPrice(input.limitPriceEur, decimals)}`,
       `Importe: ${amount(input.amountEur)} (≈ ${input.quantityBase.toFixed(8)} ${input.unit})`,
@@ -123,6 +125,7 @@ function buyCard(input: {
     warnings: [
       "Si la cuenta atrás llega a cero, NO compres.",
       "Si la orden no se completa en 10 minutos, cancélala.",
+      "Sin orden límite en tu app: compra solo si el precio mostrado es ese o menor.",
       "Si ya compraste con esta alerta, no compres otra vez.",
     ],
     reason: input.reason,
@@ -168,7 +171,9 @@ export function buildOrderNow(input: {
   plan: SignalAlertPlan;
   tickers: Record<string, KrakenTicker>;
   tickersAvailable: boolean;
+  venue?: { name: string; url: string };
 }): OrderNowPayload {
+  const venue = input.venue ?? { name: "Crypto.com", url: "https://crypto.com/exchange/" };
   const { now, plan, tickers } = input;
   const cards: OrderCard[] = [];
   const discarded: string[] = plan.suppressed.map((item) => `${item.displayPair}: señal descartada — ${item.reason}`);
@@ -181,7 +186,7 @@ export function buildOrderNow(input: {
     : engineStale
       ? "El motor de análisis lleva más de 6 minutos sin decidir."
       : !input.tickersAvailable
-        ? "No hay precio en vivo de Kraken."
+        ? `No hay precio en vivo de ${venue.name}.`
         : null;
   const dataFresh = staleReason === null;
 
@@ -199,7 +204,7 @@ export function buildOrderNow(input: {
       displayPair: holding.displayPair,
       alertId: holding.alertId,
       steps: [
-        `Abre Kraken y busca ${holding.displayPair}`,
+        `Abre ${venue.name} y busca ${holding.displayPair}`,
         "Pulsa Vender → tipo de orden «Mercado»",
         `Cantidad: TODO lo comprado con la alerta ${holding.alertId} (≈ ${holding.quantityBase.toFixed(8)} ${unit(holding)})`,
         "Confirma la orden",
@@ -221,6 +226,7 @@ export function buildOrderNow(input: {
       if (!quote || !(quote.ask > 0)) continue;
       const execution = buyExecution(buy, quote.ask);
       cards.push(buyCard({
+        venueName: venue.name,
         asset: buy.asset,
         displayPair: buy.displayPair,
         alertId: buy.alertId,
@@ -247,6 +253,7 @@ export function buildOrderNow(input: {
     if (dataFresh && now <= expiresAt && quote && !escaped) {
       const limit = Math.min(holding.entryPriceEur, ceilToDecimals(quote.ask * (1 + BUY_LIMIT_BUFFER_PCT), priceDecimals(quote.ask)));
       cards.push(buyCard({
+        venueName: venue.name,
         asset: holding.asset,
         displayPair: holding.displayPair,
         alertId: holding.alertId,
@@ -329,6 +336,7 @@ export function buildOrderNow(input: {
     team,
     market,
     discarded,
+    venue,
     realOrderSubmission: false,
   };
 }

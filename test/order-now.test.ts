@@ -91,7 +91,7 @@ describe("order now", () => {
     expect(staleEngine.primary.headline).toContain("NO OPERES");
     const noPrice = build(xauStatus(OPEN), {}, {}, false);
     expect(noPrice.primary.action).toBe("wait");
-    expect(noPrice.staleReason).toContain("Kraken");
+    expect(noPrice.staleReason).toContain("Crypto.com");
   });
 });
 

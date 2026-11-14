@@ -58,8 +58,9 @@ function mockNetwork(telegramOk: () => boolean) {
   const sent: string[] = [];
   globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
-    if (url.includes("api.kraken.com")) {
-      return Response.json({ error: [], result: { PAXGEUR: { a: ["3500.00"], b: ["3498.00"], c: ["3499"] } } });
+    if (url.includes("api.crypto.com")) {
+      expect(url).toContain("instrument_name=PAXG_EUR");
+      return Response.json({ code: 0, result: { data: [{ i: "PAXG_EUR", b: "3498.00", k: "3500.00", a: "3499", c: "0.01" }] } });
     }
     if (url.includes("api.telegram.org")) {
       if (!telegramOk()) return new Response("down", { status: 502 });
@@ -80,6 +81,8 @@ describe("signal alert runner", () => {
     await runSignalAlerts(env, { includeCrypto: false, now: NOW + 60_000 });
     expect(sent).toHaveLength(1);
     expect(sent[0]).toContain("🟢 COMPRA AHORA");
+    expect(sent[0]).toContain("en Crypto.com");
+    expect(sent[0]).not.toContain("Kraken");
     expect(store.state.holdings.gold?.entryPriceEur).toBe(3507);
 
     store.xau = xauStatus(null, [{ ...OPEN, exitPrice: 3960 }]);

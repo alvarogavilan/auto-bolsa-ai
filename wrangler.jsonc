@@ -6,7 +6,8 @@
   "vars": {
     "TRADING_MODE": "live",
     "PAIR": "PAXGEUR",
-    "INITIAL_CASH_EUR": "100"
+    "INITIAL_CASH_EUR": "100",
+    "EXECUTION_VENUE": "cryptocom"
   },
   "durable_objects": {
     "bindings": [
