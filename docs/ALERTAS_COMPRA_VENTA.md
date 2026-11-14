@@ -4,18 +4,18 @@ Auto Bolsa **no opera por ti**. Analiza el oro (XAU/USD → PAXG/EUR) y las cryp
 
 | Mensaje | Qué haces |
 |---|---|
-| 🟢 **COMPRA AHORA** | Sigues los 5 pasos del mensaje en Crypto.com (orden Límite, precio e importe exactos). |
-| 🔴 **VENDE AHORA** | Vendes **todo** lo comprado con esa alerta, orden a **Mercado**, aunque vaya en pérdidas. |
+| 🟢 **COMPRA AHORA** | Sigues los 5 pasos del mensaje en la app de Crypto.com (importe exacto y precio máximo). |
+| 🔴 **VENDE AHORA** | Vendes **todo** lo comprado con esa alerta, aunque vaya en pérdidas. |
 
 Si no llega ningún mensaje, **no hagas nada**.
 
-## Dónde se ejecuta: Crypto.com
+## Dónde se ejecuta: app de Crypto.com
 
-El precio, el par y las instrucciones de cada orden salen de **Crypto.com Exchange** (`PAXG_EUR`, `BTC_EUR`, `ETH_EUR`…). Las estrategias siguen analizando con datos de Kraken, que es donde está el historial simulado.
+Los pasos de cada orden están escritos para la **app de Crypto.com**: «Operar» → «Comprar»/«Vender», elegir la moneda, importe en euros y confirmar. La app no tiene órdenes límite, así que cada compra lleva un **precio máximo**: si la app muestra un precio mayor, no se compra.
 
-- Si una crypto no tiene par en EUR en Crypto.com, no se envía la compra.
-- Si usas la app normal de Crypto.com (sin órdenes límite), compra solo si el precio que te muestra es igual o menor que el precio límite del mensaje.
-- Para volver a Kraken: variable `EXECUTION_VENUE=kraken`.
+- El precio máximo se calcula con el precio en vivo de Crypto.com Exchange (`PAXG_EUR`, `BTC_EUR`…). La app aplica su propio margen, por lo que su precio puede ser algo mayor.
+- Si una crypto no cotiza en euros en Crypto.com, no se envía la compra.
+- Las estrategias siguen analizando con datos de Kraken, donde está el historial simulado.
 
 ## Reglas fijas del motor
 

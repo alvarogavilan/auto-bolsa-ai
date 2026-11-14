@@ -192,9 +192,10 @@ describe("alert messages", () => {
     expect(execution.limitPriceEur).toBe(3507);
     const text = buyAlertText(alert, execution);
     expect(text.startsWith("🟢 COMPRA AHORA · ORO (PAXG)")).toBe(true);
-    expect(text).toContain("PAXG/EUR");
-    expect(text).toContain("Precio límite: 3.507,00 €");
-    expect(text).toContain("Importe: 20,00 €");
+    expect(text).toContain("«Operar» → «Comprar»");
+    expect(text).toContain("PAXG (PAX Gold)");
+    expect(text).toContain("debe ser 3.507,00 € o menos");
+    expect(text).toContain("importe: 20,00 €");
     expect(text).toContain("NO compres si");
     expect(text).toContain("VENDE AHORA");
     expect(text).toContain("NO ha enviado ninguna orden");
@@ -203,7 +204,8 @@ describe("alert messages", () => {
   it("SELL text says sell everything at market", () => {
     const text = sellAlertText({ kind: "sell", key: "gold:sell:x", holdingKey: "gold", holding: goldHolding(), reason: "Stop.", simulatedResultPct: null }, 3465);
     expect(text.startsWith("🔴 VENDE AHORA · ORO (PAXG)")).toBe(true);
-    expect(text).toContain("«Mercado»");
+    expect(text).toContain("«Operar» → «Vender»");
+    expect(text).toContain("recibe en euros");
     expect(text).toContain("TODO lo comprado con la alerta ORO-ABC123");
     expect(text).toContain("-1,00 %");
   });

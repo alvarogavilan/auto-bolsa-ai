@@ -10,6 +10,7 @@ import {
   type SignalAlertPlan,
 } from "./signal-alerts";
 import type { SignalHolding } from "./signal-alerts-store";
+import { buySteps, sellSteps } from "./order-steps";
 
 /**
  * «Orden ahora»: la única instrucción que el usuario debe ejecutar en este
@@ -94,6 +95,8 @@ function amount(value: number): string {
 }
 
 function buyCard(input: {
+  market: "gold" | "crypto";
+  assetCode: string;
   venueName: string;
   asset: string;
   displayPair: string;
@@ -115,17 +118,10 @@ function buyCard(input: {
     asset: input.asset,
     displayPair: input.displayPair,
     alertId: input.alertId,
-    steps: [
-      `Abre ${input.venueName} y busca ${input.displayPair}`,
-      "Pulsa Comprar → tipo de orden «Límite»",
-      `Precio límite: ${formatEurPrice(input.limitPriceEur, decimals)}`,
-      `Importe: ${amount(input.amountEur)} (≈ ${input.quantityBase.toFixed(8)} ${input.unit})`,
-      "Confirma la orden",
-    ],
+    steps: buySteps({ market: input.market, asset: input.assetCode, amountEur: input.amountEur, maxPriceText: formatEurPrice(input.limitPriceEur, decimals) }),
     warnings: [
       "Si la cuenta atrás llega a cero, NO compres.",
-      "Si la orden no se completa en 10 minutos, cancélala.",
-      "Sin orden límite en tu app: compra solo si el precio mostrado es ese o menor.",
+      "Si la app muestra un precio mayor que el máximo del paso 4, NO compres.",
       "Si ya compraste con esta alerta, no compres otra vez.",
     ],
     reason: input.reason,
@@ -173,7 +169,7 @@ export function buildOrderNow(input: {
   tickersAvailable: boolean;
   venue?: { name: string; url: string };
 }): OrderNowPayload {
-  const venue = input.venue ?? { name: "Crypto.com", url: "https://crypto.com/exchange/" };
+  const venue = input.venue ?? { name: "Crypto.com", url: "https://crypto.com/app" };
   const { now, plan, tickers } = input;
   const cards: OrderCard[] = [];
   const discarded: string[] = plan.suppressed.map((item) => `${item.displayPair}: señal descartada — ${item.reason}`);
@@ -203,12 +199,7 @@ export function buildOrderNow(input: {
       asset: holding.asset,
       displayPair: holding.displayPair,
       alertId: holding.alertId,
-      steps: [
-        `Abre ${venue.name} y busca ${holding.displayPair}`,
-        "Pulsa Vender → tipo de orden «Mercado»",
-        `Cantidad: TODO lo comprado con la alerta ${holding.alertId} (≈ ${holding.quantityBase.toFixed(8)} ${unit(holding)})`,
-        "Confirma la orden",
-      ],
+      steps: sellSteps({ market: holding.market, asset: holding.asset, alertId: holding.alertId, quantityBase: holding.quantityBase }),
       warnings: ["Hazlo aunque vaya en pérdidas: es la regla de protección.", "Si no compraste con esa alerta, ignóralo."],
       reason: sell.reason,
       evidence: null,
@@ -227,6 +218,8 @@ export function buildOrderNow(input: {
       const execution = buyExecution(buy, quote.ask);
       cards.push(buyCard({
         venueName: venue.name,
+        market: buy.market,
+        assetCode: buy.asset,
         asset: buy.asset,
         displayPair: buy.displayPair,
         alertId: buy.alertId,
@@ -254,6 +247,8 @@ export function buildOrderNow(input: {
       const limit = Math.min(holding.entryPriceEur, ceilToDecimals(quote.ask * (1 + BUY_LIMIT_BUFFER_PCT), priceDecimals(quote.ask)));
       cards.push(buyCard({
         venueName: venue.name,
+        market: holding.market,
+        assetCode: holding.asset,
         asset: holding.asset,
         displayPair: holding.displayPair,
         alertId: holding.alertId,

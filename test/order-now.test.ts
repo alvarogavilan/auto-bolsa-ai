@@ -61,7 +61,9 @@ describe("order now", () => {
     expect(order.primary.action).toBe("buy");
     expect(order.primary.priceEur).toBe(3507);
     expect(order.primary.expiresAt).toBe(OPEN.openedAt + 10 * 60_000);
-    expect(order.primary.steps.join(" ")).toContain("Precio límite: 3.507,00 €");
+    expect(order.primary.steps.join(" ")).toContain("debe ser 3.507,00 € o menos");
+    expect(order.primary.steps[0]).toContain("«Operar» → «Comprar»");
+    expect(order.primary.steps[1]).toBe("Busca y elige PAXG (PAX Gold)");
   });
 
   it("keeps the BUY visible after Telegram delivered it, while still valid", () => {
@@ -82,7 +84,8 @@ describe("order now", () => {
     const order = build(xauStatus(null, [{ ...OPEN, exitPrice: 3960 }], 30 * 60_000), { gold: holding() });
     expect(order.dataFresh).toBe(false);
     expect(order.primary.action).toBe("sell");
-    expect(order.primary.steps.join(" ")).toContain("«Mercado»");
+    expect(order.primary.steps[0]).toContain("«Operar» → «Vender»");
+    expect(order.primary.steps.join(" ")).toContain("TODO lo comprado con la alerta ORO-ABC123");
   });
 
   it("refuses to show a BUY when the engine or the price feed is stale", () => {
