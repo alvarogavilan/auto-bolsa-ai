@@ -27,3 +27,27 @@ jobs:
           curl --fail --silent --show-error --retry 2 --retry-all-errors \
             --connect-timeout 10 --max-time 60 "$base/api/radar" -o radar.json
           node -e "const r=require('./radar.json');console.log('fuentes',r.sourcesAvailable+'/'+r.sourcesConfigured,'titulares',r.itemsAnalysed)"
+
+  # Diagnóstico manual de producción: estado HTTP y comienzo de cada respuesta.
+  diagnose:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      REPOSITORY_WORKER_BASE_URL: ${{ vars.WORKER_BASE_URL }}
+    steps:
+      - name: Probe production endpoints
+        shell: bash
+        run: |
+          base="${REPOSITORY_WORKER_BASE_URL:-}"
+          if [ -z "$base" ]; then base="https://auto-bolsa-ai.k8mwkbp68y.workers.dev"; fi
+          base="${base%/}"
+          for path in /health /api/demo /api/xau/status /api/xau/readiness /api/order-now /api/signals/status /api/telegram/readiness /api/radar/track-record /api/world-markets /api/radar /manifest.webmanifest /; do
+            code=$(curl -sS -o body.txt -w '%{http_code} %{size_download}B %{time_total}s' --max-time 60 "$base$path" || echo "curl-failed")
+            echo "=== $path -> $code"
+            if [ "$path" = "/api/radar" ]; then
+              node -e "try{const r=JSON.parse(require('fs').readFileSync('body.txt','utf8'));console.log('fuentes',r.sourcesAvailable+'/'+r.sourcesConfigured,'titulares',r.itemsAnalysed);for(const s of r.sourceStatus)if(!s.available)console.log('  KO',s.id,s.error)}catch(e){console.log(String(e))}"
+            else
+              head -c 700 body.txt; echo
+            fi
+          done
