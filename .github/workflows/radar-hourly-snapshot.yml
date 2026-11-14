@@ -1,0 +1,29 @@
+name: Radar hourly snapshot
+
+# Pide el Radar Mundial una vez por hora para que el Worker guarde una muestra
+# tono + precio. Con esas muestras se calcula si el radar acierta de verdad.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "23 * * * *"
+
+permissions:
+  contents: read
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    env:
+      REPOSITORY_WORKER_BASE_URL: ${{ vars.WORKER_BASE_URL }}
+    steps:
+      - name: Request radar
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="${REPOSITORY_WORKER_BASE_URL:-}"
+          if [ -z "$base" ]; then base="https://auto-bolsa-ai.k8mwkbp68y.workers.dev"; fi
+          base="${base%/}"
+          curl --fail --silent --show-error --retry 2 --retry-all-errors \
+            --connect-timeout 10 --max-time 60 "$base/api/radar" -o radar.json
+          node -e "const r=require('./radar.json');console.log('fuentes',r.sourcesAvailable+'/'+r.sourcesConfigured,'titulares',r.itemsAnalysed)"

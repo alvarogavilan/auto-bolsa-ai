@@ -1,3 +1,4 @@
+import { APP_HEAD_TAGS } from "./app-install";
 /**
  * Pantalla principal: «la orden a ejecutar ahora».
  *
@@ -83,7 +84,7 @@ document.addEventListener('visibilitychange',function(){if(!document.hidden)load
 `;
 
 export function homeOrderScreen(): Response {
-  const html = `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="apple-mobile-web-app-capable" content="yes"><title>Auto Bolsa · Orden ahora</title><style>${STYLE}</style></head><body><main>
+  const html = `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">${APP_HEAD_TAGS}<title>Auto Bolsa · Orden ahora</title><style>${STYLE}</style></head><body><main>
 <div class="top"><span><span id="dot" class="dot bad"></span><span id="fresh">Conectando…</span></span><span>Auto Bolsa</span></div>
 <section id="order" class="card order wait"><h1 id="headline">Cargando orden…</h1><p id="sub" class="sub"></p><div id="count" class="count" style="display:none"></div><ol id="steps"></ol><ul id="warnings" class="warn"></ul><p id="reason" class="reason"></p><a id="kraken" class="btn" style="display:none" href="https://pro.kraken.com/" rel="noopener noreferrer" target="_blank">Abrir Kraken</a>
 <div class="stale"><b>NO EJECUTES</b><p>Esta pantalla no se ha actualizado en los últimos 20 segundos. Comprueba tu conexión.</p></div></section>

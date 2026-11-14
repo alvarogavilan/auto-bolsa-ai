@@ -22,6 +22,7 @@ import {
 } from "./xau-usd-persistent-orchestrator";
 import type { XauPaperRuntimeInput } from "./xau-usd-paper-runtime";
 import type { Env } from "./types";
+import { RADAR_TRACK_KEY, parseRadarTrack, recordRadarSnapshot, type RadarSnapshot, type RadarTrackState } from "./radar-track-record";
 import {
   SIGNAL_ALERT_STATE_KEY,
   claimSignalAlert,
@@ -362,6 +363,19 @@ export class BotState extends BaseBotState {
 
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
+    if (request.method === "GET" && url.pathname === "/radar-track/state") {
+      return Response.json(parseRadarTrack(await this.feeContext.storage.get<RadarTrackState>(RADAR_TRACK_KEY)));
+    }
+    if (request.method === "POST" && url.pathname === "/radar-track/record") {
+      const snapshot = await request.json<RadarSnapshot>().catch(() => null);
+      if (!snapshot || typeof snapshot.at !== "number" || !snapshot.topics) return Response.json({ error: "INVALID_SNAPSHOT" }, { status: 400 });
+      return this.feeContext.blockConcurrencyWhile(async () => {
+        const state = parseRadarTrack(await this.feeContext.storage.get<RadarTrackState>(RADAR_TRACK_KEY));
+        const recorded = recordRadarSnapshot(state, snapshot);
+        if (recorded) await this.feeContext.storage.put(RADAR_TRACK_KEY, state);
+        return Response.json({ recorded, snapshots: state.snapshots.length });
+      });
+    }
     if (url.pathname.startsWith("/signal-alerts/")) {
       return this.signalAlertResponse(request, url.pathname);
     }

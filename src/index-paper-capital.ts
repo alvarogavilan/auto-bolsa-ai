@@ -16,6 +16,9 @@ import { fetchTickers, type KrakenTicker } from "./kraken-markets";
 import { buildNewsIntelligence } from "./news-intelligence";
 import { fetchWorldBoard, fetchWorldRadar } from "./world-radar";
 import { radarScreen } from "./radar-screen";
+import { TRACKED, evaluateRadarTrack, parseRadarTrack, type RadarSnapshot } from "./radar-track-record";
+import { findTicker } from "./order-now";
+import { appInstallResponse } from "./app-install";
 import type { XauPaperRuntimeInput } from "./xau-usd-paper-runtime";
 
 export { BotState, ResearchLabState, LiveExecutorState };
@@ -287,6 +290,28 @@ async function cachedJson(request: Request, ctx: ExecutionContext, path: string,
   return response;
 }
 
+/** Construye el radar y guarda una muestra tono+precio para el verificador de aciertos. */
+async function radarWithSnapshot(env: Env, ctx: ExecutionContext): Promise<unknown> {
+  const report = await fetchWorldRadar();
+  ctx.waitUntil((async () => {
+    const tickers = await fetchTickers(TRACKED.map((entry) => entry.pair));
+    const snapshot: RadarSnapshot = { at: report.generatedAt, topics: {} };
+    for (const { topic, pair } of TRACKED) {
+      const pulse = report.pulses.find((item) => item.topic === topic);
+      const quote = findTicker(tickers, pair);
+      if (pulse && quote && quote.bid > 0 && quote.ask > 0) snapshot.topics[topic] = { tone: pulse.tone, mentions: pulse.mentions, priceEur: (quote.bid + quote.ask) / 2 };
+    }
+    await botState(env).fetch("https://bot/radar-track/record", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(snapshot) });
+  })().catch((error) => console.error("RADAR_SNAPSHOT_FAILURE", error)));
+  return report;
+}
+
+async function radarTrackResponse(env: Env): Promise<Response> {
+  const response = await botState(env).fetch("https://bot/radar-track/state");
+  const state = parseRadarTrack(response.ok ? await response.json<unknown>() : null);
+  return Response.json(evaluateRadarTrack(state, Date.now()), { headers: { "Cache-Control": "no-store" } });
+}
+
 function shouldRunBaseStrategy(controller: ScheduledController): boolean { return new Date(controller.scheduledTime).getUTCMinutes() % 5 === 0; }
 
 export default {
@@ -302,10 +327,12 @@ export default {
       if (!authorized(request, runtimeEnv)) return new Response("Unauthorized", { status: 401 });
       return botState(runtimeEnv).fetch("https://bot/xau/cycle", { method: "POST", headers: { "Content-Type": "application/json" }, body: await request.text() });
     }
+    if (request.method === "GET") { const install = appInstallResponse(path); if (install) return install; }
     if (request.method === "GET" && path === "/") return homeOrderScreen();
     if (request.method === "GET" && path === "/api/order-now") return orderNowResponse(runtimeEnv);
     if (request.method === "GET" && path === "/radar") return radarScreen();
-    if (request.method === "GET" && path === "/api/radar") return cachedJson(request, ctx, "/api/radar", 180, () => fetchWorldRadar());
+    if (request.method === "GET" && path === "/api/radar") return cachedJson(request, ctx, "/api/radar", 180, () => radarWithSnapshot(runtimeEnv, ctx));
+    if (request.method === "GET" && path === "/api/radar/track-record") return radarTrackResponse(runtimeEnv);
     if (request.method === "GET" && path === "/api/world-markets") return cachedJson(request, ctx, "/api/world-markets", 60, () => fetchWorldBoard());
     if (request.method === "GET" && path === "/api/news-brief") return newsBriefResponse(request, ctx);
     if (request.method === "GET" && path === "/api/signals/status") return signalStatusResponse(runtimeEnv);

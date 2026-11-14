@@ -43,12 +43,21 @@ Vigilancia gratuita y sin claves de 41 fuentes: medios financieros internacional
 - Cada fuente muestra si responde o no; una fuente caída nunca rompe el radar.
 - X/Twitter, Bloomberg y Reuters no tienen acceso gratuito y no están incluidos.
 
+### ¿Acierta el radar?
+
+Cada hora se guarda el tono del radar junto al precio real de Kraken (oro, Bitcoin, Ethereum). A las 4 h y 24 h se comprueba si el precio se movió en la dirección que indicaba el tono. Hasta reunir 30 señales comprobadas el veredicto es «Sin muestra suficiente». El workflow `radar-hourly-snapshot` garantiza la cadencia.
+
+## Instalar como app en iPhone
+
+Abre la URL en Safari → Compartir → «Añadir a pantalla de inicio». Se abre a pantalla completa en «Orden ahora».
+
 ## Endpoints
 
 | Ruta | Uso |
 |---|---|
 | `GET /api/order-now` | La orden vigente (lo que pinta la pantalla principal). |
 | `GET /api/radar` | Radar Mundial completo (caché 3 min). |
+| `GET /api/radar/track-record` | Aciertos del radar contra el precio real. |
 | `GET /api/world-markets` | Tablero mundial de mercados (caché 1 min). |
 | `GET /api/news-brief` | Titulares de fuentes oficiales (caché 2 min). |
 | `GET /api/signals/status` | Qué deberías tener comprado ahora y últimas alertas. |

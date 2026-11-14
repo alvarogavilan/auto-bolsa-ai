@@ -1,3 +1,4 @@
+import { APP_HEAD_TAGS } from "./app-install";
 /**
  * Pantalla «Radar Mundial»: medios, redes, empresas y mercados globales.
  * Todo el contenido dinámico se escribe con textContent.
@@ -32,7 +33,7 @@ function cls(v){return v>0?'up':v<0?'down':'small'}
 function radar(){fetch('/api/radar').then(function(r){return r.json()}).then(function(d){
   $('sub').textContent=d.sourcesAvailable+' de '+d.sourcesConfigured+' fuentes gratuitas respondiendo · '+d.itemsAnalysed+' titulares analizados · '+new Date(d.generatedAt).toLocaleTimeString('es-ES');
   var p=$('pulses');p.textContent='';
-  d.pulses.forEach(function(x){var b=el('div','pulse');var h=el('div','head');h.appendChild(el('b','',x.label));var v=el('span',cls(x.verdict==='Sin datos'?0:x.tone),x.verdict+(x.verdict==='Sin datos'?'':' ('+(x.tone>0?'+':'')+x.tone+')'));h.appendChild(v);b.appendChild(h);
+  d.pulses.forEach(function(x){var b=el('div','pulse');var h=el('div','head');h.appendChild(el('b','',x.label));var v=el('span',cls(x.verdict==='Sin datos'||x.verdict==='Neutro'?0:x.tone),x.verdict+(x.verdict==='Sin datos'?'':' ('+(x.tone>0?'+':'')+x.tone+')'));h.appendChild(v);b.appendChild(h);
     b.appendChild(el('div','small',x.mediaMentions+' en medios'+(x.mediaTone===null?'':' (tono '+x.mediaTone+')')+' · '+x.socialMentions+' en redes'+(x.socialTone===null?'':' (tono '+x.socialTone+')')));
     x.headlines.forEach(function(n){b.appendChild(link((n.tone>0?'▲ ':n.tone<0?'▼ ':'• ')+n.title+' — '+n.source,n.link))});p.appendChild(b)});
   var s=$('social');s.textContent='';
@@ -50,15 +51,19 @@ function radar(){fetch('/api/radar').then(function(r){return r.json()}).then(fun
 function board(){fetch('/api/world-markets').then(function(r){return r.json()}).then(function(d){var m=$('board');m.textContent='';
   if(!d.available){m.appendChild(el('div','small','El tablero mundial no responde ahora.'));return}
   var g='';d.quotes.forEach(function(q){if(q.group!==g){g=q.group;m.appendChild(el('div','grp',g))}var r=el('div','row');r.appendChild(el('span','',q.label));r.appendChild(el('span',q.changePct===null?'':cls(q.changePct),num(q.price)+(q.changePct===null?'':'  '+pct(q.changePct))));m.appendChild(r)})}).catch(function(){})}
-radar();board();setInterval(radar,180000);setInterval(board,60000);
+function track(){fetch('/api/radar/track-record',{cache:'no-store'}).then(function(r){return r.json()}).then(function(d){var t=$('track');t.textContent='';
+  d.results.forEach(function(x){var r=el('div','row');var l=el('span');l.appendChild(el('b','',x.label+' · a '+x.horizonHours+' h'));l.appendChild(el('span','hl small',x.explanation));r.appendChild(l);r.appendChild(el('span',x.verdict==='Acierta más que el azar'?'up':x.verdict==='Suele fallar'?'down':'small',x.verdict));t.appendChild(r)});
+  t.appendChild(el('div','small',d.snapshots+' muestras guardadas. '+d.note))}).catch(function(){})}
+radar();board();track();setInterval(radar,180000);setInterval(board,60000);
 `;
 
 export function radarScreen(): Response {
-  const html = `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>Auto Bolsa · Radar Mundial</title><style>${STYLE}</style></head><body><main>
+  const html = `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">${APP_HEAD_TAGS}<title>Auto Bolsa · Radar Mundial</title><style>${STYLE}</style></head><body><main>
 <p><a class="link" href="/">← Orden ahora</a></p>
 <h1>Radar Mundial</h1><p id="sub" class="sub">Cargando fuentes…</p>
 <p class="note">Esto es información, no una orden. El tono de medios y redes no predice el precio; la orden a ejecutar está siempre en la pantalla principal.</p>
 <section class="card"><h2>Pulso por tema (medios + redes)</h2><div id="pulses"></div></section>
+<section class="card"><h2>¿Acierta el radar? · comprobado contra el precio real</h2><div id="track"></div></section>
 <section class="card"><h2>Mercados del mundo · variación de hoy</h2><div id="board"></div></section>
 <section class="card"><h2>Redes sociales</h2><div id="social"></div></section>
 <section class="card"><h2>Empresas más mencionadas</h2><div id="companies"></div></section>
