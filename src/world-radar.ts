@@ -281,19 +281,36 @@ export function buildWorldRadar(
 
 const RADAR_USER_AGENT = "Mozilla/5.0 (compatible; AutoBolsaRadar/1.0; research-only)";
 
+/** Cloudflare Workers admite 6 conexiones salientes simultáneas: el resto haría cola y caducaría. */
+const RADAR_CONCURRENCY = 6;
+const RADAR_SOURCE_TIMEOUT_MS = 5_000;
+
+async function mapWithConcurrency<T, R>(items: T[], limit: number, worker: (item: T) => Promise<R>): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let cursor = 0;
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (cursor < items.length) {
+      const index = cursor;
+      cursor += 1;
+      results[index] = await worker(items[index] as T);
+    }
+  }));
+  return results;
+}
+
 export async function fetchWorldRadar(now = Date.now(), sources: RadarSource[] = RADAR_SOURCES): Promise<WorldRadarReport> {
-  const results = await Promise.all(sources.map(async (source) => {
+  const results = await mapWithConcurrency(sources, RADAR_CONCURRENCY, async (source) => {
     try {
       const response = await fetch(source.url, {
         headers: { Accept: "application/rss+xml, application/atom+xml, application/xml, application/json;q=0.9, */*;q=0.5", "User-Agent": RADAR_USER_AGENT },
-        signal: AbortSignal.timeout(7_000),
+        signal: AbortSignal.timeout(RADAR_SOURCE_TIMEOUT_MS),
       });
       if (!response.ok) throw new Error(`HTTP_${response.status}`);
       return { source, ok: true, error: null, parsed: parseRadarSource(source, await response.text()) };
     } catch (error) {
       return { source, ok: false, error: error instanceof Error ? error.message.slice(0, 80) : "FAILED", parsed: null };
     }
-  }));
+  });
   return buildWorldRadar(results, now);
 }
 
@@ -310,27 +327,45 @@ export interface WorldQuote {
   date: string;
 }
 
-export function parseStooqCsv(csv: string): WorldQuote[] {
-  const lines = csv.trim().split(/\r?\n/).slice(1);
-  const bySymbol = new Map(WORLD_BOARD.map((entry) => [entry.symbol.toUpperCase(), entry]));
-  return lines.flatMap((line) => {
-    const [symbol = "", date = "", , open, , , close] = line.split(",");
-    const entry = bySymbol.get(symbol.toUpperCase());
-    const price = Number(close);
-    const opening = Number(open);
+/** Respuesta de `v7/finance/spark`: precio actual y cierre anterior por símbolo. */
+export function parseYahooSpark(payload: unknown): WorldQuote[] {
+  const bySymbol = new Map(WORLD_BOARD.map((entry) => [entry.symbol, entry]));
+  return list(record(record(payload).spark).result).flatMap((row) => {
+    const entry = bySymbol.get(String(row.symbol ?? ""));
+    const meta = record(list(row.response)[0]?.meta);
+    const price = Number(meta.regularMarketPrice);
+    const previous = Number(meta.chartPreviousClose ?? meta.previousClose);
     if (!entry || !Number.isFinite(price) || price <= 0) return [];
-    return [{ symbol: entry.symbol, label: entry.label, group: entry.group, price, changePct: Number.isFinite(opening) && opening > 0 ? ((price - opening) / opening) * 100 : null, date }];
+    const time = Number(meta.regularMarketTime);
+    return [{
+      symbol: entry.symbol,
+      label: entry.label,
+      group: entry.group,
+      price,
+      changePct: Number.isFinite(previous) && previous > 0 ? ((price - previous) / previous) * 100 : null,
+      date: Number.isFinite(time) ? new Date(time * 1000).toISOString() : "",
+    }];
   });
 }
 
+const BOARD_CHUNK = 17;
+
 export async function fetchWorldBoard(): Promise<{ quotes: WorldQuote[]; available: boolean; error: string | null }> {
-  try {
-    const url = `https://stooq.com/q/l/?s=${WORLD_BOARD.map((entry) => encodeURIComponent(entry.symbol)).join(",")}&f=sd2t2ohlcv&h&e=csv`;
-    const response = await fetch(url, { headers: { "User-Agent": RADAR_USER_AGENT }, signal: AbortSignal.timeout(8_000) });
+  const chunks: string[][] = [];
+  for (let index = 0; index < WORLD_BOARD.length; index += BOARD_CHUNK) chunks.push(WORLD_BOARD.slice(index, index + BOARD_CHUNK).map((entry) => entry.symbol));
+  const settled = await Promise.allSettled(chunks.map(async (symbols) => {
+    const url = `https://query1.finance.yahoo.com/v7/finance/spark?symbols=${symbols.map(encodeURIComponent).join(",")}&range=1d&interval=1d`;
+    const response = await fetch(url, { headers: { Accept: "application/json", "User-Agent": RADAR_USER_AGENT }, signal: AbortSignal.timeout(8_000) });
     if (!response.ok) throw new Error(`HTTP_${response.status}`);
-    const quotes = parseStooqCsv(await response.text());
-    return { quotes, available: quotes.length > 0, error: quotes.length > 0 ? null : "SIN_COTIZACIONES" };
-  } catch (error) {
-    return { quotes: [], available: false, error: error instanceof Error ? error.message.slice(0, 80) : "FAILED" };
-  }
+    return parseYahooSpark(await response.json<unknown>());
+  }));
+  const found = settled.flatMap((entry) => (entry.status === "fulfilled" ? entry.value : []));
+  const order = new Map(WORLD_BOARD.map((entry, index) => [entry.symbol, index]));
+  const quotes = found.sort((left, right) => (order.get(left.symbol) ?? 0) - (order.get(right.symbol) ?? 0));
+  const failure = settled.find((entry): entry is PromiseRejectedResult => entry.status === "rejected");
+  return {
+    quotes,
+    available: quotes.length > 0,
+    error: quotes.length > 0 ? null : failure ? String(failure.reason instanceof Error ? failure.reason.message : failure.reason).slice(0, 80) : "SIN_COTIZACIONES",
+  };
 }

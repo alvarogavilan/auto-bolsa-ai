@@ -379,6 +379,21 @@ export class BotState extends BaseBotState {
     if (url.pathname.startsWith("/signal-alerts/")) {
       return this.signalAlertResponse(request, url.pathname);
     }
+    if (request.method === "GET" && url.pathname === "/xau/status-lite") {
+      // Vista ligera para la pantalla «Orden ahora» y las alertas: solo la
+      // última decisión y el libro de posiciones (el ledger completo pesa ~0,5 MB).
+      const [ledger, positionBook] = await Promise.all([this.xauLedger(), this.xauPositionBook()]);
+      const latestDecision = ledger.cycles.find((cycle) => cycle.instruction?.cycleKind !== "monitoring");
+      return Response.json({
+        schemaVersion: ledger.schemaVersion,
+        market: ledger.market,
+        metrics: ledger.metrics,
+        cycles: latestDecision ? [latestDecision] : [],
+        positionBook: { ...positionBook, closed: positionBook.closed.slice(0, 10) },
+        mode: "paper",
+        liveTrading: false,
+      }, { headers: { "Cache-Control": "no-store" } });
+    }
     if (request.method === "GET" && url.pathname === "/xau/status") {
       return this.xauStatusResponse();
     }

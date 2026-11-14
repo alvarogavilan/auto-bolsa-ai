@@ -37,7 +37,7 @@ function harness(initialXau: unknown) {
     fetch: async (input: string, init?: RequestInit) => {
       const path = new URL(input).pathname;
       const body = init?.body ? JSON.parse(String(init.body)) : {};
-      if (path === "/xau/status") return Response.json(store.xau);
+      if (path === "/xau/status-lite") return Response.json(store.xau);
       if (path === "/signal-alerts/state") return Response.json(store.state);
       if (path === "/signal-alerts/claim") return Response.json({ claimed: claimSignalAlert(store.state, body.key, NOW) });
       if (path === "/signal-alerts/release") { releaseSignalAlert(store.state, body.key); return Response.json({}); }

@@ -173,7 +173,7 @@ export async function loadSignalInputs(env: Env, options: { includeGold?: boolea
 }> {
   const [state, xauStatus, labView] = await Promise.all([
     readSignalAlertState(env),
-    options.includeGold !== false ? readJson(bot(env), "https://bot/xau/status") : Promise.resolve(null),
+    options.includeGold !== false ? readJson(bot(env), "https://bot/xau/status-lite") : Promise.resolve(null),
     options.includeCrypto !== false ? readJson(lab(env), "https://lab/alerts-view") : Promise.resolve(null),
   ]);
   return { state, xauStatus, labView: labView as LabAlertView | null };

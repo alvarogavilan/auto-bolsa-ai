@@ -52,23 +52,3 @@ jobs:
             fi
           done
 
-      - name: Probe candidate free sources
-        shell: bash
-        run: |
-          ua="Mozilla/5.0 (compatible; AutoBolsaRadar/1.0; research-only)"
-          probe() { code=$(curl -sS -L -A "$ua" -o body.txt -w '%{http_code} %{size_download}B %{time_total}s' --max-time 20 "$1" || echo curl-failed); echo "=== $1 -> $code"; head -c 260 body.txt | tr '\n' ' '; echo; }
-          probe "https://stooq.com/q/l/?s=%5Espx,eurusd,xauusd,aapl.us&f=sd2t2ohlcv&h&e=csv"
-          probe "https://stooq.com/q/l/?s=%5Espx,%5Endq,%5Edji,%5Edax,%5Eibex,%5Eukx,%5Enkx,%5Ehsi,eurusd,usdjpy,gbpusd,xauusd,xagusd,cl.f,ng.f,hg.f,btcusd,ethusd,aapl.us,msft.us,nvda.us,amzn.us,googl.us,meta.us,tsla.us,jpm.us,xom.us,nem.us,coin.us,mstr.us&f=sd2t2ohlcv&h&e=csv"
-          probe "https://query1.finance.yahoo.com/v8/finance/chart/%5EGSPC?range=1d&interval=1d"
-          probe "https://query1.finance.yahoo.com/v7/finance/spark?symbols=%5EGSPC,%5EIBEX,EURUSD%3DX,GC%3DF,AAPL&range=1d&interval=1d"
-          probe "https://finance.yahoo.com/rss/topstories"
-          probe "https://feeds.finance.yahoo.com/rss/2.0/headline?s=%5EGSPC&region=US&lang=en-US"
-          probe "https://www.kitco.com/news/category/mining/rss"
-          probe "https://www.kitco.com/rss"
-          probe "https://www.fxstreet.com/rss/news"
-          probe "https://www.investing.com/rss/news_11.rss"
-          probe "https://www.coindesk.com/arc/outboundfeeds/rss/"
-          probe "https://api.alternative.me/fng/?limit=1"
-          probe "https://api.coingecko.com/api/v3/search/trending"
-          probe "https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type=8-K&count=40&output=atom"
-          probe "https://api.telegram.org/"

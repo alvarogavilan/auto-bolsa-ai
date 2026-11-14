@@ -43,8 +43,6 @@ function radar(){fetch('/api/radar').then(function(r){return r.json()}).then(fun
   var c=$('companies');c.textContent='';
   d.companies.forEach(function(x){var r=el('div','row');var l=el('span');l.appendChild(el('b','',x.name+' · '+x.mentions));l.appendChild(link(x.headline,x.link));l.className='news';r.appendChild(l);r.appendChild(el('span',cls(x.tone),x.tone>0?'Positivo':x.tone<0?'Negativo':'Neutro'));c.appendChild(r)});
   if(!d.companies.length)c.appendChild(el('div','small','Sin menciones de empresas ahora.'));
-  var f=$('filings');f.textContent='';d.filings.forEach(function(x){var r=el('div','news');r.appendChild(link(x.title,x.link));f.appendChild(r)});
-  if(!d.filings.length)f.appendChild(el('div','small','Sin hechos relevantes recientes.'));
   var n=$('latest');n.textContent='';d.latest.forEach(function(x){var r=el('div','news');r.appendChild(link((x.tone>0?'▲ ':x.tone<0?'▼ ':'• ')+x.title+' — '+x.source,x.link));n.appendChild(r)});
   var st=$('status');st.textContent='';d.sourceStatus.forEach(function(x){st.appendChild(el('span','chip'+(x.available?'':' bad'),(x.available?'✓ ':'✕ ')+x.label))});
 }).catch(function(){$('sub').textContent='No se pudo cargar el radar. Reintenta en un minuto.'})}
@@ -67,7 +65,6 @@ export function radarScreen(): Response {
 <section class="card"><h2>Mercados del mundo · variación de hoy</h2><div id="board"></div></section>
 <section class="card"><h2>Redes sociales</h2><div id="social"></div></section>
 <section class="card"><h2>Empresas más mencionadas</h2><div id="companies"></div></section>
-<section class="card"><h2>Hechos relevantes oficiales (SEC 8-K)</h2><div id="filings"></div></section>
 <section class="card"><h2>Últimos titulares</h2><div id="latest"></div></section>
 <section class="card"><h2>Estado de las fuentes</h2><div id="status" class="chips"></div></section>
 </main><script>${SCRIPT}</script></body></html>`;

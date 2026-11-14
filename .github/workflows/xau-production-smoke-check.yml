@@ -28,10 +28,7 @@ jobs:
           candidate="${MANUAL_WORKER_BASE_URL:-}"
           if [ -z "$candidate" ]; then candidate="${REPOSITORY_WORKER_BASE_URL:-}"; fi
           candidate="${candidate%/}"
-          if [ -z "$candidate" ]; then
-            echo "No production URL available. Configure WORKER_BASE_URL or supply worker_base_url when dispatching manually."
-            exit 1
-          fi
+          if [ -z "$candidate" ]; then candidate="https://auto-bolsa-ai.k8mwkbp68y.workers.dev"; fi
           case "$candidate" in
             https://*) ;;
             *) echo "Production URL must use HTTPS."; exit 1 ;;
