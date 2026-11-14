@@ -71,7 +71,7 @@ function tick(){
   var c=$('count');
   if(data&&data.primary.expiresAt){var left=Math.max(0,Math.round((data.primary.expiresAt-now)/1000));c.textContent=left>0?'Caduca en '+Math.floor(left/60)+':'+('0'+left%60).slice(-2):'CADUCADA — no compres';c.style.display='block'}else c.style.display='none';
 }
-function load(){fetch('/api/order-now',{cache:'no-store'}).then(function(r){if(!r.ok)throw 0;return r.json()}).then(function(j){data=j;last=Date.now();render()}).catch(function(){tick()})}
+function load(){fetch('/api/order-now',{cache:'no-store'}).then(function(r){if(!r.ok)throw 0;return r.json()}).then(function(j){data=j;last=Date.now();render()}).catch(function(){if(!data){$('headline').textContent='⏸ NO OPERES · sin conexión con el motor';$('sub').textContent='No se pudo cargar la orden. Se reintenta sola cada 5 segundos.'}tick()})}
 function news(){fetch('/api/news-brief').then(function(r){return r.json()}).then(function(j){var n=$('news');n.textContent='';$('newsTitle').textContent='Noticias oficiales · '+j.sourcesAvailable+'/'+j.sourcesConfigured+' fuentes';
   (j.signals||[]).forEach(function(s){var r=el('div','row');var a=el(s.link&&/^https:/.test(s.link)?'a':'span','',(s.urgency==='breaking'?'🚨 ':'')+s.title);if(a.tagName==='A'){a.href=s.link;a.rel='noopener noreferrer';a.target='_blank';a.style.color='inherit'}r.appendChild(a);r.appendChild(el('span','small',s.source));n.appendChild(r)});
   if(!(j.signals||[]).length)n.appendChild(el('div','small','Sin noticias de alto impacto ahora.'))}).catch(function(){})}
@@ -88,7 +88,7 @@ document.addEventListener('visibilitychange',function(){if(!document.hidden)load
 export function homeOrderScreen(): Response {
   const html = `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">${APP_HEAD_TAGS}<title>Auto Bolsa · Orden ahora</title><style>${STYLE}</style></head><body><main>
 <div class="top"><span><span id="dot" class="dot bad"></span><span id="fresh">Conectando…</span></span><span>Auto Bolsa</span></div>
-<section id="order" class="card order wait"><h1 id="headline">Cargando orden…</h1><p id="sub" class="sub"></p><div id="count" class="count" style="display:none"></div><ol id="steps"></ol><ul id="warnings" class="warn"></ul><p id="reason" class="reason"></p><a id="kraken" class="btn" style="display:none" href="https://crypto.com/exchange/" rel="noopener noreferrer" target="_blank">Abrir Crypto.com</a>
+<section id="order" class="card order wait"><h1 id="headline">Cargando orden…</h1><p id="sub" class="sub"></p><div id="count" class="count" style="display:none"></div><ol id="steps"></ol><ul id="warnings" class="warn"></ul><p id="reason" class="reason"></p><a id="kraken" class="btn" style="display:none" href="https://crypto.com/app" rel="noopener noreferrer" target="_blank">Abrir Crypto.com</a>
 <div class="stale"><b>NO EJECUTES</b><p>Esta pantalla no se ha actualizado en los últimos 20 segundos. Comprueba tu conexión.</p></div></section>
 <section id="tgwarn" class="card" style="display:none;border-color:var(--sell)"><h2 style="color:var(--sell)">Telegram no puede avisarte</h2><p id="tgtext" style="margin:0;font-size:15px"></p></section>
 <div id="others"></div>

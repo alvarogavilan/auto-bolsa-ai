@@ -1,7 +1,10 @@
 import type { XauPaperInstruction } from "./xau-usd-paper-runtime";
 
-const MAX_RETAINED_CYCLES = 120;
-const MAX_LEDGER_RECORD_BYTES = 400_000;
+// Cada escritura del ledger consume cuota diaria de Durable Objects en
+// proporción a su tamaño: 30 ciclos (una hora de decisiones) bastan para el
+// diagnóstico y dejan el registro en torno a 100 KB.
+const MAX_RETAINED_CYCLES = 30;
+const MAX_LEDGER_RECORD_BYTES = 120_000;
 
 export interface XauPaperCycleRecord {
   schemaVersion: "xau-usd-paper-cycle-v1";

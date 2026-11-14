@@ -15,7 +15,7 @@ export interface ExecutionVenue {
 }
 
 const VENUES: Record<ExecutionVenue["id"], ExecutionVenue> = {
-  cryptocom: { id: "cryptocom", name: "Crypto.com", url: "https://crypto.com/exchange/" },
+  cryptocom: { id: "cryptocom", name: "Crypto.com", url: "https://crypto.com/app" },
   kraken: { id: "kraken", name: "Kraken", url: "https://pro.kraken.com/" },
 };
 

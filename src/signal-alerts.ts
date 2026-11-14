@@ -1,6 +1,7 @@
 import { calculateXauMicroLiveReadiness } from "./xau-live-readiness";
 import type { LabAlertView } from "./signal-alerts-lab-view";
 import type { SignalHolding } from "./signal-alerts-store";
+import { buySteps, sellSteps } from "./order-steps";
 
 /**
  * Motor de alertas COMPRA AHORA / VENDE AHORA para ejecución manual.
@@ -318,16 +319,12 @@ export function buyAlertText(alert: PlannedBuyAlert, execution: BuyExecution, ve
     `🟢 COMPRA AHORA · ${alert.asset}`,
     "",
     `Qué hacer (en ${venueName}):`,
-    `1. Busca ${alert.displayPair}`,
-    "2. Pulsa Comprar → tipo de orden «Límite»",
-    `3. Precio límite: ${formatEurPrice(execution.limitPriceEur, decimals)}`,
-    `4. Importe: ${alert.amountEur.toFixed(2).replace(".", ",")} € (≈ ${execution.quantityBase.toFixed(8)} ${alert.asset.includes("PAXG") ? "PAXG" : alert.asset})`,
-    "5. Confirma la orden.",
+    ...buySteps({ market: alert.market, asset: alert.asset, amountEur: alert.amountEur, maxPriceText: formatEurPrice(execution.limitPriceEur, decimals) }).map((step, index) => `${index + 1}. ${step}.`),
     "",
     "⛔ NO compres si:",
     `• lees esto después de las ${madridTime(alert.expiresAt)} (la señal caduca)`,
-    "• la orden no se ha completado en 10 minutos → cancélala y no hagas nada más",
-    "• tu app no deja poner orden límite y el precio que te muestra es mayor que ese precio límite",
+    "• el precio que te muestra la app es mayor que el precio máximo del paso 4",
+    "• ya compraste con esta alerta",
     "",
     "Después: no hagas nada. Recibirás «🔴 VENDE AHORA» cuando toque salir.",
     execution.stopPriceEur !== null || execution.targetPriceEur !== null
@@ -344,7 +341,6 @@ export function buyAlertText(alert: PlannedBuyAlert, execution: BuyExecution, ve
 
 export function sellAlertText(alert: PlannedSellAlert, bidEur: number | null, venueName = "Crypto.com"): string {
   const holding = alert.holding;
-  const unit = holding.market === "gold" ? "PAXG" : holding.asset;
   const result = bidEur !== null && holding.entryPriceEur > 0
     ? ((bidEur - holding.entryPriceEur) / holding.entryPriceEur) * 100
     : alert.simulatedResultPct;
@@ -352,10 +348,7 @@ export function sellAlertText(alert: PlannedSellAlert, bidEur: number | null, ve
     `🔴 VENDE AHORA · ${holding.asset}`,
     "",
     `Qué hacer (en ${venueName}):`,
-    `1. Busca ${holding.displayPair}`,
-    "2. Pulsa Vender → tipo de orden «Mercado»",
-    `3. Cantidad: TODO lo comprado con la alerta ${holding.alertId} (≈ ${holding.quantityBase.toFixed(8)} ${unit})`,
-    "4. Confirma la orden.",
+    ...sellSteps({ market: holding.market, asset: holding.asset, alertId: holding.alertId, quantityBase: holding.quantityBase }).map((step, index) => `${index + 1}. ${step}.`),
     "",
     "Hazlo aunque vaya en pérdidas: es la regla de protección. No esperes a que «se recupere».",
     "Si no compraste con esa alerta, ignora este mensaje.",
