@@ -38,6 +38,37 @@ function parseLedger(raw: string | null): XauPaperCycleLedger {
   }
 }
 
+/**
+ * Decide qué se escribe en disco en cada ciclo.
+ *
+ * El plan gratuito de Durable Objects admite 100.000 filas escritas al día.
+ * Escribir ledger y libro en cada muestra rápida (cada 3 s) agotaba el cupo
+ * antes del mediodía y dejaba TODO el estado inaccesible hasta medianoche UTC.
+ *
+ * - Ledger: solo ciclos de decisión (las muestras rápidas no aportan decisión).
+ * - Libro: siempre que se abra o cierre una posición; con posición abierta, en
+ *   cada decisión y, en muestras rápidas, solo si cambia la protección (stop,
+ *   objetivo o trailing). Sin posición y sin evento no hay nada que guardar.
+ */
+export function planXauPersistence(
+  monitoring: boolean,
+  before: XauPaperPositionBook,
+  after: XauPaperPositionBook,
+): { ledger: boolean; positionBook: boolean } {
+  const lifecycleEvent = (before.open?.id ?? null) !== (after.open?.id ?? null)
+    || before.metrics.closed !== after.metrics.closed
+    || before.metrics.opened !== after.metrics.opened;
+  const protectionChanged = Boolean(before.open && after.open) && (
+    before.open?.stopPrice !== after.open?.stopPrice
+    || before.open?.targetPrice !== after.open?.targetPrice
+    || before.open?.trailingActive !== after.open?.trailingActive
+  );
+  return {
+    ledger: !monitoring,
+    positionBook: lifecycleEvent || protectionChanged || (!monitoring && after.open !== null),
+  };
+}
+
 export async function runPersistentXauPaperCycle(
   store: XauPaperStateStore,
   input: XauPaperRuntimeInput,
@@ -66,14 +97,15 @@ export async function runPersistentXauPaperCycle(
 
   const ledger = appendXauPaperCycle(current, instruction);
   const positionBook = applyXauPaperPositionCycle(currentPositionBook, instruction, input);
-  await store.put(XAU_PAPER_LEDGER_KEY, JSON.stringify(ledger));
-  await store.put(XAU_PAPER_POSITION_KEY, JSON.stringify(positionBook));
+  const plan = planXauPersistence(instruction.cycleKind === "monitoring", currentPositionBook, positionBook);
+  if (plan.ledger) await store.put(XAU_PAPER_LEDGER_KEY, JSON.stringify(ledger));
+  if (plan.positionBook) await store.put(XAU_PAPER_POSITION_KEY, JSON.stringify(positionBook));
   return {
     schemaVersion: "xau-usd-persistent-cycle-v2",
     instruction,
-    ledger,
-    positionBook,
-    persisted: true,
+    ledger: plan.ledger ? ledger : current,
+    positionBook: plan.positionBook ? positionBook : currentPositionBook,
+    persisted: plan.ledger || plan.positionBook,
     duplicate: false,
     liveTrading: false,
     realOrderSubmission: false,

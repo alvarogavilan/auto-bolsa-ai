@@ -221,7 +221,21 @@ async function submitXauCycle(env: Env, input: XauPaperRuntimeInput): Promise<vo
 
 async function runXauDecisionCycle(env: Env): Promise<void> { await submitXauCycle(env, await xauDecisionInput(env)); }
 
+async function xauPaperPositionOpen(env: Env): Promise<boolean> {
+  try {
+    const response = await botState(env).fetch("https://bot/xau/status-lite");
+    if (!response.ok) return true;
+    const status = await response.json<{ positionBook?: { open?: unknown } }>();
+    return Boolean(status.positionBook?.open);
+  } catch {
+    return true;
+  }
+}
+
 async function runXauFastMonitoringSamples(env: Env): Promise<void> {
+  // El muestreo cada 3 s solo sirve para detectar el stop de una posición
+  // abierta. Sin posición no hay nada que vigilar: no se gasta cuota.
+  if (!(await xauPaperPositionOpen(env))) return;
   for (let sample = 0; sample < XAU_FAST_SAMPLES_PER_MINUTE; sample += 1) {
     await sleep(XAU_FAST_INTERVAL_MS);
     try { await submitXauCycle(env, await buildNativeXauFastPriceInput()); } catch { /* siguiente muestra */ }
@@ -251,9 +265,34 @@ async function signalStatusResponse(env: Env): Promise<Response> {
   }, { headers: { "Cache-Control": "no-store" } });
 }
 
+/** Respuesta segura cuando no se puede leer el estado: nunca una orden, siempre el motivo. */
+function orderNowUnavailable(env: Env, error: unknown): Response {
+  const message = error instanceof Error ? error.message : String(error);
+  const quota = /free tier|Exceeded allowed/i.test(message);
+  const reason = quota
+    ? "Se ha agotado la cuota diaria gratuita de Cloudflare. El motor vuelve a funcionar a las 00:00 UTC (01:00 en España peninsular en invierno)."
+    : `No se puede leer el estado del motor: ${message.slice(0, 160)}`;
+  return Response.json({
+    schemaVersion: "order-now-v1",
+    generatedAt: Date.now(),
+    dataFresh: false,
+    staleReason: reason,
+    latestDecisionAt: null,
+    primary: { action: "wait", headline: "NO OPERES · motor detenido", asset: null, displayPair: null, alertId: null, steps: ["No compres ni vendas nada basándote en esta pantalla.", "Si tienes una posición abierta por una alerta anterior, vigílala tú en Crypto.com hasta que el motor vuelva."], warnings: [], reason, evidence: null, expiresAt: null, priceEur: null, resultPct: null },
+    others: [],
+    team: null,
+    market: [],
+    discarded: [],
+    venue: executionVenue(env),
+    realOrderSubmission: false,
+  }, { headers: { "Cache-Control": "no-store" } });
+}
+
 async function orderNowResponse(env: Env): Promise<Response> {
   const now = Date.now();
-  const { state, xauStatus, labView } = await loadSignalInputs(env);
+  let inputs: Awaited<ReturnType<typeof loadSignalInputs>>;
+  try { inputs = await loadSignalInputs(env); } catch (error) { return orderNowUnavailable(env, error); }
+  const { state, xauStatus, labView } = inputs;
   const plan = planSignalAlerts({ xauStatus, lab: labView, holdings: state.holdings, now, includeGold: xauStatus !== null, includeCrypto: labView !== null });
   const pairs = new Set<string>(["PAXGEUR", "XBTEUR", "ETHEUR"]);
   for (const holding of Object.values(state.holdings)) pairs.add(holding.pair);
