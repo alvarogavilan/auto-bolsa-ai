@@ -60,6 +60,14 @@ Cada hora se guarda el tono del radar junto al precio real de Kraken (oro, Bitco
 
 Abre la URL en Safari → Compartir → «Añadir a pantalla de inicio». Se abre a pantalla completa en «Orden ahora».
 
+## Cuota gratuita de Cloudflare
+
+El plan gratuito admite 100.000 escrituras de estado al día. Si se agota, el motor, las alertas y la pantalla de orden dejan de funcionar hasta las 00:00 UTC, y la pantalla principal muestra «NO OPERES · motor detenido».
+
+Para no agotarla, el oro solo escribe en cada decisión (cada 2 min) y, con posición abierta, cuando cambia la protección. El muestreo cada 3 s solo se activa con una posición abierta.
+
+El plan Workers Paid de Cloudflare (5 USD/mes) elimina este límite.
+
 ## Endpoints
 
 | Ruta | Uso |
