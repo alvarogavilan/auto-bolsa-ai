@@ -1,0 +1,87 @@
+name: Recortar clips GTA 6
+
+on:
+  # Botón manual: GitHub (app o web) → Actions → "Recortar clips GTA 6" → Run workflow
+  workflow_dispatch:
+    inputs:
+      enlace:
+        description: "Enlace del vídeo (YouTube, Twitch, Kick o archivo). Vacío = revisar campañas"
+        required: false
+        default: ""
+      tramo:
+        description: "Opcional, solo para directos largos: tramo a usar, p.ej. 1:00:00-1:40:00"
+        required: false
+        default: ""
+      clips:
+        description: "Cuántos clips"
+        required: false
+        default: "6"
+      duracion:
+        description: "Segundos por clip"
+        required: false
+        default: "30"
+      handle:
+        description: "@ que aparece en el vídeo (tu canal o el del streamer)"
+        required: false
+        default: ""
+  # Seguimiento automático: cada día a las 07:17 UTC revisa los directos nuevos de tus campañas
+  schedule:
+    - cron: "17 7 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gta6-clips
+  cancel-in-progress: false
+
+jobs:
+  recortar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      TZ: Europe/Madrid   # horas de publicación sugeridas en hora de España
+    defaults:
+      run:
+        working-directory: gta6-clips
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar ffmpeg y dependencias
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg fonts-dejavu-core > /dev/null
+          pip install -q numpy yt-dlp
+
+      - name: Recortar (enlace)
+        if: github.event_name == 'workflow_dispatch' && inputs.enlace != ''
+        env:
+          ENLACE: ${{ inputs.enlace }}
+          TRAMO: ${{ inputs.tramo }}
+          CLIPS: ${{ inputs.clips }}
+          DURACION: ${{ inputs.duracion }}
+          HANDLE: ${{ inputs.handle }}
+        run: python boton.py --url "$ENLACE" --tramo "$TRAMO" -n "$CLIPS" --duracion "$DURACION" --handle "$HANDLE" --borrar-original
+
+      - name: Recortar (seguimiento de campañas)
+        if: github.event_name == 'schedule' || inputs.enlace == ''
+        run: |
+          if [ ! -f campanas.seguimiento.json ]; then
+            echo "Crea gta6-clips/campanas.seguimiento.json para activar el seguimiento diario." | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          python boton.py --seguimiento campanas.seguimiento.json --horas 26 --borrar-original
+
+      - name: Subir clips para descargar
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: clips-gta6
+          path: gta6-clips/clips/
+          retention-days: 7
+          if-no-files-found: ignore
+          compression-level: 0

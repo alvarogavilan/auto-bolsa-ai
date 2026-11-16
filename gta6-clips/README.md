@@ -26,6 +26,8 @@ Opciones útiles: `--layout crop` llena la pantalla y recorta los lados; `--zoom
 
 Pruebas: `python -m unittest test_clipper.py`
 
+> 📱 **Botón desde el iPhone:** [BOTON.md](BOTON.md).
+>
 > ¿No quieres grabar? Mira [AUTOMATICO.md](AUTOMATICO.md): piloto automático para campañas de clipping.
 
 ## 2. Formas de ganar dinero (de más a menos realista)
