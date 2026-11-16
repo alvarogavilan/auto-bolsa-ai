@@ -201,6 +201,12 @@ def pick_clips(score: np.ndarray, duration: float, n: int, length: float,
             continue
         chosen.append(Clip(source, 0, round(peak, 2), round(start, 2),
                            round(end, 2), round(float(score[i]), 3)))
+    if not chosen and min_score > float("-inf") and len(score):
+        # nada supera el umbral: mejor entregar los mejores momentos que nada
+        chosen = pick_clips(score, duration, n, length, preroll, min_gap, source, float("-inf"))
+        for c in chosen:
+            c.notes.append("momento flojo: revisa antes de publicar")
+        return chosen
     chosen.sort(key=lambda c: c.start)
     for k, c in enumerate(chosen, 1):
         c.index = k

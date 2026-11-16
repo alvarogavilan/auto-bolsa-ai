@@ -56,6 +56,12 @@ class ClipperTest(unittest.TestCase):
         clips = clipper.pick_clips(score, 200, 3, 20, 9, 5, "x")
         self.assertEqual([c.peak for c in clips], [50.0, 150.0])
 
+    def test_flat_video_still_gives_best_clip(self):
+        import numpy as np
+        clips = clipper.pick_clips(np.zeros(40), 20, 2, 8, 9, 2, "x")
+        self.assertGreaterEqual(len(clips), 1)
+        self.assertIn("momento flojo", clips[0].notes[-1])
+
     def test_escape(self):
         self.assertEqual(clipper.ff_escape("a:b'c%"), "a\\:b\\'c\\%")
         self.assertEqual(clipper.strip_emoji("GTA 6 😳"), "GTA 6")
