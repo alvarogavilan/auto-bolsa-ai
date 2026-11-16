@@ -1,3 +1,10 @@
 salida/
 __pycache__/
 *.srt
+descargas/
+estado.json
+campanas.json
+client_secret.json
+token.json
+enlaces_para_enviar.csv
+auto.log

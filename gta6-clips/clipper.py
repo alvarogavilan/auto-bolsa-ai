@@ -215,9 +215,9 @@ TITLES_ES = [
     "Esto solo pasa en GTA 6 😳",
     "GTA 6 se pasó con esto 💀",
     "No esperaba esto en GTA 6…",
-    "La persecución más loca de GTA 6 🚔",
+    "Este momento de GTA 6 es increíble 🔥",
     "GTA 6 tiene detalles INCREÍBLES 🤯",
-    "Vice City en GTA 6 es otro nivel 🌴",
+    "GTA 6 es otro nivel 🌴",
     "Cuando todo sale mal en GTA 6 😂",
     "¿Sabías que en GTA 6 puedes hacer esto?",
 ]
@@ -225,9 +225,9 @@ TITLES_EN = [
     "This only happens in GTA 6 😳",
     "GTA 6 went too far with this 💀",
     "I did NOT expect this in GTA 6…",
-    "Craziest police chase in GTA 6 🚔",
+    "This GTA 6 moment is unreal 🔥",
     "GTA 6 details are INSANE 🤯",
-    "Vice City in GTA 6 hits different 🌴",
+    "GTA 6 hits different 🌴",
     "When everything goes wrong in GTA 6 😂",
     "Did you know you can do this in GTA 6?",
 ]
