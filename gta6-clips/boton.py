@@ -85,6 +85,37 @@ def recent_videos(fuente: str, filtro: str, horas: float, max_videos: int) -> li
     return out
 
 
+def list_jobs(cfg_path: Path, horas: float) -> list[dict]:
+    """Vídeos nuevos de todas las campañas con permiso, cada uno con sus ajustes."""
+    if not cfg_path.exists():
+        return []
+    cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+    jobs, seen = [], set()
+    for camp in cfg.get("campanas", []):
+        if not camp.get("permiso"):
+            print(f"'{camp.get('nombre')}' omitida: falta 'permiso'", file=sys.stderr)
+            continue
+        for fuente in camp.get("fuentes", []):
+            try:
+                vids = recent_videos(fuente, camp.get("filtro", "GTA"), horas, camp.get("max_videos", 2))
+            except Exception as e:
+                print(f"No pude leer {fuente}: {e}", file=sys.stderr)
+                continue
+            for v in vids:
+                if v["url"] in seen:
+                    continue
+                seen.add(v["url"])
+                jobs.append({
+                    "url": v["url"], "titulo": v["title"][:80],
+                    "handle": camp.get("mencion") or cfg.get("handle", ""),
+                    "clips": str(camp.get("clips_por_video", 6)),
+                    "duracion": str(camp.get("duracion", 30)),
+                    "tramo": camp.get("tramo", ""),
+                    "tags": " ".join(camp.get("hashtags_obligatorios", [])),
+                })
+    return jobs[:20]
+
+
 def clip(src: Path, title: str, args, handle: str, extra_tags: list[str]) -> list[dict]:
     name = re.sub(r"[^\w-]+", "_", title)[:50].strip("_") or src.stem
     out = OUT / name
@@ -155,16 +186,22 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--handle", default="")
     ap.add_argument("--contexto", default="")
     ap.add_argument("--min-score", type=float, default=1.0)
+    ap.add_argument("--tags", default="", help="hashtags extra obligatorios de la campaña")
     ap.add_argument("--borrar-original", action="store_true")
+    ap.add_argument("--listar-json", action="store_true",
+                    help="con --seguimiento: solo imprime los vídeos nuevos (para repartirlos en paralelo)")
     args = ap.parse_args(argv)
 
     rows, errors = [], []
     if args.url:
         try:
             src, title = download(args.url.strip(), args.tramo)
-            rows.append((title, clip(src, title, args, args.handle, [])))
+            rows.append((title, clip(src, title, args, args.handle, args.tags.split())))
         except Exception as e:
             errors.append(f"No pude procesar {args.url}: {e}")
+    elif args.seguimiento and args.listar_json:
+        print(json.dumps(list_jobs(Path(args.seguimiento), args.horas), ensure_ascii=False))
+        return 0
     elif args.seguimiento:
         cfg = json.loads(Path(args.seguimiento).read_text(encoding="utf-8"))
         for camp in cfg.get("campanas", []):
