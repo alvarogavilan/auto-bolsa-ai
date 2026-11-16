@@ -1,0 +1,26 @@
+{
+  "handle": "@TuCanal",
+  "borrar_descargas": true,
+  "youtube": {
+    "client_secrets": "client_secret.json",
+    "token": "token.json",
+    "por_dia": 3,
+    "horas": ["13:00", "18:00", "21:30"],
+    "max_subidas_por_pasada": 6
+  },
+  "campanas": [
+    {
+      "nombre": "Ejemplo streamer GTA6",
+      "permiso": "",
+      "fuentes": ["https://www.youtube.com/@CANAL_DEL_STREAMER/streams"],
+      "filtro": "GTA",
+      "max_videos": 2,
+      "clips_por_video": 6,
+      "duracion": 30,
+      "mencion": "@CANAL_DEL_STREAMER",
+      "hashtags_obligatorios": ["#GTA6"],
+      "contexto": "",
+      "subtitulos": false
+    }
+  ]
+}
