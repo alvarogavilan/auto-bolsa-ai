@@ -1,0 +1,19 @@
+name: Diagnostico produccion (temporal)
+on:
+  push:
+    branches: [claude/tender-gauss-ftdujo]
+    paths: [.github/workflows/diag-produccion.yml]
+permissions:
+  contents: read
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    steps:
+      - name: GET publicos (solo lectura)
+        run: |
+          base=https://auto-bolsa-ai.k8mwkbp68y.workers.dev
+          for p in /health /api/status /api/xau/readiness /api/xau/status /api/telegram/readiness /api/radar /api/demo; do
+            echo "=================== $p"
+            curl -sS -m 30 -w "\nHTTP %{http_code}\n" "$base$p" | head -c 3000
+            echo
+          done
