@@ -140,7 +140,8 @@ def clip(src: Path, title: str, args, handle: str, extra_tags: list[str]) -> lis
         credito = f"🎥 Clip de {handle}\n" if handle else ""
         c["description"] = (f"{c['title']}\n\n{credito}Grand Theft Auto VI © Rockstar Games.\n\n"
                             f"{c['hashtags']}")
-    (out / "clips.json").write_text(json.dumps(clips, ensure_ascii=False, indent=2), encoding="utf-8")
+    # reescribe json, csv y prompt con rutas, hashtags y descripción definitivos
+    clipper.write_reports([clipper.Clip(**c) for c in clips], out)
     # texto listo para copiar y pegar al subir desde el móvil
     lines = []
     for c in clips:
