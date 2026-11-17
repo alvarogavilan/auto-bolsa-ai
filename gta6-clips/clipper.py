@@ -39,6 +39,7 @@ from pathlib import Path
 import numpy as np
 
 VIDEO_EXTS = {".mp4", ".mkv", ".mov", ".webm", ".avi", ".ts"}
+DEFAULT_SLOTS = ["13:00", "18:00", "21:30"]
 HOP = 0.5  # segundos por ventana de análisis
 SR = 8000  # sample rate para el análisis de audio
 
@@ -241,16 +242,32 @@ BASE_TAGS = ["#GTA6", "#GTAVI", "#GTA", "#GrandTheftAuto", "#ViceCity",
              "#Leonida", "#gaming", "#Shorts"]
 
 
-def fill_metadata(clips: list[Clip], context: str, handle: str, seed: int) -> None:
+def load_trends(path: str) -> dict:
+    try:
+        return json.loads(Path(path).read_text(encoding="utf-8")) if path else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def fill_metadata(clips: list[Clip], context: str, handle: str, seed: int, trends: dict | None = None) -> None:
+    trends = trends or {}
     rng = random.Random(seed)
+    # frases que están creciendo más rápido ahora mismo en Shorts (radar_viral.py)
+    hot = [f.capitalize() for f in trends.get("frases", [])[:3]] + \
+          [w.capitalize() for w in trends.get("palabras", [])[:3]]
+    trend_tags = [t for t in trends.get("hashtags", [])[:4] if t.lower() not in (b.lower() for b in BASE_TAGS)]
     idx = list(range(len(TITLES_ES)))
     rng.shuffle(idx)
     for k, c in enumerate(clips):
         j = idx[k % len(idx)]
-        c.title = (f"{context.strip().capitalize()} en GTA 6 😳" if context and k == 0
-                   else TITLES_ES[j])
+        if context and k == 0:
+            c.title = f"{context.strip().capitalize()} en GTA 6 😳"
+        elif hot and k % 2 == 0:  # la mitad de los títulos usan lo que está en tendencia
+            c.title = f"{hot[(k // 2) % len(hot)]} en GTA 6 🔥"
+        else:
+            c.title = TITLES_ES[j]
         c.title_en = TITLES_EN[j]
-        c.hashtags = " ".join(BASE_TAGS)
+        c.hashtags = " ".join(BASE_TAGS + trend_tags)
         c.description = (
             f"{c.title}\n\n{('Sígueme ' + handle + ' para más clips de GTA 6 cada día.') if handle else 'Sígueme para más clips de GTA 6 cada día.'}\n"
             f"Gameplay propio grabado en consola. Grand Theft Auto VI © Rockstar Games.\n\n{c.hashtags}"
@@ -380,7 +397,10 @@ def process(src: Path, args, font: str | None) -> list[Clip]:
     score = score_timeline(src, duration, args.scene_threshold, 1.0, args.scene_weight)
     clips = pick_clips(score, duration, args.num, args.length, args.preroll, args.min_gap, str(src),
                        args.min_score)
-    fill_metadata(clips, args.context, args.handle, seed=sum(src.name.encode()))
+    trends = load_trends(args.tendencias)
+    fill_metadata(clips, args.context, args.handle, seed=sum(src.name.encode()), trends=trends)
+    if trends.get("mejores_horas") and args.slots == DEFAULT_SLOTS:
+        args.slots = trends["mejores_horas"][: args.per_day]
     out_dir = Path(args.out) / src.stem
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -470,7 +490,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--scene-threshold", type=float, default=0.35)
     ap.add_argument("--scene-weight", type=float, default=0.6)
     ap.add_argument("--per-day", type=int, default=3, help="publicaciones al día para el calendario")
-    ap.add_argument("--slots", nargs="+", default=["13:00", "18:00", "21:30"], help="horas de publicación")
+    ap.add_argument("--slots", nargs="+", default=DEFAULT_SLOTS, help="horas de publicación")
+    ap.add_argument("--tendencias", default="", help="tendencias.json del radar viral")
     ap.add_argument("--preset", default="veryfast", help="preset x264")
     ap.add_argument("--out", default="salida", help="carpeta de salida")
     ap.add_argument("--dry-run", action="store_true", help="solo analiza, no renderiza")
