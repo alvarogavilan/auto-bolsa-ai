@@ -1,5 +1,7 @@
 # 📱 El botón: recortar clips de GTA 6 desde el iPhone
 
+> 📡 Antes de recortar, un **radar viral** analiza qué está funcionando en Shorts y Twitch: ver [RADAR.md](RADAR.md).
+
 Todo se hace en la **app de GitHub** del iPhone, la misma desde la que ya controlas Auto Bolsa. El trabajo pesado lo hacen los servidores de GitHub y tu móvil solo pulsa el botón.
 
 ## Cada vez que quieras clips (30 segundos de tu tiempo)

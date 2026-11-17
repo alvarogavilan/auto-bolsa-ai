@@ -123,6 +123,8 @@ def clip(src: Path, title: str, args, handle: str, extra_tags: list[str]) -> lis
             "--out", str(OUT), "--handle", handle, "--min-score", str(args.min_score)]
     if args.contexto:
         argv += ["--context", args.contexto]
+    if args.tendencias:
+        argv += ["--tendencias", args.tendencias]
     clipper.main(argv)
     produced = OUT / src.stem
     if produced != out and produced.exists():
@@ -186,6 +188,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--handle", default="")
     ap.add_argument("--contexto", default="")
     ap.add_argument("--min-score", type=float, default=1.0)
+    ap.add_argument("--tendencias", default="", help="tendencias.json del radar viral")
     ap.add_argument("--tags", default="", help="hashtags extra obligatorios de la campaña")
     ap.add_argument("--borrar-original", action="store_true")
     ap.add_argument("--listar-json", action="store_true",
