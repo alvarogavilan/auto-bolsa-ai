@@ -140,6 +140,14 @@ jobs:
           HANDLE: ${{ matrix.trabajo.handle }}
           TAGS: ${{ matrix.trabajo.tags }}
         run: python boton.py --url "$URL" --tramo "$TRAMO" -n "$CLIPS" --duracion "$DURACION" --handle "$HANDLE" --tags "$TAGS" --tendencias radar/tendencias.json --borrar-original
+      - name: Textos por plataforma (TikTok, Shorts, Reels, X)
+        if: always()
+        env:
+          HANDLE: ${{ matrix.trabajo.handle }}
+        run: |
+          for d in clips/*/; do
+            [ -f "$d/clips.json" ] && python ../gta6-pagina/pagina.py cola "$d" --credito "$HANDLE" || true
+          done
       - name: Subir clips para descargar
         if: always()
         uses: actions/upload-artifact@v4
