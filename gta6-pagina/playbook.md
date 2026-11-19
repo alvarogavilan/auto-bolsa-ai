@@ -6,8 +6,8 @@ Las reglas que sigue Claude (y tú) para llevar la página. Los ajustes marcados
 
 | Campo | Valor |
 |---|---|
-| Nombre de la página | *(pendiente; ideas: «Leonida Diario», «Vice City Pulse», «GTA 6 Al Día»)* |
-| Handle | *(pendiente; el mismo en todas las redes, con «gta6» si está libre)* |
+| Nombre de la página | **GTA 6 Al Día** |
+| Handle | **@gta6aldia** en todas las redes (si está ocupado: @gta6.aldia → @gta6aldia_es) |
 | Plataformas | TikTok, YouTube Shorts, Instagram Reels, X |
 | Idioma | Español (títulos en inglés solo si un clip lo pide) |
 | Zona horaria | Europe/Madrid |
@@ -16,7 +16,7 @@ Las reglas que sigue Claude (y tú) para llevar la página. Los ajustes marcados
 | Publicaciones/día | TikTok 3 · Shorts 3 · Reels 2 · X 4 |
 | Aprobación | Claude prepara y **tú apruebas** cada publicación (un «sí» basta) |
 
-**Bio:** «Página de fans de GTA 6 🌴 Trucos, secretos y los mejores momentos cada día. No afiliada a Rockstar Games.»
+**Bio:** «GTA 6 Al Día · Página de fans 🌴 Trucos, secretos y los mejores momentos cada día. No afiliada a Rockstar Games.»
 **Avatar:** un icono propio (letras + palmera o coche estilizado). **Nunca** el logo de Rockstar ni arte oficial: parecería una cuenta oficial.
 
 ## 2. Pilares de contenido
