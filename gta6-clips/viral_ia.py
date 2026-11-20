@@ -16,6 +16,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import re
 import shutil
 import subprocess
 import time
@@ -42,8 +43,12 @@ What makes a GTA 6 clip go viral:
 Hard rules:
 - Titles must not spoil story missions or the ending, must not contain slurs or insults, and must
   be honest about what happens (no fake clickbait). Max 60 characters, may end with one emoji.
+- Swearing is normal in gaming streams and is already censored in the transcript (like F*CK):
+  never lower the score for it. Only hateful slurs (shown as *****) are a problem.
 - Mark descartar=true for clips that are boring, confusing without context, mostly menus/loading,
-  or whose transcript contains hateful content.
+  or whose transcript contains hateful slurs.
+- titulo_en must be natural English; titulo_es natural Spanish. Never copy the transcript, never use
+  asterisks or swear words in titles.
 - motivo is one short sentence in Spanish explaining the decision to a beginner.
 """
 
@@ -127,6 +132,22 @@ def ask_claude(content: list[dict], client=None) -> list[dict]:
     return json.loads(text).get("clips", [])
 
 
+SPANISH = re.compile(r"[áéíóúñ¿¡]|\b(el|la|los|las|que|de|en|un|una|esto|todo|vamos|estoy)\b", re.I)
+
+
+def good_title(t: str, lang: str) -> bool:
+    """Filtro de calidad: un título malo es peor que el gancho probado de siempre."""
+    import clipper
+    if not 8 <= len(t) <= 60 or "*" in t or clipper.has_slur(t) or clipper.censor(t) != t:
+        return False
+    if t.count(":") or t.isupper():
+        return False
+    if lang == "en":
+        plain = clipper.strip_emoji(t)
+        return plain.isascii() and not SPANISH.search(plain)
+    return True
+
+
 ONE = SCHEMA["properties"]["clips"]["items"]
 ONE_SCHEMA = {**ONE, "properties": {k: v for k, v in ONE["properties"].items() if k != "id"},
               "required": [k for k in ONE["required"] if k != "id"]}
@@ -193,8 +214,8 @@ def judge(clips: list[dict], trends: dict | None = None, client=None, post=None)
         c["ia_descartar"] = bool(v.get("descartar")) or bool(v.get("spoiler"))
         c["ia_sin_contexto"] = bool(v.get("sin_contexto"))
         for key in ("titulo_en", "titulo_es"):
-            t = str(v.get(key, "")).strip()[:70]
-            c[f"ia_{key}"] = "" if not t or clipper.has_slur(t) else clipper.censor(t)
+            t = str(v.get(key, "")).strip()
+            c[f"ia_{key}"] = t if good_title(t, key[-2:]) else ""
         # nota final: 75 % la IA, 25 % la señal automática (audio + reacciones)
         c["ia_rank"] = round(0.75 * score + 25 * float(c.get("rank", 0)) / top_rank, 1)
     judged = [c for c in cands if "ia_score" in c]
