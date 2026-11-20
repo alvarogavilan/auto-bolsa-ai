@@ -235,13 +235,13 @@ class TelegramTest(unittest.TestCase):
                 "os.environ", {"TELEGRAM_BOT_TOKEN": "t", "TELEGRAM_CHAT_ID": "42"}):
             st = str(Path(d, "tg.json"))
             ta.main(["--estado", st], tg=tg, fetch=fetch, now=now)
-            methods = [m for m, _, _ in calls]
+            methods = [m for m, _, _ in calls if m != "getUpdates"]
             self.assertEqual(methods, ["sendVideo", "sendMessage", "sendMessage"])  # solo el clip #1
             self.assertIn("SUBE AHORA · clip #1", calls[0][1]["caption"])
             self.assertEqual(calls[0][2], ("01_x.mp4", b"MP4"))
             calls.clear()
             ta.main(["--estado", st], tg=tg, fetch=fetch, now=now)
-            self.assertEqual(calls, [])  # no repite
+            self.assertEqual([m for m, _, _ in calls if m != "getUpdates"], [])  # no repite
 
 
 class TelegramNightTest(unittest.TestCase):
@@ -253,3 +253,47 @@ class TelegramNightTest(unittest.TestCase):
         self.assertEqual(ta.due([c], set(), datetime(2026, 11, 21, 22, 0, tzinfo=ta.MADRID)), [])
         self.assertEqual(len(ta.due([c], set(), datetime(2026, 11, 21, 22, 40, tzinfo=ta.MADRID))), 1)
         self.assertIn("PROGRAMA AHORA", ta.order_text(c))
+
+
+class TelegramLinksTest(unittest.TestCase):
+    def test_links_are_recorded_replied_and_views_read(self):
+        import telegram_avisos as ta
+        state = {"publicados": {"01.mp4": {"rank": 1, "enviado": "2026-11-21T17:00:00+00:00",
+                                           "campana_url": "https://contentrewards.com/c/x"}}}
+        replies = []
+
+        def tg(token, method, fields, file=None):
+            if method == "getUpdates":
+                return [{"update_id": 7, "message": {"chat": {"id": 42},
+                         "text": "https://www.tiktok.com/@aldiagta6/video/123 https://youtube.com/shorts/abc"}}]
+            replies.append(fields["text"])
+            return {}
+        self.assertEqual(ta.read_links("t", "42", state, tg), 1)
+        clip = state["publicados"]["01.mp4"]
+        self.assertEqual(set(clip["enlaces"]), {"tiktok", "shorts"})
+        self.assertIn("contentrewards.com/c/x", replies[0])
+        self.assertEqual(state["offset"], 7)
+        n = ta.update_views(state, datetime(2026, 11, 22, tzinfo=timezone.utc),
+                            run=lambda url: json.dumps({"view_count": 1500 if "tiktok" in url else 300}))
+        self.assertEqual(n, 2)
+        self.assertEqual(clip["vistas"], {"tiktok": 1500, "shorts": 300})
+
+    def test_quiet_hours(self):
+        import telegram_avisos as ta
+        self.assertTrue(ta.is_quiet(datetime(2026, 11, 22, 8, 15, tzinfo=ta.MADRID)))
+        self.assertFalse(ta.is_quiet(datetime(2026, 11, 22, 8, 30, tzinfo=ta.MADRID)))
+        self.assertEqual(ta.send_at(datetime(2026, 11, 22, 0, 30, tzinfo=ta.MADRID)),
+                         datetime(2026, 11, 21, 22, 30, tzinfo=ta.MADRID))
+
+
+class ResultsTest(unittest.TestCase):
+    def test_real_views_become_ai_context(self):
+        import publicar
+        with tempfile.TemporaryDirectory() as d:
+            f = Path(d, "tg.json")
+            f.write_text(json.dumps({"publicados": {
+                "a": {"titulo": "Car flies 💀", "ia": 80, "vistas": {"tiktok": 5000, "shorts": 100}},
+                "b": {"titulo": "Menu", "ia": 40, "vistas": {"tiktok": 90}},
+                "c": {"titulo": "Sin enlaces"}}}))
+            r = publicar.load_results(f)
+        self.assertEqual([x["vistas"] for x in r], [5100, 90])

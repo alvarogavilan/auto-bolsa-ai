@@ -59,6 +59,13 @@ jobs:
           path: radar
           run-id: ${{ env.RUN_ID }}
           github-token: ${{ github.token }}
+      - name: Traer las vistas reales (las mide el bot de Telegram)
+        uses: actions/cache/restore@v4
+        continue-on-error: true
+        with:
+          path: gta6-clips/estado
+          key: gta6-telegram-leer-${{ github.run_id }}
+          restore-keys: gta6-telegram-
       - name: Preparar el departamento viral gratis
         continue-on-error: true
         timeout-minutes: 12
@@ -76,7 +83,7 @@ jobs:
           pip install -q numpy
           if [ -n "$ANTHROPIC_API_KEY" ]; then pip install -q anthropic || true; fi
           mkdir -p todos
-          python gta6-clips/publicar.py todos --salida salida --top 15 --tendencias radar/tendencias.json
+          python gta6-clips/publicar.py todos --salida salida --top 15 --tendencias radar/tendencias.json --rendimiento gta6-clips/estado/telegram.json
           if ls salida/*.mp4 >/dev/null 2>&1; then echo "hay=si" >> "$GITHUB_OUTPUT"; else echo "hay=no" >> "$GITHUB_OUTPUT"; fi
       - name: Publicar «Clips listos»
         if: steps.prep.outputs.hay == 'si'

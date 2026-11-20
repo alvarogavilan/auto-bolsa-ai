@@ -39,6 +39,8 @@ What makes a GTA 6 clip go viral:
 - A clear payoff or punchline before the end; no slow build-up, no menus, no loading screens,
   no long talking about unrelated things.
 - Novelty: something people have not seen yet in GTA 6.
+- If "nuestros_resultados_vistas" is given, those are REAL view counts of our own past posts:
+  favour clips similar to the top ones and avoid what flopped. This beats general rules.
 
 Hard rules:
 - Titles must not spoil story missions or the ending, must not contain slurs or insults, and must
@@ -163,7 +165,7 @@ def _ollama(payload: dict, timeout: float) -> dict:
 def ask_local(clips: list[dict], trends: dict | None, model: str, post=_ollama) -> list[dict]:
     """Modelo gratis en el propio servidor: un clip por consulta (va mejor con modelos pequeños)."""
     out, start = [], time.monotonic()
-    extra = (f"\nTrending now in GTA 6 Shorts: {json.dumps(trends, ensure_ascii=False)[:600]}" if trends else "")
+    extra = (f"\nTrending now in GTA 6 Shorts: {json.dumps(trends, ensure_ascii=False)[:1000]}" if trends else "")
     for i, c in enumerate(clips):
         if time.monotonic() - start > LOCAL_DEADLINE_S:
             print(f"Departamento viral (gratis): tiempo agotado tras {i} clips.")
