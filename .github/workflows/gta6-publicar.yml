@@ -143,6 +143,18 @@ jobs:
             | grep '^clips-' | xargs -r -I{} gh release delete {} --repo "$PUB_REPO" --yes --cleanup-tag || true
           owner="${PUB_REPO%%/*}"; name="${PUB_REPO#*/}"
           echo "📱 App: https://${owner}.github.io/${name}/" >> "$GITHUB_STEP_SUMMARY"
+      - name: Recordar avisos ya programados
+        if: steps.prep.outputs.hay == 'si'
+        uses: actions/cache@v4
+        with:
+          path: gta6-clips/estado
+          key: gta6-avisos-${{ github.run_id }}
+          restore-keys: gta6-avisos-
+      - name: Avisos push al móvil (ntfy, gratis)
+        if: steps.prep.outputs.hay == 'si'
+        env:
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+        run: python gta6-clips/avisos.py salida/clips.json --estado gta6-clips/estado/avisos.json
       - name: Borrar la página indicada
         if: inputs.borrar_tag != ''
         env:
