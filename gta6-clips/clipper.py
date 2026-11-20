@@ -188,6 +188,21 @@ def score_timeline(path: Path, duration: float, scene_thr: float,
     return smooth(audio_w * audio_score + scene_w * scene_score, 3)
 
 
+MIN_LEN = 15.0  # nunca menos de 15 s: hace falta contexto y algunas campañas piden mínimo
+
+
+def smart_end(score: np.ndarray, start: float, peak: float, length: float, duration: float) -> float:
+    """Corta cuando acaba la reacción: el primer tramo de 3 s «en calma» (por debajo de la
+    media) a partir de 6 s después del pico. Sin cola muerta → más gente lo ve entero."""
+    lo = int((peak + 6) / HOP)
+    hi = int(min(start + length, duration) / HOP)
+    calm = int(3 / HOP)
+    for i in range(lo, hi - calm):
+        if np.all(score[i:i + calm] < 0):
+            return round(max(start + MIN_LEN, min(i * HOP + 1.0, start + length)), 2)
+    return round(min(start + length, duration), 2)
+
+
 def pick_clips(score: np.ndarray, duration: float, n: int, length: float,
                preroll: float, min_gap: float, source: str,
                min_score: float = 1.0) -> list[Clip]:
@@ -199,7 +214,7 @@ def pick_clips(score: np.ndarray, duration: float, n: int, length: float,
             break  # mejor menos clips que clips aburridos
         peak = float(i * HOP)
         start = max(0.0, min(peak - preroll, duration - length))
-        end = start + length
+        end = smart_end(score, start, peak, length, duration)
         if any(start < c.end + min_gap and end > c.start - min_gap for c in chosen):
             continue
         chosen.append(Clip(source, 0, round(peak, 2), round(start, 2),
@@ -403,6 +418,12 @@ def render(src: Path, clip: Clip, out_dir: Path, args, font: str | None) -> None
                      "OutlineColour=&H00000000,BorderStyle=1,Outline=3,Alignment=2,MarginV=70")
             filters.append(f"[{last}]subtitles='{ff_escape(str(srt))}':force_style='{style}'[v3]")
             last = "v3"
+
+    # barra de progreso fina arriba: invita a aguantar hasta el final (retención)
+    dur = max(clip.end - clip.start, 0.1)
+    filters.append(f"color=c=0xFFD400:s={W}x12:r=30:d={dur:.2f}[bar]")
+    filters.append(f"[{last}][bar]overlay=x='-w+w*t/{dur:.2f}':y=196:eval=frame:eof_action=pass[vp]")
+    last = "vp"
 
     cmd = ["ffmpeg", "-v", "error", "-y", "-ss", f"{clip.start}", "-t", f"{clip.end - clip.start}",
            "-i", str(src), "-filter_complex", ";".join(filters), "-map", f"[{last}]"]
