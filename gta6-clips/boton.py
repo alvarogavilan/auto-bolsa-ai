@@ -183,6 +183,8 @@ def clip(src: Path, title: str, args, handle: str, extra_tags: list[str]) -> lis
         argv += ["--context", args.contexto]
     if args.tendencias:
         argv += ["--tendencias", args.tendencias]
+    if args.subs:
+        argv.append("--subs")
     clipper.main(argv)
     produced = OUT / src.stem
     if produced != out and produced.exists():
@@ -246,6 +248,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--duracion", type=float, default=30)
     ap.add_argument("--handle", default="")
     ap.add_argument("--contexto", default="")
+    ap.add_argument("--subs", action="store_true", help="subtítulos automáticos grandes (faster-whisper)")
     ap.add_argument("--min-score", type=float, default=1.0)
     ap.add_argument("--tendencias", default="", help="tendencias.json del radar viral")
     ap.add_argument("--tags", default="", help="hashtags extra obligatorios de la campaña")
