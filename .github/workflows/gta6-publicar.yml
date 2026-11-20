@@ -55,8 +55,13 @@ jobs:
         if: steps.prep.outputs.hay == 'si'
         run: |
           fecha=$(date +"%d/%m %H:%M")
-          gh release create "clips-${RUN_ID}" salida/*.mp4 \
-            --title "🎬 Clips listos · ${fecha}" --notes-file salida/notas.md --latest
+          if gh release view "clips-${RUN_ID}" > /dev/null 2>&1; then
+            gh release upload "clips-${RUN_ID}" salida/*.mp4 --clobber
+            gh release edit "clips-${RUN_ID}" --notes-file salida/notas.md --latest
+          else
+            gh release create "clips-${RUN_ID}" salida/*.mp4 \
+              --title "🎬 Clips listos · ${fecha}" --notes-file salida/notas.md --latest
+          fi
           cat salida/notas.md >> "$GITHUB_STEP_SUMMARY"
       - name: Actualizar la app (GitHub Pages)
         if: steps.prep.outputs.hay == 'si' && env.PUB_TOKEN != ''
