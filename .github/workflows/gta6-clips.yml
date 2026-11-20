@@ -30,7 +30,7 @@ on:
         default: "2.2"
   # Seguimiento automático: cada 2 horas busca directos nuevos de GTA 6 de tus campañas
   schedule:
-    - cron: "23 */2 * * *"
+    - cron: "23 */3 * * *"   # cada 3 h: ahorra minutos gratis cuando no hay vídeos nuevos
 
 permissions:
   contents: read
@@ -137,7 +137,11 @@ jobs:
         with:
           python-version: "3.12"
       - name: Liberar disco (los directos ocupan mucho)
-        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL || true
+        # solo si hace falta: borrar tarda minutos y cada minuto cuenta en el plan gratis
+        run: |
+          libre=$(df --output=avail -BG / | tail -1 | tr -dc 0-9)
+          echo "Libre: ${libre} GB"
+          if [ "$libre" -lt 12 ]; then sudo rm -rf /usr/local/lib/android || true; fi
       - name: Instalar ffmpeg y dependencias
         timeout-minutes: 10   # a veces apt se cuelga: mejor fallar rápido que bloquear la tanda
         run: |
