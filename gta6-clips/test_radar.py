@@ -218,3 +218,27 @@ class AvisosTest(unittest.TestCase):
                 sent.clear()
                 avisos.main([str(cj), "--estado", str(st)], sender=fake)
                 self.assertEqual(sent, [])
+
+
+class TelegramTest(unittest.TestCase):
+    def test_sends_video_and_text_once_when_time_arrives(self):
+        import telegram_avisos as ta
+        now = datetime.now(timezone.utc)
+        mk = lambda mins, r: {"rank": r, "archivo": f"0{r}_x.mp4", "cuando": (now + timedelta(minutes=mins)).isoformat(),
+                              "tiktok": "Car flies 💀 #GTA6", "shorts": "Car flies 💀 #GTA6 #Shorts",
+                              "campana_nombre": "Dom"}
+        clips = {"base": "videos/", "clips": [mk(-5, 1), mk(30, 2), mk(-300, 3)]}
+        calls = []
+        tg = lambda token, method, fields, file=None: calls.append((method, fields, file)) or {}
+        fetch = lambda url: json.dumps(clips).encode() if url.endswith("clips.json") else b"MP4"
+        with tempfile.TemporaryDirectory() as d, mock.patch.dict(
+                "os.environ", {"TELEGRAM_BOT_TOKEN": "t", "TELEGRAM_CHAT_ID": "42"}):
+            st = str(Path(d, "tg.json"))
+            ta.main(["--estado", st], tg=tg, fetch=fetch)
+            methods = [m for m, _, _ in calls]
+            self.assertEqual(methods, ["sendVideo", "sendMessage", "sendMessage"])  # solo el clip #1
+            self.assertIn("SUBE AHORA · clip #1", calls[0][1]["caption"])
+            self.assertEqual(calls[0][2], ("01_x.mp4", b"MP4"))
+            calls.clear()
+            ta.main(["--estado", st], tg=tg, fetch=fetch)
+            self.assertEqual(calls, [])  # no repite
