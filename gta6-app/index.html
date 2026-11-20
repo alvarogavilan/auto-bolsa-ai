@@ -8,7 +8,7 @@
 <title>Clips GTA 6 Al Día</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@600;700&display=swap">
 <style>
-/* Una columna de móvil: tarjeta grande "Sube este ahora" y debajo la cola por orden */
+/* Una columna de móvil: tarjeta grande "Siguiente clip a programar" y debajo la cola por orden */
 :root{
   --bg:#f5f3f8; --card:#ffffff; --ink:#1b1724; --muted:#6b6478; --line:#e3dfea;
   --sunset:#e8487d; --sunset-soft:#fde6ee; --palm:#12866f; --palm-soft:#dff3ee; --amber:#a86400;
@@ -34,6 +34,8 @@ header{display:flex;flex-direction:column;gap:6px}
 .now .tag{align-self:flex-start;background:var(--sunset);color:#fff;font-weight:700;font-size:.8rem;letter-spacing:.06em;text-transform:uppercase;padding:4px 10px;border-radius:99px}
 .when{font-family:var(--display);font-size:1.25rem;font-weight:700}
 .why{color:var(--muted);font-size:.88rem}
+.camp{font-weight:700;font-size:.92rem;color:var(--palm);background:var(--palm-soft);border-radius:10px;padding:8px 12px}
+.prog{font-family:var(--display);font-weight:700;font-size:1.02rem}
 .hook{background:var(--sunset-soft);border-radius:10px;padding:8px 12px;font-size:.92rem}
 video{width:100%;max-height:45vh;margin:0 14px 14px;width:calc(100% - 28px);border-radius:12px;background:#000;aspect-ratio:9/16;object-fit:contain}
 .steps{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:4px;font-size:.92rem;color:var(--muted)}
@@ -177,6 +179,7 @@ footer{display:flex;flex-direction:column;gap:8px;border-top:1px solid var(--lin
       inp.addEventListener("change", function(){ enlaces[k] = inp.value.trim(); guardarEnlaces(); });
       box.appendChild(inp);
     });
+    if (c.campana_url) box.appendChild(el("a", {"class":"btn", href:c.campana_url, target:"_blank", rel:"noopener", style:"grid-column:1/-1"}, "🎯 Enviar a esta campaña (" + (c.campana_nombre || "campaña") + ")"));
     var done = el("button", {type:"button", "class":"btn done"}, hechos[idOf(c)] ? "↩️ Marcar como pendiente" : "✅ Hecho: subido y enviado");
     done.addEventListener("click", function(){
       if (hechos[idOf(c)]) delete hechos[idOf(c)]; else hechos[idOf(c)] = Date.now();
@@ -188,15 +191,17 @@ footer{display:flex;flex-direction:column;gap:8px;border-top:1px solid var(--lin
 
   function detail(c, big){
     var frag = document.createDocumentFragment();
+    if (c.campana_nombre) frag.appendChild(el("div", {"class":"camp"}, "🎯 Campaña: " + c.campana_nombre + " · envíalo SOLO a esta"));
+    frag.appendChild(el("div", {"class":"prog"}, "⏰ Programar para: " + c.cuando_txt + (c.hora_ny ? "  (" + c.hora_ny + " en Nueva York)" : "")));
     frag.appendChild(el("div", {"class":"why"}, "Por qué: " + c.porque));
     if (c.gancho) frag.appendChild(el("div", {"class":"hook"}, "💬 Título sugerido (lo que dice): “" + c.gancho + "”"));
     (c.avisos || []).forEach(function(a){ frag.appendChild(el("div", {"class":"warn"}, "⚠️ " + a)); });
     if (big) {
       var ol = el("ol", {"class":"steps"});
       ["Toca «Guardar o enviar a TikTok» → elige TikTok (o «Guardar vídeo»).",
-       "Súbelo a TikTok con el texto de TikTok y a YouTube Shorts con el de Shorts.",
-       "Copia el enlace de cada publicación y pégalo en «Enviar clip» de la campaña.",
-       "Pulsa «Hecho»."].forEach(function(t){ ol.appendChild(el("li", null, t)); });
+       "En TikTok pega el texto de TikTok y, en «Más opciones», PROGRAMA para la hora indicada. Haz lo mismo en YouTube (Visibilidad → Programar).",
+       "Pega aquí abajo los enlaces de tus publicaciones.",
+       "Toca «Enviar a esta campaña» y pega cada enlace en «Enviar clip». Luego pulsa «Hecho»."].forEach(function(t){ ol.appendChild(el("li", null, t)); });
       frag.appendChild(ol);
     }
     frag.appendChild(actions(c, big));
@@ -228,7 +233,7 @@ footer{display:flex;flex-direction:column;gap:8px;border-top:1px solid var(--lin
     } else {
       var c = pend.slice().sort(function(a,b){ return a.cuando < b.cuando ? -1 : 1; })[0];
       var card = el("div", {"class":"now"});
-      card.appendChild(el("span", {"class":"tag"}, "Sube este ahora"));
+      card.appendChild(el("span", {"class":"tag"}, "Siguiente clip a programar"));
       card.appendChild(el("div", {"class":"when"}, "#" + c.rank + " · " + c.cuando_txt));
       card.appendChild(detail(c, true));
       now.appendChild(card);
@@ -255,7 +260,7 @@ footer{display:flex;flex-direction:column;gap:8px;border-top:1px solid var(--lin
     .then(function(r){ if (!r.ok) throw new Error(r.status); return r.json(); })
     .then(function(d){
       data = d;
-      if (d.campana) document.getElementById("campana").href = d.campana; else document.getElementById("campana").hidden = true;
+      document.getElementById("campana").hidden = true;  // cada clip lleva su propia campaña
       if (d.recortar) document.getElementById("recortar").href = d.recortar; else document.getElementById("recortar").hidden = true;
       var cal = location.href.replace(/[#?].*$/, "").replace(/index\.html$/, "").replace(/\/?$/, "/") + "calendario.ics";
       document.getElementById("calendario").href = cal.replace(/^https?:/, "webcal:");
