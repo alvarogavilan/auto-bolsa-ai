@@ -98,10 +98,46 @@ def recent_videos(fuente: str, filtro: str, horas: float, max_videos: int, desde
             print(f"[seguimiento] {url} fecha={int(ts)} vivo={bool(full.get('is_live'))} "
                   f"aceptado={ok} titulo={title[:60]!r}", file=sys.stderr)
             if ok:
-                out.append({"url": url, "title": title or url.rsplit('/', 1)[-1]})
+                out.append({"url": url, "title": title or url.rsplit('/', 1)[-1],
+                            "dur": float(full.get("duration") or e.get("duration") or 0)})
             if len(out) >= max_videos:
                 break
     return out
+
+
+def hms(t: float) -> str:
+    t = int(t)
+    return f"{t // 3600}:{t // 60 % 60:02d}:{t % 60:02d}"
+
+
+def probe_duration_url(url: str) -> float:
+    p = Path(url).expanduser()
+    if p.exists():
+        return clipper.probe_duration(p)
+    try:
+        import yt_dlp  # type: ignore
+        with yt_dlp.YoutubeDL({"quiet": True, "ignoreerrors": True}) as ydl:
+            return float((ydl.extract_info(url, download=False) or {}).get("duration") or 0)
+    except Exception:
+        return 0.0
+
+
+def expand_jobs(jobs: list[dict], chunk_min: float = 90, limit: int = 20) -> list[dict]:
+    """Trocea directos largos en tramos (cada uno a su servidor): no se llena el disco y va en paralelo."""
+    out: list[dict] = []
+    for j in jobs:
+        dur = float(j.get("dur") or 0) or (0 if j.get("tramo") else probe_duration_url(j["url"]))
+        chunk = chunk_min * 60
+        if j.get("tramo") or dur <= chunk * 1.2:
+            out.append({k: v for k, v in j.items() if k != "dur"})
+            continue
+        n = int(-(-dur // chunk))
+        per = str(max(3, -(-int(j.get("clips") or 6) // n)))
+        for i in range(n):
+            a, b = i * chunk, min(dur, (i + 1) * chunk)
+            out.append({**{k: v for k, v in j.items() if k != "dur"}, "tramo": f"{hms(a)}-{hms(b)}",
+                        "clips": per, "titulo": f"{str(j.get('titulo', ''))[:50]} [{hms(a)}]"})
+    return out[:limit]
 
 
 def list_jobs(cfg_path: Path, horas: float, procesados: set[str] | None = None) -> list[dict]:
@@ -133,8 +169,9 @@ def list_jobs(cfg_path: Path, horas: float, procesados: set[str] | None = None) 
                     "duracion": str(camp.get("duracion", 30)),
                     "tramo": camp.get("tramo", ""),
                     "tags": " ".join(camp.get("hashtags_obligatorios", [])),
+                    "dur": v.get("dur", 0),
                 })
-    return jobs[:20]
+    return jobs
 
 
 def clip(src: Path, title: str, args, handle: str, extra_tags: list[str]) -> list[dict]:
@@ -213,6 +250,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--tendencias", default="", help="tendencias.json del radar viral")
     ap.add_argument("--tags", default="", help="hashtags extra obligatorios de la campaña")
     ap.add_argument("--borrar-original", action="store_true")
+    ap.add_argument("--expandir", default="", help="JSON de trabajos a trocear en tramos")
     ap.add_argument("--procesados", default="", help="registro de vídeos ya recortados (evita repetir)")
     ap.add_argument("--listar-json", action="store_true",
                     help="con --seguimiento: solo imprime los vídeos nuevos (para repartirlos en paralelo)")
@@ -225,10 +263,13 @@ def main(argv: list[str] | None = None) -> int:
             rows.append((title, clip(src, title, args, args.handle, args.tags.split())))
         except Exception as e:
             errors.append(f"No pude procesar {args.url}: {e}")
+    elif args.expandir:
+        print(json.dumps(expand_jobs(json.loads(args.expandir)), ensure_ascii=False))
+        return 0
     elif args.seguimiento and args.listar_json:
         reg = Path(args.procesados) if args.procesados else None
         done = set(reg.read_text(encoding="utf-8").split()) if reg and reg.exists() else set()
-        jobs = list_jobs(Path(args.seguimiento), args.horas, done)
+        jobs = expand_jobs(list_jobs(Path(args.seguimiento), args.horas, done))
         if reg:
             reg.parent.mkdir(parents=True, exist_ok=True)
             reg.write_text("\n".join(sorted(done | {j["url"] for j in jobs})), encoding="utf-8")

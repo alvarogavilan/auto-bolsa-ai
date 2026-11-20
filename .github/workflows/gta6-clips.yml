@@ -76,8 +76,8 @@ jobs:
         uses: actions/cache@v4
         with:
           path: gta6-clips/estado
-          key: gta6-procesados-${{ github.run_id }}
-          restore-keys: gta6-procesados-
+          key: gta6-procesados-v2-${{ github.run_id }}
+          restore-keys: gta6-procesados-v2-
       - name: Lista de vídeos a recortar
         id: lista
         env:
@@ -104,6 +104,10 @@ jobs:
             trabajos=$(python boton.py --seguimiento campanas.seguimiento.json --horas "${HORAS:-2.2}" --procesados estado/procesados.txt --listar-json || echo "[]")
           fi
           [ -z "$trabajos" ] && trabajos="[]"
+          if [ "$trabajos" != "[]" ]; then   # trocea directos largos en tramos de 90 min
+            pip install -q numpy yt-dlp
+            trabajos=$(python boton.py --expandir "$trabajos" || echo "$trabajos")
+          fi
           echo "trabajos=$trabajos" >> "$GITHUB_OUTPUT"
           if [ "$trabajos" = "[]" ]; then
             echo "hay=no" >> "$GITHUB_OUTPUT"
@@ -132,6 +136,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - name: Liberar disco (los directos ocupan mucho)
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL || true
       - name: Instalar ffmpeg y dependencias
         run: |
           sudo apt-get update -qq
