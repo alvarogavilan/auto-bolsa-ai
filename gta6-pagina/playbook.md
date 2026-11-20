@@ -7,7 +7,7 @@ Las reglas que sigue Claude (y tú) para llevar la página. Los ajustes marcados
 | Campo | Valor |
 |---|---|
 | Nombre de la página | **GTA 6 Al Día** |
-| Handle | **@gta6aldia** en todas las redes (si está ocupado: @gta6.aldia → @gta6aldia_es) |
+| Handle | **@aldiagta6** en TikTok, Instagram y X · YouTube: @gta6aldia123 (cámbialo a @aldiagta6 si está libre) |
 | Plataformas | TikTok, YouTube Shorts, Instagram Reels, X |
 | Idioma | Español (títulos en inglés solo si un clip lo pide) |
 | Zona horaria | Europe/Madrid |
