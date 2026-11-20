@@ -117,8 +117,9 @@ class PublicarTest(unittest.TestCase):
             notes = (out / "notas.md").read_text(encoding="utf-8")
             self.assertIn("NO WAY BRO WHAT", notes)
             self.assertIn("🎥 @dasgasd3m", notes)
-            self.assertIn("vie 20/11 13:00", notes)
+            self.assertIn("vie 20/11 18:00", notes)  # Dom: horario EE. UU.
+            self.assertIn("(Kick)", notes)  # textos en inglés
             cal = (out / "calendario.ics").read_text(encoding="utf-8")
-            self.assertEqual(cal.count("BEGIN:VEVENT"), 2)
+            self.assertEqual(cal.count("BEGIN:VEVENT"), 1)  # un aviso diario
             self.assertIn("BEGIN:VALARM", cal)
-            self.assertIn("DTSTART:20261120T120000Z", cal)  # 13:00 Madrid
+            self.assertIn("DTSTART:20261120T110000Z", cal)  # 12:00 Madrid
