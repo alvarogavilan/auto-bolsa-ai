@@ -62,6 +62,15 @@ class ClipperTest(unittest.TestCase):
         self.assertGreaterEqual(len(clips), 1)
         self.assertIn("momento flojo", clips[0].notes[-1])
 
+    def test_censor_removes_slurs_and_masks_profanity(self):
+        out = clipper.censor("ONE JOB MY NIGGA FUCKING RETARD what a classic")
+        self.assertNotIn("NIGGA", out.upper())
+        self.assertNotIn("RETARD", out.upper())
+        self.assertIn("F*CKING", out)
+        self.assertIn("classic", out)
+        self.assertTrue(clipper.has_slur("my nigga"))
+        self.assertFalse(clipper.has_slur("big game"))
+
     def test_escape(self):
         self.assertEqual(clipper.ff_escape("a:b'c%"), "a\\:b\\'c\\%")
         self.assertEqual(clipper.strip_emoji("GTA 6 😳"), "GTA 6")

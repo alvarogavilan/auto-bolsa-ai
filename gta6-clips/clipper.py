@@ -27,6 +27,7 @@ import argparse
 import csv
 import json
 import random
+import re
 import shutil
 import subprocess
 import sys
@@ -292,6 +293,22 @@ def schedule(clips: list[Clip], per_day: int, start: datetime, slots: list[str])
 
 # ----------------------------------------------------------------- render
 
+# Insultos que nunca deben aparecer (TikTok/YouTube restringen o banean por ellos)
+SLURS = re.compile(r"\b(nigg\w*|nigger\w*|retard\w*|fag\w*|faggot\w*|tranny)\b", re.I)
+# Palabrotas: se dejan reconocibles pero censuradas (F*CK), lo habitual en Shorts/TikTok
+PROFANITY = re.compile(r"\b(fuck\w*|shit\w*|bitch\w*|dick\w*|pussy|titt\w*|cunt\w*|cock\w*|ass(hole)?)\b", re.I)
+
+
+def censor(text: str) -> str:
+    """Quita insultos (*****) y censura palabrotas (F*CK) en subtítulos y títulos."""
+    text = SLURS.sub(lambda m: "*" * len(m.group(0)), text)
+    return PROFANITY.sub(lambda m: m.group(0)[0] + "*" + m.group(0)[2:], text)
+
+
+def has_slur(text: str) -> bool:
+    return bool(SLURS.search(text))
+
+
 def ff_escape(text: str) -> str:
     return (text.replace("\\", "\\\\").replace(":", "\\:")
             .replace("'", "\\'").replace("%", "\\%"))
@@ -330,7 +347,7 @@ def transcribe_srt(src: Path, clip: Clip, srt_path: Path, model_size: str) -> bo
         for i in range(0, len(words), 3):
             chunk = words[i:i + 3]
             n += 1
-            text = " ".join(w.word.strip() for w in chunk).upper()
+            text = censor(" ".join(w.word.strip() for w in chunk)).upper()
             lines.append(f"{n}\n{ts(chunk[0].start)} --> {ts(chunk[-1].end)}\n{text}\n")
     wav.unlink(missing_ok=True)
     if not lines:
