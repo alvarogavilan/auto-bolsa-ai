@@ -1,0 +1,57 @@
+name: Publicar clips listos
+
+# Cuando termina un recorte, junta los clips de todos los servidores, los ordena
+# de mejor a peor y crea la página «Clips listos» (una release con cada vídeo
+# descargable por separado). Enlace fijo: /releases/latest
+on:
+  workflow_run:
+    workflows: ["Recortar clips GTA 6"]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: "ID de la ejecución de 'Recortar clips GTA 6' a publicar"
+        required: true
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  publicar:
+    runs-on: ubuntu-latest
+    env:
+      TZ: Europe/Madrid
+      GH_TOKEN: ${{ github.token }}
+      RUN_ID: ${{ inputs.run_id || github.event.workflow_run.id }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Traer los clips de todos los servidores
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          pattern: clips-gta6-*
+          path: todos
+          run-id: ${{ env.RUN_ID }}
+          github-token: ${{ github.token }}
+      - name: Ordenar y preparar la página
+        id: prep
+        run: |
+          mkdir -p todos
+          python gta6-clips/publicar.py todos --salida salida --top 15
+          if ls salida/*.mp4 >/dev/null 2>&1; then echo "hay=si" >> "$GITHUB_OUTPUT"; else echo "hay=no" >> "$GITHUB_OUTPUT"; fi
+      - name: Publicar «Clips listos»
+        if: steps.prep.outputs.hay == 'si'
+        run: |
+          fecha=$(date +"%d/%m %H:%M")
+          gh release create "clips-${RUN_ID}" salida/*.mp4 \
+            --title "🎬 Clips listos · ${fecha}" --notes-file salida/notas.md --latest
+          cat salida/notas.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Borrar páginas antiguas (deja las 8 últimas)
+        if: steps.prep.outputs.hay == 'si'
+        run: |
+          gh release list --limit 100 --json tagName,createdAt -q 'sort_by(.createdAt) | reverse | .[].tagName' \
+            | grep '^clips-' | tail -n +9 | xargs -r -I{} gh release delete {} --yes --cleanup-tag || true
