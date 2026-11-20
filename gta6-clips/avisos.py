@@ -1,7 +1,7 @@
 """Avisos push gratis al móvil con ntfy (app «ntfy» en el iPhone, sin cuenta).
 
-- Nada más publicar una tanda: «🎬 N clips nuevos listos» (ser los primeros en subir).
-- 5 minutos antes de cada hora de subida: «⏰ Sube un clip ahora». Al tocarlo se abre la app.
+Solo avisa cuando hay que HACER algo: a la hora exacta de cada subida llega
+«📲 Sube AHORA el clip #N» con la orden concreta. Al tocarlo se abre la app con ese clip arriba.
 
 El canal (NTFY_TOPIC) es un secreto de GitHub: quien no lo sepa no puede leer ni enviar avisos.
 Las horas ya avisadas se guardan en estado/avisos.json para no repetir avisos entre tandas.
@@ -29,7 +29,8 @@ def send(topic: str, title: str, message: str, delay: int | None = None, priorit
         body["delay"] = str(delay)  # marca de tiempo unix
     req = urllib.request.Request(NTFY, data=json.dumps(body).encode(), headers={"Content-Type": "application/json"})
     with urllib.request.urlopen(req, timeout=20) as r:
-        r.read()
+        resp = json.loads(r.read().decode() or "{}")
+    print(f"  ntfy aceptó el aviso (id {resp.get('id', '?')}) para {datetime.fromtimestamp(delay or resp.get('time', 0), timezone.utc):%d/%m %H:%M} UTC")
 
 
 def plan(clips: list[dict], done: set[str], now: datetime) -> list[tuple[datetime, dict]]:
@@ -37,7 +38,7 @@ def plan(clips: list[dict], done: set[str], now: datetime) -> list[tuple[datetim
     out = []
     for c in clips:
         t = datetime.fromisoformat(c["cuando"])
-        if t - timedelta(minutes=5) > now + timedelta(minutes=2) and t <= now + MAX_AHEAD and t.isoformat() not in done:
+        if t > now + timedelta(minutes=2) and t <= now + MAX_AHEAD and t.isoformat() not in done:
             out.append((t, c))
     return out
 
@@ -46,10 +47,15 @@ def main(argv: list[str] | None = None, sender=send) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("clips_json")
     ap.add_argument("--estado", default="estado/avisos.json")
+    ap.add_argument("--prueba", action="store_true", help="manda un aviso de prueba ya")
     args = ap.parse_args(argv)
     topic = os.environ.get("NTFY_TOPIC", "").strip()
     if not topic:
         print("Avisos push desactivados (falta el secreto NTFY_TOPIC).")
+        return 0
+    if args.prueba:
+        sender(topic, "✅ Avisos de GTA 6 funcionando",
+               "Así te avisaré a la hora exacta de cada subida. Toca para abrir la app.", tags=["white_check_mark"])
         return 0
     data = json.loads(Path(args.clips_json).read_text(encoding="utf-8"))
     clips = data.get("clips", [])
@@ -61,23 +67,17 @@ def main(argv: list[str] | None = None, sender=send) -> int:
         done = set()
     done = {d for d in done if datetime.fromisoformat(d) > now - timedelta(days=1)}
     try:
-        if clips:
-            top = clips[0]
-            nota = f" · 🧠 {top['ia_puntuacion']}/100" if top.get("ia_puntuacion") is not None else ""
-            sender(topic, f"🎬 {len(clips)} clips nuevos de GTA 6 listos",
-                   f"El mejor: #{top['rank']}{nota}. Abre la app y programa los de hoy antes que nadie.",
-                   tags=["clapper"])
         n = 0
         for t, c in plan(clips, done, now):
             camp = f" · campaña {c['campana_nombre']}" if c.get("campana_nombre") else ""
             ny = f" ({c['hora_ny']} Nueva York)" if c.get("hora_ny") else ""
-            sender(topic, "⏰ En 5 min: sube un clip de GTA 6",
-                   f"Toca para abrir la app: el clip que toca a las {c['cuando_txt'][-5:]}{ny} está arriba{camp}. "
-                   "Súbelo a TikTok y a Shorts y envía los enlaces a la campaña.",
-                   delay=int((t - timedelta(minutes=5)).timestamp()), priority=5, tags=["alarm_clock"])
+            sender(topic, f"📲 Sube AHORA el clip #{c['rank']}",
+                   f"Toca aquí → «Guardar o enviar a TikTok» → pega el texto → Publicar. "
+                   f"Luego súbelo a YouTube Shorts y envía los 2 enlaces{camp}.",
+                   delay=int(t.timestamp()), priority=5, tags=["iphone"])
             done.add(t.isoformat())
             n += 1
-        print(f"🔔 Avisos push: 1 de tanda nueva + {n} recordatorios programados.")
+        print(f"🔔 Avisos push: {n} órdenes de subida programadas.")
     except Exception as e:  # los avisos nunca rompen la publicación
         print(f"No se pudieron enviar los avisos ({type(e).__name__}: {e}).")
     st.parent.mkdir(parents=True, exist_ok=True)
