@@ -139,6 +139,7 @@ jobs:
       - name: Liberar disco (los directos ocupan mucho)
         run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL || true
       - name: Instalar ffmpeg y dependencias
+        timeout-minutes: 10   # a veces apt se cuelga: mejor fallar rápido que bloquear la tanda
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq ffmpeg fonts-dejavu-core > /dev/null
