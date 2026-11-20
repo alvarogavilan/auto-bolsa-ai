@@ -44,6 +44,7 @@ video{width:100%;max-height:45vh;margin:0 14px 14px;width:calc(100% - 28px);bord
 .btn.done{background:var(--palm);border-color:var(--palm);color:#fff;grid-column:1/-1}
 .btn.ok{border-color:var(--palm);color:var(--palm)}
 .btn:focus-visible{outline:3px solid var(--sunset);outline-offset:2px}
+.enlace{grid-column:1/-1;min-height:44px;padding:10px 12px;border-radius:12px;border:1px solid var(--line);background:var(--bg);color:var(--ink);font:15px var(--body);width:100%}
 .list{display:flex;flex-direction:column;gap:10px}
 details{background:var(--card);border:1px solid var(--line);border-radius:14px}
 details[open]{border-color:var(--sunset)}
@@ -77,6 +78,8 @@ footer{display:flex;flex-direction:column;gap:8px;border-top:1px solid var(--lin
   </section>
 
   <footer>
+    <a class="btn primary" id="calendario">📅 Avisos en mi calendario (una vez, se actualiza solo)</a>
+    <button type="button" class="btn" id="informe">📤 Copiar informe para Claude</button>
     <a class="btn" id="campana" target="_blank" rel="noopener">🎯 Abrir la campaña (Enviar clip)</a>
     <a class="btn" id="recortar" target="_blank" rel="noopener">🔄 Buscar directos nuevos ahora</a>
     <p class="note">La app se actualiza sola cuando hay clips nuevos. «Hecho» se guarda en este móvil.</p>
@@ -89,6 +92,9 @@ footer{display:flex;flex-direction:column;gap:8px;border-top:1px solid var(--lin
   var hechos = {};
   try { hechos = JSON.parse(localStorage.getItem(KEY) || "{}") || {}; } catch (e) { hechos = {}; }
   function save(){ try { localStorage.setItem(KEY, JSON.stringify(hechos)); } catch (e) {} }
+  var enlaces = {};
+  try { enlaces = JSON.parse(localStorage.getItem("gta6-enlaces") || "{}") || {}; } catch (e) { enlaces = {}; }
+  function guardarEnlaces(){ try { localStorage.setItem("gta6-enlaces", JSON.stringify(enlaces)); } catch (e) {} }
   var data = null;
 
   function el(tag, attrs, text){
@@ -163,6 +169,14 @@ footer{display:flex;flex-direction:column;gap:8px;border-top:1px solid var(--lin
     box.appendChild(copyBtn("📋 Texto Shorts", c.shorts));
     var ver = el("a", {"class":"btn", href:url(c), target:"_blank", rel:"noopener", style:"grid-column:1/-1"}, "▶️ Abrir el vídeo (plan B: Compartir → Guardar vídeo)");
     box.appendChild(ver);
+    ["tiktok", "shorts"].forEach(function(red){
+      var k = "enlace:" + idOf(c) + ":" + red;
+      var inp = el("input", {type:"url", inputmode:"url", "class":"enlace",
+        placeholder: red === "tiktok" ? "Pega aquí el enlace de tu TikTok" : "Pega aquí el enlace de tu Short", "aria-label":"Enlace " + red});
+      inp.value = enlaces[k] || "";
+      inp.addEventListener("change", function(){ enlaces[k] = inp.value.trim(); guardarEnlaces(); });
+      box.appendChild(inp);
+    });
     var done = el("button", {type:"button", "class":"btn done"}, hechos[idOf(c)] ? "↩️ Marcar como pendiente" : "✅ Hecho: subido y enviado");
     done.addEventListener("click", function(){
       if (hechos[idOf(c)]) delete hechos[idOf(c)]; else hechos[idOf(c)] = Date.now();
@@ -243,12 +257,30 @@ footer{display:flex;flex-direction:column;gap:8px;border-top:1px solid var(--lin
       data = d;
       if (d.campana) document.getElementById("campana").href = d.campana; else document.getElementById("campana").hidden = true;
       if (d.recortar) document.getElementById("recortar").href = d.recortar; else document.getElementById("recortar").hidden = true;
+      var cal = location.href.replace(/[#?].*$/, "").replace(/index\.html$/, "").replace(/\/?$/, "/") + "calendario.ics";
+      document.getElementById("calendario").href = cal.replace(/^https?:/, "webcal:");
+      document.getElementById("informe").addEventListener("click", function(){
+        var b = this, lineas = ["Informe GTA 6 Al Día · " + new Date().toLocaleString("es-ES")];
+        data.clips.forEach(function(c){
+          var tk = enlaces["enlace:" + idOf(c) + ":tiktok"] || "", sh = enlaces["enlace:" + idOf(c) + ":shorts"] || "";
+          if (hechos[idOf(c)] || tk || sh)
+            lineas.push("#" + c.rank + " " + c.archivo + " · subido: " + (hechos[idOf(c)] ? new Date(hechos[idOf(c)]).toLocaleString("es-ES") : "no") +
+                        " · TikTok: " + (tk || "-") + " · Shorts: " + (sh || "-"));
+        });
+        if (lineas.length === 1) lineas.push("Todavía no hay clips subidos.");
+        var txt = lineas.join("\n");
+        function ok(){ b.textContent = "✅ Copiado: pégalo en el chat con Claude"; setTimeout(function(){ b.textContent = "📤 Copiar informe para Claude"; }, 2500); }
+        try { navigator.clipboard.writeText(txt).then(ok, function(){ window.prompt("Copia el informe:", txt); }); }
+        catch (e) { window.prompt("Copia el informe:", txt); }
+      });
       render();
     })
     .catch(function(){
       document.getElementById("meta").textContent = "Todavía no hay clips publicados aquí. Vuelve en un rato.";
       document.getElementById("campana").hidden = true;
       document.getElementById("recortar").hidden = true;
+      document.getElementById("calendario").hidden = true;
+      document.getElementById("informe").hidden = true;
     });
 })();
 </script>

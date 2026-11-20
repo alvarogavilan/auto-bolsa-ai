@@ -118,3 +118,7 @@ class PublicarTest(unittest.TestCase):
             self.assertIn("NO WAY BRO WHAT", notes)
             self.assertIn("🎥 @dasgasd3m", notes)
             self.assertIn("vie 20/11 13:00", notes)
+            cal = (out / "calendario.ics").read_text(encoding="utf-8")
+            self.assertEqual(cal.count("BEGIN:VEVENT"), 2)
+            self.assertIn("BEGIN:VALARM", cal)
+            self.assertIn("DTSTART:20261120T120000Z", cal)  # 13:00 Madrid

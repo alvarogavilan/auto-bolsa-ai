@@ -150,7 +150,28 @@ def build(clips: list[dict], out: Path, top: int, now: datetime) -> str:
     (out / "clips.json").write_text(json.dumps({"generado": now.isoformat(), "clips": app,
                                                  "analizados": len(clips)}, ensure_ascii=False, indent=1),
                                      encoding="utf-8")
+    (out / "calendario.ics").write_text(ics(app, now), encoding="utf-8")
     return text
+
+
+def ics(app: list[dict], now: datetime) -> str:
+    """Calendario de subidas con aviso a la hora de cada clip (suscribible desde el iPhone)."""
+    def esc(t: str) -> str:
+        return t.replace("\\", "\\\\").replace(";", "\\;").replace(",", "\\,").replace("\n", "\\n")
+    stamp = now.astimezone(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    out = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//GTA 6 Al Dia//Clips//ES", "CALSCALE:GREGORIAN",
+           "METHOD:PUBLISH", "X-WR-CALNAME:🎬 Subidas GTA 6 Al Día", "REFRESH-INTERVAL;VALUE=DURATION:PT1H",
+           "X-PUBLISHED-TTL:PT1H"]
+    for c in app:
+        t = datetime.fromisoformat(c["cuando"]).astimezone(timezone.utc)
+        out += ["BEGIN:VEVENT", f"UID:gta6aldia-{c['cuando'][:16].replace(':', '')}-{c['archivo']}@clips", f"DTSTAMP:{stamp}",
+                f"DTSTART:{t:%Y%m%dT%H%M%SZ}", f"DTEND:{t + timedelta(minutes=15):%Y%m%dT%H%M%SZ}",
+                f"SUMMARY:{esc('🎬 Sube el clip #' + str(c['rank']) + ' (TikTok + Shorts)')}",
+                f"DESCRIPTION:{esc('Abre la app GTA 6 Al Día y pulsa «Guardar o enviar a TikTok». Luego envía los enlaces a la campaña.')}",
+                "BEGIN:VALARM", "ACTION:DISPLAY", f"DESCRIPTION:{esc('Toca subir el clip #' + str(c['rank']))}",
+                "TRIGGER:-PT0M", "END:VALARM", "END:VEVENT"]
+    out.append("END:VCALENDAR")
+    return "\r\n".join(out) + "\r\n"
 
 
 def main(argv: list[str] | None = None) -> int:
