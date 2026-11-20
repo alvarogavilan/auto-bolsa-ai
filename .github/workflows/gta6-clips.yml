@@ -72,6 +72,12 @@ jobs:
           path: gta6-clips/radar/
           retention-days: 7
           if-no-files-found: ignore
+      - name: Recordar vídeos ya recortados
+        uses: actions/cache@v4
+        with:
+          path: gta6-clips/estado
+          key: gta6-procesados-${{ github.run_id }}
+          restore-keys: gta6-procesados-
       - name: Lista de vídeos a recortar
         id: lista
         env:
@@ -95,7 +101,7 @@ jobs:
             trabajos=$(cat radar/objetivos.json)   # objetivos elegidos por el radar (Twitch API)
           else
             pip install -q numpy yt-dlp
-            trabajos=$(python boton.py --seguimiento campanas.seguimiento.json --horas "${HORAS:-2.2}" --listar-json || echo "[]")
+            trabajos=$(python boton.py --seguimiento campanas.seguimiento.json --horas "${HORAS:-2.2}" --procesados estado/procesados.txt --listar-json || echo "[]")
           fi
           [ -z "$trabajos" ] && trabajos="[]"
           echo "trabajos=$trabajos" >> "$GITHUB_OUTPUT"

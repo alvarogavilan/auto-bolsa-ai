@@ -64,7 +64,21 @@ def download(url: str, tramo: str = "") -> tuple[Path, str]:
         return path, info.get("title") or info["id"]
 
 
-def recent_videos(fuente: str, filtro: str, horas: float, max_videos: int) -> list[dict]:
+def video_ts(*infos: dict) -> float:
+    """Fecha del vídeo (epoch) con lo que dé la plataforma; 0 si no hay ninguna."""
+    from datetime import datetime, timezone
+    for d in infos:
+        for k in ("timestamp", "release_timestamp"):
+            if d.get(k):
+                return float(d[k])
+        for k in ("upload_date", "release_date"):
+            v = str(d.get(k) or "")
+            if len(v) == 8 and v.isdigit():  # AAAAMMDD → fin de ese día (UTC)
+                return datetime(int(v[:4]), int(v[4:6]), int(v[6:]), 23, 59, 59, tzinfo=timezone.utc).timestamp()
+    return 0.0
+
+
+def recent_videos(fuente: str, filtro: str, horas: float, max_videos: int, desde: float = 0.0) -> list[dict]:
     import yt_dlp  # type: ignore
 
     with yt_dlp.YoutubeDL({"quiet": True, "extract_flat": "in_playlist",
@@ -76,28 +90,35 @@ def recent_videos(fuente: str, filtro: str, horas: float, max_videos: int) -> li
         for e in entries:
             url = e.get("webpage_url") or e.get("url")
             full = ydl.extract_info(url, download=False) or {}
-            title = full.get("title") or ""
-            ts = full.get("timestamp") or full.get("release_timestamp") or 0
-            if filtro.lower() in title.lower() and ts >= limit and not full.get("is_live"):
-                out.append({"url": url, "title": title})
+            title = full.get("title") or e.get("title") or ""
+            ts = video_ts(full, e)
+            # sin fecha: se acepta (el registro de procesados evita repetirlo)
+            fresh = ts == 0 or (ts >= limit and ts >= desde)
+            ok = fresh and filtro.lower() in title.lower() and not full.get("is_live")
+            print(f"[seguimiento] {url} fecha={int(ts)} vivo={bool(full.get('is_live'))} "
+                  f"aceptado={ok} titulo={title[:60]!r}", file=sys.stderr)
+            if ok:
+                out.append({"url": url, "title": title or url.rsplit('/', 1)[-1]})
             if len(out) >= max_videos:
                 break
     return out
 
 
-def list_jobs(cfg_path: Path, horas: float) -> list[dict]:
+def list_jobs(cfg_path: Path, horas: float, procesados: set[str] | None = None) -> list[dict]:
     """Vídeos nuevos de todas las campañas con permiso, cada uno con sus ajustes."""
     if not cfg_path.exists():
         return []
     cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
-    jobs, seen = [], set()
+    from datetime import datetime, timezone
+    jobs, seen = [], set(procesados or ())
     for camp in cfg.get("campanas", []):
         if not camp.get("permiso"):
             print(f"'{camp.get('nombre')}' omitida: falta 'permiso'", file=sys.stderr)
             continue
         for fuente in camp.get("fuentes", []):
             try:
-                vids = recent_videos(fuente, camp.get("filtro", "GTA"), horas, camp.get("max_videos", 2))
+                desde = datetime.fromisoformat(camp["desde"]).replace(tzinfo=timezone.utc).timestamp() if camp.get("desde") else 0.0
+                vids = recent_videos(fuente, camp.get("filtro", "GTA"), horas, camp.get("max_videos", 2), desde)
             except Exception as e:
                 print(f"No pude leer {fuente}: {e}", file=sys.stderr)
                 continue
@@ -192,6 +213,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--tendencias", default="", help="tendencias.json del radar viral")
     ap.add_argument("--tags", default="", help="hashtags extra obligatorios de la campaña")
     ap.add_argument("--borrar-original", action="store_true")
+    ap.add_argument("--procesados", default="", help="registro de vídeos ya recortados (evita repetir)")
     ap.add_argument("--listar-json", action="store_true",
                     help="con --seguimiento: solo imprime los vídeos nuevos (para repartirlos en paralelo)")
     args = ap.parse_args(argv)
@@ -204,7 +226,13 @@ def main(argv: list[str] | None = None) -> int:
         except Exception as e:
             errors.append(f"No pude procesar {args.url}: {e}")
     elif args.seguimiento and args.listar_json:
-        print(json.dumps(list_jobs(Path(args.seguimiento), args.horas), ensure_ascii=False))
+        reg = Path(args.procesados) if args.procesados else None
+        done = set(reg.read_text(encoding="utf-8").split()) if reg and reg.exists() else set()
+        jobs = list_jobs(Path(args.seguimiento), args.horas, done)
+        if reg:
+            reg.parent.mkdir(parents=True, exist_ok=True)
+            reg.write_text("\n".join(sorted(done | {j["url"] for j in jobs})), encoding="utf-8")
+        print(json.dumps(jobs, ensure_ascii=False))
         return 0
     elif args.seguimiento:
         cfg = json.loads(Path(args.seguimiento).read_text(encoding="utf-8"))
