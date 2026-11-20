@@ -288,3 +288,11 @@ class ResultsTest(unittest.TestCase):
                 "c": {"titulo": "Sin enlaces"}}}))
             r = publicar.load_results(f)
         self.assertEqual([x["vistas"] for x in r], [5100, 90])
+
+
+class QualityGateTest(unittest.TestCase):
+    def test_weak_clips_never_enter_the_daily_plan(self):
+        import telegram_avisos as ta
+        mk = lambda r, ia: {"rank": r, "archivo": f"{r}.mp4", "hora_ny": "12:00", "ia_puntuacion": ia}
+        plan = ta.make_plan([mk(1, 85), mk(2, 30), mk(3, 70)], set(), datetime(2026, 11, 21, 9, 5, tzinfo=ta.MADRID))
+        self.assertEqual([c["rank"] for c, _ in plan], [1, 3])

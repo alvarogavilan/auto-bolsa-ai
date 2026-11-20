@@ -39,7 +39,7 @@ class ClipperTest(unittest.TestCase):
         self.assertEqual(len(clips), 3)
         for c, expected in zip(clips, PEAKS):
             self.assertAlmostEqual(c["peak"], expected, delta=2)
-            self.assertGreaterEqual(c["peak"] - c["start"], 7, "el pico debe caer tras el segundo 7")
+            self.assertLessEqual(c["peak"] - c["start"], 3.5, "el gancho debe entrar en los 3 primeros segundos")
             self.assertTrue(c["publish_at"])
             dims = subprocess.run(
                 ["ffprobe", "-v", "error", "-select_streams", "v", "-show_entries",
