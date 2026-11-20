@@ -106,9 +106,14 @@ jobs:
           }
           put index.html gta6-app/index.html
           put data/clips.json app-clips.json
-          gh api -X POST "repos/$PUB_REPO/pages" -f "source[branch]=main" -f "source[path]=/" > /dev/null 2>&1 || true
+          if ! gh api "repos/$PUB_REPO/pages" -q '"Pages: " + .status + " · " + .html_url' 2>/dev/null; then
+            echo "Pages no estaba activo: lo activo"
+            gh api -X POST "repos/$PUB_REPO/pages" -f "source[branch]=main" -f "source[path]=/" -q .html_url \
+              || echo "::warning::No pude activar GitHub Pages con la llave. Actívalo en Settings → Pages → Deploy from a branch → main / (root)."
+          fi
           gh release list --repo "$PUB_REPO" --limit 100 --json tagName,createdAt -q 'sort_by(.createdAt) | reverse | .[].tagName' \
             | grep '^clips-' | tail -n +4 | xargs -r -I{} gh release delete {} --repo "$PUB_REPO" --yes --cleanup-tag || true
+          owner="${PUB_REPO%%/*}"; name="${PUB_REPO#*/}"
           echo "📱 App: https://${owner}.github.io/${name}/" >> "$GITHUB_STEP_SUMMARY"
       - name: Borrar la página indicada
         if: inputs.borrar_tag != ''
