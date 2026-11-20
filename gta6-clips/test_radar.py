@@ -76,3 +76,18 @@ class RadarTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ExpandTest(unittest.TestCase):
+    def test_long_stream_is_split_in_parallel_chunks(self):
+        import boton
+        jobs = boton.expand_jobs([{"url": "u", "titulo": "Dom", "clips": "10", "tramo": "", "dur": 6.5 * 3600}])
+        self.assertEqual(len(jobs), 5)
+        self.assertEqual(jobs[0]["tramo"], "0:00:00-1:30:00")
+        self.assertEqual(jobs[-1]["tramo"], "6:00:00-6:30:00")
+        self.assertNotIn("dur", jobs[0])
+
+    def test_short_or_ranged_jobs_untouched(self):
+        import boton
+        self.assertEqual(boton.expand_jobs([{"url": "u", "tramo": "", "dur": 1200}])[0]["tramo"], "")
+        self.assertEqual(boton.expand_jobs([{"url": "u", "tramo": "1:00:00-1:10:00"}])[0]["tramo"], "1:00:00-1:10:00")
