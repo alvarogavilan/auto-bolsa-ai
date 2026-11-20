@@ -123,3 +123,52 @@ class PublicarTest(unittest.TestCase):
             self.assertEqual(cal.count("BEGIN:VEVENT"), 1)  # un aviso diario
             self.assertIn("BEGIN:VALARM", cal)
             self.assertIn("DTSTART:20261120T110000Z", cal)  # 12:00 Madrid
+
+
+class ViralIATest(unittest.TestCase):
+    """El departamento viral reordena con la nota de la IA, descarta lo flojo y nunca
+    rompe la publicación si falla."""
+
+    def _fake(self, verdicts=None, error=None):
+        from types import SimpleNamespace as NS
+        calls = []
+
+        def create(**kw):
+            calls.append(kw)
+            if error:
+                raise error
+            return NS(stop_reason="end_turn", content=[NS(type="text", text=json.dumps({"clips": verdicts}))])
+        return NS(beta=NS(messages=NS(create=create))), calls
+
+    def _clips(self):
+        return [{"credit": "@a", "rank": 20.0, "score": 9, "transcript": "menu loading"},
+                {"credit": "@b", "rank": 10.0, "score": 5, "transcript": "NO WAY BRO the car flew"},
+                {"credit": "@c", "rank": 5.0, "score": 3, "transcript": ""}]
+
+    def test_ai_reorders_discards_and_writes_titles(self):
+        import viral_ia
+        v = lambda i, s, d=False, sp=False, t="Car flies into space 💀": {
+            "id": i, "puntuacion": s, "sin_contexto": True, "spoiler": sp, "descartar": d,
+            "motivo": "m", "titulo_en": t, "titulo_es": "El coche sale volando"}
+        client, calls = self._fake([v(0, 20, d=True), v(1, 95), v(2, 60, t="nigga moment")])
+        clips = self._clips()
+        self.assertTrue(viral_ia.judge(clips, {"frases": ["police chase"]}, client=client))
+        self.assertEqual([c["credit"] for c in clips], ["@b", "@c", "@a"])  # flojo al final
+        self.assertEqual(clips[0]["ia_titulo_en"], "Car flies into space 💀")
+        self.assertEqual(clips[1]["ia_titulo_en"], "")  # insulto → sin título
+        kw = calls[0]
+        self.assertEqual(kw["model"], "claude-opus-5-5")
+        self.assertEqual(kw["output_config"]["format"]["type"], "json_schema")
+        import publicar
+        self.assertTrue(publicar.captions_en(clips[0], "@b", 1)["TikTok"].startswith("Car flies"))
+        self.assertIn("🧠 IA 95/100", publicar.why({**clips[0], "words": 0, "reactions": 0}))
+
+    def test_without_key_or_on_error_nothing_changes(self):
+        import viral_ia
+        clips = self._clips()
+        with mock.patch.dict("os.environ", {}, clear=True):
+            self.assertFalse(viral_ia.judge(clips))
+        client, _ = self._fake(error=RuntimeError("boom"))
+        self.assertFalse(viral_ia.judge(clips, client=client))
+        self.assertEqual([c["credit"] for c in clips], ["@a", "@b", "@c"])
+        self.assertNotIn("ia_score", clips[0])

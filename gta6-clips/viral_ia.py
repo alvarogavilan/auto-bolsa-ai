@@ -1,0 +1,164 @@
+"""Departamento viral (IA): Claude ve cada clip candidato (lo que dice el streamer y un
+fotograma del momento clave) y decide cuáles tienen más opciones de hacerse virales.
+
+Por cada clip devuelve: puntuación 0-100, si se entiende sin contexto, si el gancho
+destripa algo (spoiler), si hay que descartarlo, el motivo y un título gancho en
+inglés y en español. publicar.py reordena la lista con esa nota.
+
+Solo se activa si existe el secreto ANTHROPIC_API_KEY. Sin clave, o si algo falla,
+no hace nada y la publicación sigue con la puntuación automática de siempre.
+"""
+from __future__ import annotations
+
+import base64
+import json
+import os
+import shutil
+import subprocess
+from pathlib import Path
+
+MODEL = os.environ.get("VIRAL_IA_MODELO", "claude-opus-5-5")
+MAX_CANDIDATOS = int(os.environ.get("VIRAL_IA_MAX", "20"))  # limita el gasto por tanda
+
+SYSTEM = """You are the head of a short-form video team that clips GTA 6 livestreams for paid
+clipping campaigns (TikTok and YouTube Shorts, paid per 1,000 views). You judge which clips
+will get the most views in the first hours, the way a top TikTok editor would.
+
+What makes a GTA 6 clip go viral:
+- An instant, visible hook in the first 2 seconds (chaos, crash, police, absurd physics, glitch, fail).
+- A genuine, loud streamer reaction (laughing, screaming, disbelief) that pays off.
+- It is understandable with zero context: a stranger scrolling gets it immediately.
+- A clear payoff or punchline before the end; no slow build-up, no menus, no loading screens,
+  no long talking about unrelated things.
+- Novelty: something people have not seen yet in GTA 6.
+
+Hard rules:
+- Titles must not spoil story missions or the ending, must not contain slurs or insults, and must
+  be honest about what happens (no fake clickbait). Max 60 characters, may end with one emoji.
+- Mark descartar=true for clips that are boring, confusing without context, mostly menus/loading,
+  or whose transcript contains hateful content.
+- motivo is one short sentence in Spanish explaining the decision to a beginner.
+"""
+
+SCHEMA = {
+    "type": "object",
+    "properties": {
+        "clips": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "id": {"type": "integer"},
+                    "puntuacion": {"type": "integer"},
+                    "sin_contexto": {"type": "boolean"},
+                    "spoiler": {"type": "boolean"},
+                    "descartar": {"type": "boolean"},
+                    "motivo": {"type": "string"},
+                    "titulo_en": {"type": "string"},
+                    "titulo_es": {"type": "string"},
+                },
+                "required": ["id", "puntuacion", "sin_contexto", "spoiler", "descartar",
+                             "motivo", "titulo_en", "titulo_es"],
+                "additionalProperties": False,
+            },
+        }
+    },
+    "required": ["clips"],
+    "additionalProperties": False,
+}
+
+
+def frame_b64(mp4: Path, at: float) -> str | None:
+    """Un fotograma pequeño (JPEG, 360 px de ancho) del momento clave."""
+    if not shutil.which("ffmpeg"):
+        return None
+    try:
+        r = subprocess.run(["ffmpeg", "-v", "error", "-ss", f"{max(at, 0):.2f}", "-i", str(mp4),
+                            "-frames:v", "1", "-vf", "scale=360:-2", "-f", "image2", "-c:v", "mjpeg", "-"],
+                           capture_output=True, timeout=60)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return base64.b64encode(r.stdout).decode() if r.returncode == 0 and r.stdout else None
+
+
+def build_content(clips: list[dict], trends: dict | None) -> list[dict]:
+    content: list[dict] = [{"type": "text", "text": (
+        "Judge these candidate clips. Each one has an id, the streamer, the campaign language, "
+        "the transcript of what the streamer says, automatic stats and one frame from the key moment."
+        + (f"\nWhat is trending right now in GTA 6 Shorts: {json.dumps(trends, ensure_ascii=False)[:1500]}"
+           if trends else ""))}]
+    for i, c in enumerate(clips):
+        info = {"id": i, "streamer": c.get("credit", ""),
+                "idioma_campana": (c.get("camp") or {}).get("idioma", "es"),
+                "duracion_s": round(float(c.get("end", 0)) - float(c.get("start", 0)), 1) or None,
+                "segundo_pico": round(float(c.get("peak", 0)) - float(c.get("start", 0)), 1),
+                "intensidad_audio": c.get("score"), "reacciones": c.get("reactions"),
+                "transcripcion": (c.get("transcript") or "")[:1200] or "(sin voz)"}
+        content.append({"type": "text", "text": json.dumps(info, ensure_ascii=False)})
+        img = frame_b64(Path(c["mp4"]), float(info["segundo_pico"])) if c.get("mp4") else None
+        if img:
+            content.append({"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": img}})
+    return content
+
+
+def ask_claude(content: list[dict], client=None) -> list[dict]:
+    import anthropic
+    client = client or anthropic.Anthropic()
+    resp = client.beta.messages.create(
+        model=MODEL,
+        max_tokens=16000,
+        betas=["server-side-fallback-2026-07-01"],
+        fallbacks="default",
+        system=SYSTEM,
+        output_config={"effort": "medium", "format": {"type": "json_schema", "schema": SCHEMA}},
+        messages=[{"role": "user", "content": content}],
+    )
+    if resp.stop_reason in ("refusal", "max_tokens"):
+        print(f"Departamento viral: respuesta no válida ({resp.stop_reason}); se usa la puntuación automática.")
+        return []
+    text = next((b.text for b in resp.content if b.type == "text"), "")
+    return json.loads(text).get("clips", [])
+
+
+def judge(clips: list[dict], trends: dict | None = None, client=None) -> bool:
+    """Añade la opinión de la IA a los mejores candidatos y reordena la lista en sitio.
+    Devuelve True si la IA ha opinado."""
+    if not clips or not (client or os.environ.get("ANTHROPIC_API_KEY")):
+        return False
+    cands = clips[:MAX_CANDIDATOS]
+    try:
+        verdicts = ask_claude(build_content(cands, trends), client)
+    except Exception as e:  # nunca romper la publicación por la IA
+        print(f"Departamento viral no disponible ({type(e).__name__}: {e}); se usa la puntuación automática.")
+        return False
+    import clipper
+    top_rank = max((float(c.get("rank", 0)) for c in cands), default=0) or 1.0
+    for v in verdicts:
+        i = v.get("id")
+        if not isinstance(i, int) or not 0 <= i < len(cands):
+            continue
+        c = cands[i]
+        score = max(0, min(100, int(v.get("puntuacion", 0))))
+        c["ia_score"] = score
+        c["ia_motivo"] = str(v.get("motivo", ""))[:200]
+        c["ia_descartar"] = bool(v.get("descartar")) or bool(v.get("spoiler"))
+        c["ia_sin_contexto"] = bool(v.get("sin_contexto"))
+        for key in ("titulo_en", "titulo_es"):
+            t = str(v.get(key, "")).strip()[:70]
+            c[f"ia_{key}"] = "" if not t or clipper.has_slur(t) else clipper.censor(t)
+        # nota final: 75 % la IA, 25 % la señal automática (audio + reacciones)
+        c["ia_rank"] = round(0.75 * score + 25 * float(c.get("rank", 0)) / top_rank, 1)
+    judged = [c for c in cands if "ia_score" in c]
+    if not judged:
+        return False
+    for c in cands:
+        if "ia_score" not in c:
+            c["ia_rank"] = round(25 * float(c.get("rank", 0)) / top_rank, 1)
+            c["ia_descartar"] = False
+    cands.sort(key=lambda c: -c["ia_rank"])
+    # descartados al final de toda la lista: nunca salen en la app si hay algo mejor
+    clips[:] = ([c for c in cands if not c["ia_descartar"]] + clips[len(cands):]
+                + [c for c in cands if c["ia_descartar"]])
+    print(f"🧠 Departamento viral: {len(judged)} clips valorados, "
+          f"{sum(c['ia_descartar'] for c in judged)} descartados.")
+    return True

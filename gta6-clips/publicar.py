@@ -28,6 +28,7 @@ sys.path.insert(0, str(HERE.parent / "gta6-pagina"))
 import pagina  # noqa: E402
 sys.path.insert(0, str(HERE))
 import clipper  # noqa: E402
+import viral_ia  # noqa: E402
 
 try:
     from zoneinfo import ZoneInfo
@@ -59,7 +60,10 @@ def load_campaigns() -> dict[str, dict]:
 
 def captions_en(c: dict, credit: str, i: int) -> dict[str, str]:
     hook = c.get("hook") or ""
-    first = (hook.capitalize() + " 😂") if hook and "**" not in hook and len(hook) <= 60 else HOOKS_EN[i % len(HOOKS_EN)]
+    if c.get("ia_titulo_en"):
+        first = c["ia_titulo_en"]
+    else:
+        first = (hook.capitalize() + " 😂") if hook and "**" not in hook and len(hook) <= 60 else HOOKS_EN[i % len(HOOKS_EN)]
     who = credit.lstrip("@")
     body = f"{first}\n\n🎥 {credit} (Kick)\n\n{TAGS_EN} #{who}"
     return {"TikTok": body, "YouTube Shorts": body + " #Shorts"}
@@ -111,6 +115,7 @@ def collect(root: Path) -> list[dict]:
             speech = min(n_words / 40, 1.0)  # 40+ palabras en el clip = está reaccionando
             rank = float(c.get("score", 0)) * (1 + 0.5 * speech) + 1.5 * min(reactions, 4)
             clips.append({**c, "mp4": mp4, "credit": credit, "hook": hook, "words": n_words,
+                          "transcript": clipper.censor(words) if not clipper.has_slur(words) else "",
                           "reactions": reactions, "rank": round(rank, 2), "folder": folder.name})
     clips.sort(key=lambda x: x["rank"], reverse=True)
     return clips
@@ -132,6 +137,8 @@ def schedule(n: int, now: datetime, slots: list[str] | None = None) -> list[date
 
 
 def why(c: dict) -> str:
+    if "ia_score" in c:
+        return f"🧠 IA {c['ia_score']}/100 · {c.get('ia_motivo', '')}".strip(" ·")
     parts = [f"intensidad {float(c.get('score', 0)):.1f}"]
     if c["words"]:
         parts.append(f"habla {c['words']} palabras")
@@ -140,12 +147,16 @@ def why(c: dict) -> str:
     return ", ".join(parts)
 
 
-def build(clips: list[dict], out: Path, top: int, now: datetime) -> str:
+def es_title(c: dict) -> dict:
+    return {**c, "title": c["ia_titulo_es"]} if c.get("ia_titulo_es") else c
+
+
+def build(clips: list[dict], out: Path, top: int, now: datetime, ia: bool = False) -> str:
     out.mkdir(parents=True, exist_ok=True)
     best = clips[:top]
     camps = load_campaigns()
     for c in best:
-        c["camp"] = camps.get(c["credit"].lower(), {})
+        c.setdefault("camp", camps.get(c["credit"].lower(), {}))
     times: list = [None] * len(best)
     for lang, slots in (("es", SLOTS), ("en", SLOTS_EN)):
         idx = [k for k, c in enumerate(best) if (c["camp"].get("idioma") or "es") == lang]
@@ -166,7 +177,7 @@ def build(clips: list[dict], out: Path, top: int, now: datetime) -> str:
     md += ["", "---", "## ✍️ Textos para copiar (mantén pulsado el recuadro → Copiar)"]
     for i, c in enumerate(best, 1):
         caps = (captions_en(c, c["credit"], i) if (c.get("camp", {}).get("idioma") or "es") == "en"
-                else pagina.captions(c, c["credit"]))
+                else pagina.captions(es_title(c), c["credit"]))
         md += ["", f"### {i}. `{c['asset']}` · {dias[c['when'].weekday()]} {c['when']:%H:%M}"]
         if c["hook"] and "**" not in c["hook"]:
             md.append(f"💬 Lo que dice en el momento clave: **“{c['hook']}”**. Úsalo como título si encaja.")
@@ -174,15 +185,16 @@ def build(clips: list[dict], out: Path, top: int, now: datetime) -> str:
         if c.get("notes"):
             md.append(f"> ⚠️ {'; '.join(c['notes'])}")
     md += ["", f"_{len(clips)} clips analizados · se muestran los {len(best)} mejores. "
-           "Puntuación automática: intensidad del momento + si el streamer habla o reacciona. "
-           "No es una garantía de viralidad._"]
+           + ("Ordenados por el 🧠 departamento viral (IA) + intensidad del momento. " if ia else
+              "Puntuación automática: intensidad del momento + si el streamer habla o reacciona. ")
+           + "No es una garantía de viralidad._"]
     text = "\n".join(md)
     (out / "notas.md").write_text(text, encoding="utf-8")
     # datos para la app web (una tarjeta por clip)
     app = []
     for i, c in enumerate(best, 1):
         en = (c["camp"].get("idioma") or "es") == "en"
-        caps = captions_en(c, c["credit"], i) if en else pagina.captions(c, c["credit"])
+        caps = captions_en(c, c["credit"], i) if en else pagina.captions(es_title(c), c["credit"])
         hook = c["hook"] if c["hook"] and "**" not in c["hook"] else ""
         w = c["when"].astimezone(MADRID)
         app.append({"rank": i, "archivo": c["asset"], "cuando": c["when"].isoformat(),
@@ -191,8 +203,10 @@ def build(clips: list[dict], out: Path, top: int, now: datetime) -> str:
                     "porque": why(c), "gancho": hook, "creador": c["credit"],
                     "campana_nombre": c["camp"].get("nombre", ""), "campana_url": c["camp"].get("url", ""),
                     "tiktok": caps["TikTok"], "shorts": caps["YouTube Shorts"],
-                    "avisos": c.get("notes", [])})
-    (out / "clips.json").write_text(json.dumps({"generado": now.isoformat(), "clips": app,
+                    "avisos": c.get("notes", []),
+                    "ia_puntuacion": c.get("ia_score"), "ia_motivo": c.get("ia_motivo", ""),
+                    "ia_sin_contexto": c.get("ia_sin_contexto")})
+    (out / "clips.json").write_text(json.dumps({"generado": now.isoformat(), "clips": app, "ia": ia,
                                                  "analizados": len(clips)}, ensure_ascii=False, indent=1),
                                      encoding="utf-8")
     (out / "calendario.ics").write_text(ics(app, now), encoding="utf-8")
@@ -235,12 +249,23 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("carpeta")
     ap.add_argument("--salida", default="publicar")
     ap.add_argument("--top", type=int, default=15)
+    ap.add_argument("--tendencias", default="", help="radar/tendencias.json (opcional, para la IA)")
     args = ap.parse_args(argv)
     clips = collect(Path(args.carpeta))
     if not clips:
         print("No hay clips que publicar.")
         return 0
-    build(clips, Path(args.salida), args.top, datetime.now(MADRID))
+    camps = load_campaigns()
+    for c in clips:
+        c["camp"] = camps.get(c["credit"].lower(), {})
+    trends = None
+    if args.tendencias and Path(args.tendencias).exists():
+        try:
+            trends = json.loads(Path(args.tendencias).read_text(encoding="utf-8"))
+        except ValueError:
+            trends = None
+    ia = viral_ia.judge(clips, trends)
+    build(clips, Path(args.salida), args.top, datetime.now(MADRID), ia)
     print(f"✔ {min(len(clips), args.top)} de {len(clips)} clips listos en {args.salida}/")
     return 0
 

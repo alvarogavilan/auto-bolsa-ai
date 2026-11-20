@@ -44,12 +44,24 @@ jobs:
           path: todos
           run-id: ${{ env.RUN_ID }}
           github-token: ${{ github.token }}
-      - name: Ordenar y preparar la página
+      - name: Traer el radar de tendencias
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: radar-viral
+          path: radar
+          run-id: ${{ env.RUN_ID }}
+          github-token: ${{ github.token }}
+      - name: Ordenar y preparar la página (con el departamento viral si hay clave)
         id: prep
+        env:
+          # Departamento viral (IA): se activa solo al crear el secreto ANTHROPIC_API_KEY
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
           pip install -q numpy
+          if [ -n "$ANTHROPIC_API_KEY" ]; then pip install -q anthropic || true; fi
           mkdir -p todos
-          python gta6-clips/publicar.py todos --salida salida --top 15
+          python gta6-clips/publicar.py todos --salida salida --top 15 --tendencias radar/tendencias.json
           if ls salida/*.mp4 >/dev/null 2>&1; then echo "hay=si" >> "$GITHUB_OUTPUT"; else echo "hay=no" >> "$GITHUB_OUTPUT"; fi
       - name: Publicar «Clips listos»
         if: steps.prep.outputs.hay == 'si'
