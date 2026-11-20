@@ -26,7 +26,7 @@ from pathlib import Path
 MODEL = os.environ.get("VIRAL_IA_MODELO", "claude-opus-5-5")
 MAX_CANDIDATOS = int(os.environ.get("VIRAL_IA_MAX", "20"))  # limita el gasto por tanda
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434")
-LOCAL_DEADLINE_S = 15 * 60  # el modelo gratis va en CPU: tope de tiempo por tanda
+LOCAL_DEADLINE_S = int(os.environ.get("VIRAL_IA_TIEMPO", str(25 * 60)))  # el modelo gratis va en CPU: tope de tiempo por tanda
 
 SYSTEM = """You are the head of a short-form video team that clips GTA 6 livestreams for paid
 clipping campaigns (TikTok and YouTube Shorts, paid per 1,000 views). You judge which clips

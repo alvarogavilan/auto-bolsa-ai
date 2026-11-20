@@ -30,7 +30,7 @@ on:
         default: "2.2"
   # Seguimiento automático: cada 2 horas busca directos nuevos de GTA 6 de tus campañas
   schedule:
-    - cron: "23 */3 * * *"   # cada 3 h: ahorra minutos gratis cuando no hay vídeos nuevos
+    - cron: "23 * * * *"   # cada hora (repositorio público: minutos ilimitados y gratis)
 
 permissions:
   contents: read

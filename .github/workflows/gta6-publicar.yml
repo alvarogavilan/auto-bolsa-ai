@@ -31,6 +31,7 @@ jobs:
       # App pública (GitHub Pages): se activa al crear el secreto PUBLIC_CLIPS_TOKEN
       PUB_TOKEN: ${{ secrets.PUBLIC_CLIPS_TOKEN }}
       PUB_REPO: ${{ vars.PUBLIC_CLIPS_REPO || 'alvarogavilan/aldiagta6-clips' }}
+      VIRAL_IA_MAX: "15"   # el modelo 7B es más lento: los 15 mejores candidatos
     # Departamento viral GRATIS: modelo abierto (Qwen 2.5) con la imagen oficial de Ollama
     services:
       ollama:
@@ -60,11 +61,11 @@ jobs:
           github-token: ${{ github.token }}
       - name: Preparar el departamento viral gratis
         continue-on-error: true
-        timeout-minutes: 8
+        timeout-minutes: 12
         run: |
           if ! find todos -name clips.json 2>/dev/null | grep -q .; then echo "Sin clips"; exit 0; fi
-          curl -sf --max-time 470 http://127.0.0.1:11434/api/pull -d '{"name":"qwen2.5:3b","stream":false}' \
-            && echo "VIRAL_IA_LOCAL=qwen2.5:3b" >> "$GITHUB_ENV" \
+          curl -sf --max-time 700 http://127.0.0.1:11434/api/pull -d '{"name":"qwen2.5:7b","stream":false}' \
+            && echo "VIRAL_IA_LOCAL=qwen2.5:7b" >> "$GITHUB_ENV" \
             || echo "::warning::No se pudo cargar el modelo gratis; se usa la puntuación automática"
       - name: Ordenar y preparar la página (con el departamento viral)
         id: prep
