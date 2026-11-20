@@ -78,3 +78,17 @@ class ClipperTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SmartEndTest(unittest.TestCase):
+    def test_cuts_when_reaction_ends_but_never_too_short(self):
+        import numpy as np
+        hop = clipper.HOP
+        score = np.full(int(120 / hop), -1.0)
+        score[int(10 / hop):int(22 / hop)] = 2.0  # pico y reacción de 10 s a 22 s
+        end = clipper.smart_end(score, start=7, peak=10, length=30, duration=120)
+        self.assertTrue(22 <= end <= 24, end)  # corta tras la reacción, no a los 37 s
+        flat = np.full(int(120 / hop), -1.0)
+        self.assertEqual(clipper.smart_end(flat, 7, 10, 30, 120), 7 + clipper.MIN_LEN)
+        busy = np.full(int(120 / hop), 1.0)
+        self.assertEqual(clipper.smart_end(busy, 7, 10, 30, 120), 37)
