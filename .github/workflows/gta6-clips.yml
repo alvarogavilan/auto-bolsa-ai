@@ -24,6 +24,10 @@ on:
         description: "@ que aparece en el vídeo (tu canal o el del streamer)"
         required: false
         default: ""
+      horas:
+        description: "Solo sin enlaces: buscar directos de campañas terminados en las últimas N horas"
+        required: false
+        default: "2.2"
   # Seguimiento automático: cada 2 horas busca directos nuevos de GTA 6 de tus campañas
   schedule:
     - cron: "23 */2 * * *"
@@ -59,7 +63,8 @@ jobs:
           YT_API_KEY: ${{ secrets.YT_API_KEY }}
           TWITCH_CLIENT_ID: ${{ secrets.TWITCH_CLIENT_ID }}
           TWITCH_CLIENT_SECRET: ${{ secrets.TWITCH_CLIENT_SECRET }}
-        run: python radar_viral.py --campanas campanas.seguimiento.json --salida radar || true
+          HORAS: ${{ inputs.horas }}
+        run: python radar_viral.py --campanas campanas.seguimiento.json --horas-vods "${HORAS:-2.2}" --salida radar || true
       - name: Guardar radar
         uses: actions/upload-artifact@v4
         with:
@@ -75,6 +80,7 @@ jobs:
           CLIPS: ${{ inputs.clips || '6' }}
           DURACION: ${{ inputs.duracion || '30' }}
           HANDLE: ${{ inputs.handle }}
+          HORAS: ${{ inputs.horas }}
         run: |
           if [ -n "$ENLACES" ]; then
             trabajos=$(python - <<'EOF'
@@ -89,7 +95,7 @@ jobs:
             trabajos=$(cat radar/objetivos.json)   # objetivos elegidos por el radar (Twitch API)
           else
             pip install -q numpy yt-dlp
-            trabajos=$(python boton.py --seguimiento campanas.seguimiento.json --horas 2.2 --listar-json || echo "[]")
+            trabajos=$(python boton.py --seguimiento campanas.seguimiento.json --horas "${HORAS:-2.2}" --listar-json || echo "[]")
           fi
           [ -z "$trabajos" ] && trabajos="[]"
           echo "trabajos=$trabajos" >> "$GITHUB_OUTPUT"
@@ -105,7 +111,7 @@ jobs:
     needs: repartir
     if: needs.repartir.outputs.hay == 'si'
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 150
     strategy:
       fail-fast: false
       max-parallel: 20

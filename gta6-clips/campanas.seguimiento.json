@@ -1,0 +1,19 @@
+{
+  "handle": "@gta6aldia",
+  "campanas": [
+    {
+      "nombre": "Dasgasd3m x RUCKUS | GTA 6",
+      "permiso": "https://contentrewards.com/c/campaigns/051002dd-5c46-43d0-a446-43f2957ba3a9",
+      "notas": "TikTok y YouTube Shorts · 2 $ por 1.000 vistas · mínimo 10 $ y máximo 150 $ por vídeo · entregas hasta el 19-dic-2026 23:59 PST · solo directos de GTA 6 desde el 18-nov, y VOD solo cuando acabe el directo · mantener su cara o su voz · sin spoilers en el gancho · cada post a una sola campaña · dudas: discord.gg/ruckus",
+      "fuentes": ["https://kick.com/dasgasd3m/videos"],
+      "filtro": "",
+      "max_videos": 2,
+      "clips_por_video": 10,
+      "duracion": 35,
+      "mencion": "@dasgasd3m",
+      "hashtags_obligatorios": [],
+      "contexto": "",
+      "subtitulos": false
+    }
+  ]
+}
