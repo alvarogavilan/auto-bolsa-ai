@@ -26,6 +26,8 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "gta6-pagina"))
 import pagina  # noqa: E402
+sys.path.insert(0, str(HERE))
+import clipper  # noqa: E402
 
 MADRID = timezone(timedelta(hours=1))
 SLOTS = ["13:00", "16:00", "19:00", "21:30"]
@@ -69,7 +71,9 @@ def collect(root: Path) -> list[dict]:
             reactions = len(REACTION.findall(words))
             peak_rel = float(c.get("peak", 0)) - float(c.get("start", 0))
             near = [t for a, b, t in srt if a - 3 <= peak_rel <= b + 4]
-            hook = " ".join(near)[:60].strip()
+            raw_hook = " ".join(near)
+            # nunca proponer como título una frase con insultos; palabrotas censuradas
+            hook = "" if clipper.has_slur(raw_hook) else clipper.censor(raw_hook)[:60].strip()
             m = re.search(r"Clip de (@\S+)", c.get("description", ""))
             credit = m.group(1) if m else ""
             speech = min(n_words / 40, 1.0)  # 40+ palabras en el clip = está reaccionando

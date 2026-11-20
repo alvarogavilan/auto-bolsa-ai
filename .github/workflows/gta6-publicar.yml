@@ -12,6 +12,10 @@ on:
       run_id:
         description: "ID de la ejecución de 'Recortar clips GTA 6' a publicar"
         required: true
+      borrar_tag:
+        description: "Opcional: etiqueta de una página antigua a borrar (p.ej. clips-123)"
+        required: false
+        default: ""
 
 permissions:
   contents: write
@@ -50,6 +54,11 @@ jobs:
           gh release create "clips-${RUN_ID}" salida/*.mp4 \
             --title "🎬 Clips listos · ${fecha}" --notes-file salida/notas.md --latest
           cat salida/notas.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Borrar la página indicada
+        if: inputs.borrar_tag != ''
+        env:
+          TAG: ${{ inputs.borrar_tag }}
+        run: gh release delete "$TAG" --yes --cleanup-tag || true
       - name: Borrar páginas antiguas (deja las 8 últimas)
         if: steps.prep.outputs.hay == 'si'
         run: |
