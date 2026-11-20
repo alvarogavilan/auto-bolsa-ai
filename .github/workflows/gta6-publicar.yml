@@ -44,6 +44,7 @@ jobs:
       - name: Ordenar y preparar la página
         id: prep
         run: |
+          pip install -q numpy
           mkdir -p todos
           python gta6-clips/publicar.py todos --salida salida --top 15
           if ls salida/*.mp4 >/dev/null 2>&1; then echo "hay=si" >> "$GITHUB_OUTPUT"; else echo "hay=no" >> "$GITHUB_OUTPUT"; fi
