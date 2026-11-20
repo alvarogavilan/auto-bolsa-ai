@@ -34,6 +34,7 @@ header{display:flex;flex-direction:column;gap:6px}
 .now .tag{align-self:flex-start;background:var(--sunset);color:#fff;font-weight:700;font-size:.8rem;letter-spacing:.06em;text-transform:uppercase;padding:4px 10px;border-radius:99px}
 .when{font-family:var(--display);font-size:1.25rem;font-weight:700}
 .why{color:var(--muted);font-size:.88rem}
+.ia{font-weight:700;font-size:.95rem;margin:.2rem 0}
 .camp{font-weight:700;font-size:.92rem;color:var(--palm);background:var(--palm-soft);border-radius:10px;padding:8px 12px}
 .prog{font-family:var(--display);font-weight:700;font-size:1.02rem}
 .hook{background:var(--sunset-soft);border-radius:10px;padding:8px 12px;font-size:.92rem}
@@ -193,7 +194,13 @@ footer{display:flex;flex-direction:column;gap:8px;border-top:1px solid var(--lin
     var frag = document.createDocumentFragment();
     if (c.campana_nombre) frag.appendChild(el("div", {"class":"camp"}, "🎯 Campaña: " + c.campana_nombre + " · envíalo SOLO a esta"));
     frag.appendChild(el("div", {"class":"prog"}, "⏰ Programar para: " + c.cuando_txt + (c.hora_ny ? "  (" + c.hora_ny + " en Nueva York)" : "")));
-    frag.appendChild(el("div", {"class":"why"}, "Por qué: " + c.porque));
+    if (c.ia_puntuacion != null) {
+      var lvl = c.ia_puntuacion >= 80 ? "🔥 Muy viral" : c.ia_puntuacion >= 60 ? "👍 Bueno" : "😐 Normal";
+      frag.appendChild(el("div", {"class":"ia"}, "🧠 Departamento viral: " + c.ia_puntuacion + "/100 · " + lvl));
+      if (c.ia_motivo) frag.appendChild(el("div", {"class":"why"}, c.ia_motivo));
+    } else {
+      frag.appendChild(el("div", {"class":"why"}, "Por qué: " + c.porque));
+    }
     if (c.gancho) frag.appendChild(el("div", {"class":"hook"}, "💬 Título sugerido (lo que dice): “" + c.gancho + "”"));
     (c.avisos || []).forEach(function(a){ frag.appendChild(el("div", {"class":"warn"}, "⚠️ " + a)); });
     if (big) {
