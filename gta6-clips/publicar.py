@@ -127,7 +127,7 @@ def build(clips: list[dict], out: Path, top: int, now: datetime) -> str:
     for i, c in enumerate(best, 1):
         caps = pagina.captions(c, c["credit"])
         md += ["", f"### {i}. `{c['asset']}` · {dias[c['when'].weekday()]} {c['when']:%H:%M}"]
-        if c["hook"]:
+        if c["hook"] and "**" not in c["hook"]:
             md.append(f"💬 Lo que dice en el momento clave: **“{c['hook']}”**. Úsalo como título si encaja.")
         md += ["**TikTok**", "```", caps["TikTok"], "```", "**YouTube Shorts**", "```", caps["YouTube Shorts"], "```"]
         if c.get("notes"):
@@ -137,6 +137,19 @@ def build(clips: list[dict], out: Path, top: int, now: datetime) -> str:
            "No es una garantía de viralidad._"]
     text = "\n".join(md)
     (out / "notas.md").write_text(text, encoding="utf-8")
+    # datos para la app web (una tarjeta por clip)
+    app = []
+    for i, c in enumerate(best, 1):
+        caps = pagina.captions(c, c["credit"])
+        hook = c["hook"] if c["hook"] and "**" not in c["hook"] else ""
+        app.append({"rank": i, "archivo": c["asset"], "cuando": c["when"].isoformat(),
+                    "cuando_txt": f"{dias[c['when'].weekday()]} {c['when']:%d/%m %H:%M}",
+                    "porque": why(c), "gancho": hook, "creador": c["credit"],
+                    "tiktok": caps["TikTok"], "shorts": caps["YouTube Shorts"],
+                    "avisos": c.get("notes", [])})
+    (out / "clips.json").write_text(json.dumps({"generado": now.isoformat(), "clips": app,
+                                                 "analizados": len(clips)}, ensure_ascii=False, indent=1),
+                                     encoding="utf-8")
     return text
 
 
