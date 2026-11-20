@@ -91,3 +91,30 @@ class ExpandTest(unittest.TestCase):
         import boton
         self.assertEqual(boton.expand_jobs([{"url": "u", "tramo": "", "dur": 1200}])[0]["tramo"], "")
         self.assertEqual(boton.expand_jobs([{"url": "u", "tramo": "1:00:00-1:10:00"}])[0]["tramo"], "1:00:00-1:10:00")
+
+
+class PublicarTest(unittest.TestCase):
+    def test_ranks_reacting_clip_first_and_builds_page(self):
+        import publicar
+        with tempfile.TemporaryDirectory() as d:
+            folder = Path(d, "clips-gta6-0", "dom")
+            folder.mkdir(parents=True)
+            clips = []
+            for i, score in ((1, 9.0), (2, 8.0)):
+                Path(folder, f"clip_{i:02d}.mp4").write_bytes(b"x")
+                clips.append({"file": f"clips/dom/clip_{i:02d}.mp4", "title": "GTA 6", "score": score,
+                              "start": 0, "peak": 9, "hashtags": "#GTA6 #Shorts",
+                              "description": "GTA 6\n\n🎥 Clip de @dasgasd3m\n", "notes": []})
+            Path(folder, "clips.json").write_text(json.dumps(clips), encoding="utf-8")
+            Path(folder, "clip_02.srt").write_text(
+                "1\n00:00:08,000 --> 00:00:10,000\nNO WAY BRO WHAT\n\n", encoding="utf-8")
+            out = Path(d, "out")
+            ranked = publicar.collect(Path(d))
+            self.assertEqual(Path(ranked[0]["mp4"]).name, "clip_02.mp4")  # reacciona → primero
+            publicar.build(ranked, out, 5, datetime(2026, 11, 20, 10, 0, tzinfo=publicar.MADRID))
+            names = sorted(p.name for p in out.glob("*.mp4"))
+            self.assertTrue(names[0].startswith("01_dasgasd3m_"))
+            notes = (out / "notas.md").read_text(encoding="utf-8")
+            self.assertIn("NO WAY BRO WHAT", notes)
+            self.assertIn("🎥 @dasgasd3m", notes)
+            self.assertIn("vie 20/11 13:00", notes)
