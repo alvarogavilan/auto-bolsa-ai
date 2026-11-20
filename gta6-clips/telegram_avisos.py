@@ -1,15 +1,19 @@
-"""Órdenes por Telegram: a la hora de cada subida el bot te manda EL VÍDEO + el texto.
+"""Plan diario por Telegram: UNA sesión de ~15 min por la mañana y nada más en todo el día.
 
-Tú solo: abrir el mensaje → compartir el vídeo a TikTok → pegar el texto → publicar.
+A las 9:00 (hora de España) el bot manda:
+  1. «Pega aquí los enlaces de ayer»: se los pegas todos juntos, en cualquier orden. El bot
+     reconoce cada vídeo por su texto y te devuelve la lista lista para la campaña.
+  2. El plan del día: los mejores clips, cada uno con SU VÍDEO + texto + la hora a la que
+     PROGRAMARLO en TikTok y en YouTube Shorts. Se publican solos a esa hora.
+Si a las 9:00 aún no hay clips nuevos, el plan llega en cuanto los haya (nunca de 00:00 a 08:30).
 
-Se ejecuta cada 10 minutos (GitHub Actions). Lee la cola de la app pública (clips.json),
-y para cada clip cuya hora ya ha llegado (hasta 2 h tarde) y que aún no se ha enviado,
-manda el vídeo. El chat se detecta solo la primera vez que pulsas «Iniciar» en el bot.
-Necesita el secreto TELEGRAM_BOT_TOKEN (y opcionalmente TELEGRAM_CHAT_ID).
+Se ejecuta cada 10 minutos (GitHub Actions). Además mide las vistas reales cada 6 h, que la IA
+usa para aprender qué funciona en tu cuenta. Necesita el secreto TELEGRAM_BOT_TOKEN.
 """
 from __future__ import annotations
 
 import argparse
+import difflib
 import json
 import os
 import re
@@ -22,10 +26,13 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 MADRID = ZoneInfo("Europe/Madrid")
-
 APP = os.environ.get("APP_URL", "https://alvarogavilan.github.io/aldiagta6-clips/")
 API = "https://api.telegram.org/bot{token}/{method}"
-LATE = timedelta(hours=2)
+PLAN_AT = (9, 0)  # hora del plan diario (España)
+# horas de publicación por público (hora de España); deben coincidir con publicar.py
+SLOTS = {"es": ["13:00", "16:00", "19:00", "21:30"],
+         "en": ["18:00", "21:00", "00:30", "02:30"]}  # EE. UU.: 12:00, 15:00, 18:30, 20:30 NY
+LINK = re.compile(r"https?://(?:www\.|vm\.|vt\.|m\.)?(tiktok\.com|youtube\.com|youtu\.be)/\S+", re.I)
 
 
 def call(token: str, method: str, fields: dict, file: tuple[str, bytes] | None = None) -> dict:
@@ -60,94 +67,127 @@ def find_chat(token: str) -> str:
     return ""
 
 
+
+
 def is_quiet(local: datetime) -> bool:
     """De 00:00 a 08:30 (hora de España) no se manda nada."""
     return local.hour < 8 or (local.hour == 8 and local.minute < 30)
 
 
-def send_at(t: datetime) -> datetime:
-    """De madrugada en España no se despierta a nadie: la orden llega a las 22:30 de la
-    noche anterior para dejar el clip PROGRAMADO en TikTok/YouTube."""
-    local = t.astimezone(MADRID)
-    if is_quiet(local):
-        return (local - timedelta(days=1)).replace(hour=22, minute=30, second=0, microsecond=0)
-    return t
-
-
-def due(clips: list[dict], sent: set[str], now: datetime) -> list[dict]:
+def day_slots(lang: str, day, now: datetime) -> list[datetime]:
+    """Horas de un «día de plan» (de 9:00 a 9:00 del día siguiente) que aún no han pasado."""
     out = []
-    for c in sorted(clips, key=lambda c: c["cuando"]):
-        t = datetime.fromisoformat(c["cuando"])
-        key = f"{c['archivo']}@{c['cuando']}"
-        if send_at(t) <= now and t >= now - LATE and key not in sent:
-            out.append(c)
+    for s in SLOTS.get(lang, SLOTS["es"]):
+        h, m = map(int, s.split(":"))
+        d = day + timedelta(days=1) if (h, m) < PLAN_AT else day
+        t = datetime(d.year, d.month, d.day, h, m, tzinfo=MADRID)
+        if t > now + timedelta(minutes=30):
+            out.append(t)
     return out
 
 
-def order_text(c: dict) -> str:
-    camp = c.get("campana_nombre") or "la campaña"
-    t = datetime.fromisoformat(c["cuando"]).astimezone(MADRID)
-    send = "Responde a este chat con los 2 enlaces (TikTok y Shorts) y te paso el de la campaña."
-    if is_quiet(t):
-        return (f"🌙 PROGRAMA AHORA · clip #{c['rank']} para las {t:%H:%M}\n"
-                "1️⃣ Toca el vídeo → compartir → TikTok → pega el texto → «Más opciones» → "
-                f"Programar → {t:%H:%M} → Programar\n"
-                f"2️⃣ YouTube Shorts: igual, en «Visibilidad» → Programar → {t:%H:%M}\n"
-                f"3️⃣ {send}")
-    return (f"📲 SUBE AHORA · clip #{c['rank']}\n"
-            "1️⃣ Toca el vídeo → compartir → TikTok → pega el texto del mensaje siguiente → Publicar\n"
-            "2️⃣ Repite en YouTube Shorts (usa el texto de Shorts)\n"
-            f"3️⃣ {send}")
+def make_plan(clips: list[dict], planned: set[str], now: datetime) -> list[tuple[dict, datetime]]:
+    """Los mejores clips aún no planificados → las horas de hoy, por idioma de la campaña."""
+    local = now.astimezone(MADRID)
+    day = local.date() if (local.hour, local.minute) >= PLAN_AT else local.date() - timedelta(days=1)
+    plan = []
+    for lang in ("en", "es"):
+        cands = [c for c in sorted(clips, key=lambda c: c["rank"])
+                 if c["archivo"] not in planned and (("en" if c.get("hora_ny") else "es") == lang)]
+        plan += list(zip(cands, day_slots(lang, day, now)))
+    return sorted(plan, key=lambda p: p[1])
 
 
-LINK = re.compile(r"https?://(?:www\.|vm\.|vt\.|m\.)?(tiktok\.com|youtube\.com|youtu\.be)/\S+", re.I)
+def plan_text(c: dict, t: datetime, i: int, n: int) -> str:
+    ny = t.astimezone(ZoneInfo("America/New_York"))
+    when = f"{t:%H:%M}" + (" de esta madrugada" if t.hour < 9 else "") + (f" ({ny:%H:%M} NY)" if c.get("hora_ny") else "")
+    nota = f" · 🧠 {c['ia_puntuacion']}/100" if c.get("ia_puntuacion") is not None else ""
+    return (f"📅 {i}/{n} · PROGRAMA para las {when}{nota}\n"
+            f"TikTok: compartir el vídeo → TikTok → pega el 1.er texto → «Más opciones» → Programar → {t:%H:%M}\n"
+            f"Shorts: compartir → YouTube → pega el 2.º texto → Visibilidad → Programar → {t:%H:%M}")
 
 
-def read_links(token: str, chat: str, state: dict, tg=call) -> int:
-    """Lee lo que el usuario escribe al bot: enlaces de TikTok/Shorts → se apuntan al último
-    clip enviado y el bot responde con el enlace de la campaña para enviarlos."""
+def match_clip(link: str, pubs: dict, info: dict) -> str | None:
+    """Reconoce de qué clip es un enlace por el texto del vídeo (título/descripción)."""
+    text = " ".join(str(info.get(k, "")) for k in ("title", "description", "fulltitle")).lower()
+    best, score = None, 0.0
+    for key, p in pubs.items():
+        ref = (p.get("titulo") or "").lower()
+        if not ref:
+            continue
+        s = 1.0 if ref[:40] and ref[:40] in text else difflib.SequenceMatcher(None, ref, text[:len(ref) + 40]).ratio()
+        if s > score:
+            best, score = key, s
+    return best if score >= 0.5 else None
+
+
+def read_links(token: str, chat: str, state: dict, tg=None, probe=None) -> int:
+    """Enlaces que pegas al bot → se apuntan a su clip y te devuelve la lista para la campaña."""
+    tg = tg or call
     ups = tg(token, "getUpdates", {"offset": state.get("offset", 0) + 1, "limit": 100, "timeout": 0})
-    n = 0
-    for u in ups:
+    pubs = state.setdefault("publicados", {})
+    got = []
+    for u in ups or []:
         state["offset"] = max(state.get("offset", 0), u["update_id"])
         msg = u.get("message") or {}
         if str((msg.get("chat") or {}).get("id")) != chat:
             continue
-        links = [m.group(0).rstrip(").,") for m in LINK.finditer(msg.get("text", ""))]
-        if not links:
-            continue
-        pubs = state.setdefault("publicados", {})
-        pend = [k for k, v in sorted(pubs.items(), key=lambda kv: kv[1].get("enviado", ""), reverse=True)]
-        if not pend:
-            continue
-        clip = pubs[pend[0]]
-        for l in links:
-            red = "tiktok" if "tiktok" in l.lower() else "shorts"
-            clip.setdefault("enlaces", {})[red] = l
-        camp = clip.get("campana_url") or ""
-        tg(token, "sendMessage", {"chat_id": chat, "text":
-           f"✅ Apuntado el clip #{clip.get('rank')} ({', '.join(clip['enlaces'])}).\n"
-           + (f"Último paso: abre la campaña → «Submit» → pega cada enlace:\n{camp}" if camp else "")})
-        n += 1
-    return n
+        got += [m.group(0).rstrip(").,") for m in LINK.finditer(msg.get("text", ""))]
+    if not got or not pubs:
+        return 0
+    probe = probe or _probe
+    waiting = [k for k, p in sorted(pubs.items(), key=lambda kv: kv[1].get("hora", "")) if len(p.get("enlaces", {})) < 2]
+    for link in got:
+        red = "tiktok" if "tiktok" in link.lower() else "shorts"
+        key = match_clip(link, pubs, probe(link))
+        if key is None:  # sin texto reconocible: al primer clip al que le falte esa red
+            key = next((k for k in waiting if red not in pubs[k].get("enlaces", {})), None)
+        if key:
+            pubs[key].setdefault("enlaces", {})[red] = link
+    camps: dict = {}
+    for p in pubs.values():
+        for l in p.get("enlaces", {}).values():
+            if not p.get("enviado_campana"):
+                camps.setdefault(p.get("campana_url", ""), []).append(l)
+    lines = ["✅ Apuntados. Último paso: abre la campaña → «Submit» → pega cada enlace:"]
+    for url, links in camps.items():
+        lines += ["", url or "(campaña)"] + [f"• {l}" for l in links]
+    for p in pubs.values():
+        if len(p.get("enlaces", {})) == 2:
+            p["enviado_campana"] = True
+    faltan = [str(p["rank"]) for p in pubs.values() if p.get("hora", "") < datetime.now(timezone.utc).isoformat()
+              and len(p.get("enlaces", {})) < 2]
+    if faltan:
+        lines.append(f"\nAún me faltan enlaces de los clips #{', #'.join(faltan)}.")
+    tg(token, "sendMessage", {"chat_id": chat, "text": "\n".join(lines), "disable_web_page_preview": "true"})
+    return len(got)
+
+
+def _probe(url: str) -> dict:
+    import shutil
+    import subprocess
+    if not shutil.which("yt-dlp"):
+        return {}
+    try:
+        out = subprocess.run(["yt-dlp", "--dump-json", "--skip-download", "--no-warnings", url],
+                             capture_output=True, text=True, timeout=90).stdout
+        return json.loads(out or "{}")
+    except Exception:
+        return {}
 
 
 def update_views(state: dict, now: datetime, run=None) -> int:
     """Cada 6 h mira las vistas reales de cada vídeo publicado (yt-dlp, sin claves)."""
     import shutil
-    import subprocess
     if now.timestamp() - state.get("vistas_at", 0) < 6 * 3600:
         return 0
-    if run is None:
-        if not shutil.which("yt-dlp"):
-            return 0
-        run = lambda url: subprocess.run(["yt-dlp", "--dump-json", "--skip-download", "--no-warnings", url],  # noqa: E731
-                                         capture_output=True, text=True, timeout=90).stdout
+    if run is None and not shutil.which("yt-dlp"):
+        return 0
     n = 0
     for clip in state.get("publicados", {}).values():
         for red, url in clip.get("enlaces", {}).items():
             try:
-                info = json.loads(run(url) or "{}")
+                info = json.loads(run(url)) if run else _probe(url)
             except Exception:
                 continue
             if info.get("view_count") is not None:
@@ -157,7 +197,9 @@ def update_views(state: dict, now: datetime, run=None) -> int:
     return n
 
 
-def main(argv: list[str] | None = None, tg=call, fetch=None, now: datetime | None = None) -> int:
+
+
+def main(argv: list[str] | None = None, tg=call, fetch=None, now: datetime | None = None, probe=None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--estado", default="estado/telegram.json")
     ap.add_argument("--prueba", action="store_true")
@@ -177,41 +219,53 @@ def main(argv: list[str] | None = None, tg=call, fetch=None, now: datetime | Non
         print("::error::Abre tu bot en Telegram y pulsa «Iniciar» (o escríbele cualquier cosa).")
         return 1
     state["chat"] = chat
-    sent = set(state.get("enviados", []))
     now = now or datetime.now(timezone.utc)
+    local = now.astimezone(MADRID)
     try:
         if args.prueba:
             tg(token, "sendMessage", {"chat_id": chat, "text":
-               "✅ ¡Conectado! A la hora de cada subida te mandaré aquí el vídeo y el texto. "
-               "Tú solo compártelo a TikTok y Shorts."})
+               "✅ ¡Conectado! Cada mañana a las 9:00 te mando aquí el plan del día completo."})
             print("Mensaje de prueba enviado.")
             return 0
-        data = json.loads(fetch(APP + "data/clips.json").decode())
-        base = APP + data.get("base", "videos/")
-        n = 0
-        for c in due(data.get("clips", []), sent, now):
-            video = fetch(base + urllib.parse.quote(c["archivo"]))
-            tg(token, "sendVideo", {"chat_id": chat, "caption": order_text(c)[:1024],
-                                    "supports_streaming": "true"}, (c["archivo"], video))
-            tg(token, "sendMessage", {"chat_id": chat, "text": c["tiktok"]})
-            if c.get("shorts") and c["shorts"] != c["tiktok"]:
-                tg(token, "sendMessage", {"chat_id": chat, "text": "Shorts:\n" + c["shorts"]})
-            sent.add(f"{c['archivo']}@{c['cuando']}")
-            state.setdefault("publicados", {})[c["archivo"]] = {
-                "rank": c["rank"], "enviado": now.isoformat(), "titulo": c["tiktok"].split("\n")[0],
-                "ia": c.get("ia_puntuacion"), "campana_url": c.get("campana_url", "")}
-            n += 1
-        print(f"📲 Telegram: {n} órdenes de subida enviadas.")
-        try:
-            print(f"🔗 Enlaces apuntados: {read_links(token, chat, state, tg)}")
-            print(f"👀 Vistas actualizadas: {update_views(state, now)}")
-        except Exception as e:
-            print(f"Enlaces/vistas: {type(e).__name__}: {e}")
+        print(f"🔗 Enlaces apuntados: {read_links(token, chat, state, tg, probe)}")
+        today = local.date().isoformat()
+        if (local.hour, local.minute) >= PLAN_AT and local.hour < 23 and state.get("plan_dia") != today:
+            data = json.loads(fetch(APP + "data/clips.json").decode())
+            base = APP + data.get("base", "videos/")
+            planned = set(state.get("planificados", []))
+            plan = make_plan(data.get("clips", []), planned, now)
+            if plan:
+                pubs = state.setdefault("publicados", {})
+                ayer = [str(p["rank"]) for p in pubs.values() if p.get("hora", "") < now.isoformat()
+                        and len(p.get("enlaces", {})) < 2]
+                intro = [f"☀️ Plan de hoy: {len(plan)} clips · unos {5 + 2 * len(plan)} min y listo hasta mañana."]
+                if ayer:
+                    intro.append("1️⃣ Pega aquí (en un solo mensaje) los enlaces de TikTok y Shorts de lo que se "
+                                 "publicó ayer: te devuelvo la lista para la campaña.")
+                intro.append(("2️⃣" if ayer else "1️⃣") + " Programa cada vídeo de abajo a su hora:")
+                intro += [f"   • {t:%H:%M} → clip #{c['rank']}" for c, t in plan]
+                tg(token, "sendMessage", {"chat_id": chat, "text": "\n".join(intro)})
+                for i, (c, t) in enumerate(plan, 1):
+                    video = fetch(base + urllib.parse.quote(c["archivo"]))
+                    tg(token, "sendVideo", {"chat_id": chat, "caption": plan_text(c, t, i, len(plan))[:1024],
+                                            "supports_streaming": "true"}, (c["archivo"], video))
+                    tg(token, "sendMessage", {"chat_id": chat, "text": c["tiktok"]})
+                    tg(token, "sendMessage", {"chat_id": chat, "text": c.get("shorts") or c["tiktok"]})
+                    planned.add(c["archivo"])
+                    pubs[c["archivo"]] = {"rank": c["rank"], "hora": t.isoformat(),
+                                          "titulo": c["tiktok"].split("\n")[0], "ia": c.get("ia_puntuacion"),
+                                          "campana_url": c.get("campana_url", "")}
+                tg(token, "sendMessage", {"chat_id": chat, "text":
+                   "✅ Cuando lo tengas todo programado, ya está: no te escribo más hasta mañana a las 9:00."})
+                state["plan_dia"] = today
+                state["planificados"] = sorted(planned)[-200:]
+                print(f"📅 Plan del día enviado: {len(plan)} clips.")
+            else:
+                print("Aún no hay clips nuevos para el plan de hoy.")
+        print(f"👀 Vistas actualizadas: {update_views(state, now)}")
     finally:
-        keep = [k for k in sent if datetime.fromisoformat(k.split("@", 1)[1]) > now - timedelta(days=4)]
-        state["enviados"] = sorted(keep)
         state["publicados"] = {k: v for k, v in state.get("publicados", {}).items()
-                               if v.get("enviado", "9") > (now - timedelta(days=14)).isoformat()}
+                               if v.get("hora", "9") > (now - timedelta(days=14)).isoformat()}
         st.parent.mkdir(parents=True, exist_ok=True)
         st.write_text(json.dumps(state), encoding="utf-8")
     return 0
