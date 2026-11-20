@@ -193,3 +193,28 @@ class ViralLocalTest(unittest.TestCase):
         self.assertEqual(len(sent), 2)
         self.assertEqual(sent[0]["model"], "qwen2.5:3b")
         self.assertNotIn("id", sent[0]["format"]["properties"])
+
+
+class AvisosTest(unittest.TestCase):
+    def test_push_once_per_slot_and_only_within_three_days(self):
+        import avisos
+        now = datetime.now(timezone.utc)
+        mk = lambda h, r: {"rank": r, "cuando": (now + timedelta(hours=h)).isoformat(), "cuando_txt": "vie 20/11 18:00",
+                           "hora_ny": "12:00", "campana_nombre": "Dom", "ia_puntuacion": 80}
+        with tempfile.TemporaryDirectory() as d:
+            cj = Path(d, "clips.json")
+            cj.write_text(json.dumps({"clips": [mk(2, 1), mk(5, 2), mk(100, 3), mk(-1, 4)]}))
+            st = Path(d, "avisos.json")
+            sent = []
+            fake = lambda topic, title, msg, delay=None, **kw: sent.append((title, delay))
+            with mock.patch.dict("os.environ", {"NTFY_TOPIC": "t"}):
+                avisos.main([str(cj), "--estado", str(st)], sender=fake)
+                self.assertEqual(len(sent), 3)  # tanda nueva + 2 horas próximas (no >70 h ni pasadas)
+                self.assertIsNone(sent[0][1])
+                sent.clear()
+                avisos.main([str(cj), "--estado", str(st)], sender=fake)
+                self.assertEqual(len(sent), 1)  # al republicar no repite recordatorios
+            with mock.patch.dict("os.environ", {}, clear=True):
+                sent.clear()
+                avisos.main([str(cj), "--estado", str(st)], sender=fake)
+                self.assertEqual(sent, [])
