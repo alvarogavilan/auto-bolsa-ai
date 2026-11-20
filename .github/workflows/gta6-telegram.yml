@@ -1,6 +1,7 @@
 name: Órdenes por Telegram
 
 # Cada 10 minutos: si ha llegado la hora de subir un clip, el bot te manda el vídeo y el texto.
+# También apunta los enlaces que le respondes y mide las vistas reales cada 6 h.
 on:
   schedule:
     - cron: "*/10 * * * *"
@@ -39,6 +40,7 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
           if [ -z "$TELEGRAM_BOT_TOKEN" ]; then echo "Telegram aún sin configurar"; exit 0; fi
+          pip install -q yt-dlp || true   # para medir las vistas reales de tus vídeos
           args="--estado gta6-clips/estado/telegram.json"
           if [ "${{ inputs.prueba }}" = "true" ]; then args="$args --prueba"; fi
           python gta6-clips/telegram_avisos.py $args

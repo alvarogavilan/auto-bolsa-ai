@@ -147,6 +147,18 @@ def why(c: dict) -> str:
     return ", ".join(parts)
 
 
+def load_results(path: Path) -> list[dict]:
+    """Vistas reales de nuestros vídeos (las mide el bot de Telegram): mejores y peores."""
+    try:
+        pubs = json.loads(path.read_text(encoding="utf-8")).get("publicados", {})
+    except (OSError, ValueError):
+        return []
+    rows = [{"titulo": v.get("titulo", "")[:60], "nota_ia": v.get("ia"), "vistas": sum(v["vistas"].values())}
+            for v in pubs.values() if v.get("vistas")]
+    rows.sort(key=lambda r: r["vistas"], reverse=True)
+    return rows[:5] + (rows[5:][-3:] if len(rows) > 5 else [])
+
+
 def es_title(c: dict) -> dict:
     return {**c, "title": c["ia_titulo_es"]} if c.get("ia_titulo_es") else c
 
@@ -250,6 +262,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--salida", default="publicar")
     ap.add_argument("--top", type=int, default=15)
     ap.add_argument("--tendencias", default="", help="radar/tendencias.json (opcional, para la IA)")
+    ap.add_argument("--rendimiento", default="", help="estado/telegram.json con las vistas reales (opcional)")
     args = ap.parse_args(argv)
     clips = collect(Path(args.carpeta))
     if not clips:
@@ -264,6 +277,9 @@ def main(argv: list[str] | None = None) -> int:
             trends = json.loads(Path(args.tendencias).read_text(encoding="utf-8"))
         except ValueError:
             trends = None
+    perf = load_results(Path(args.rendimiento)) if args.rendimiento else []
+    if perf:  # lo que de verdad ha funcionado en NUESTRA cuenta va primero
+        trends = {"nuestros_resultados_vistas": perf, **(trends or {})}
     ia = viral_ia.judge(clips, trends)
     build(clips, Path(args.salida), args.top, datetime.now(MADRID), ia)
     print(f"✔ {min(len(clips), args.top)} de {len(clips)} clips listos en {args.salida}/")
