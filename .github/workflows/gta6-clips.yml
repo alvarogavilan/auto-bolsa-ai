@@ -142,7 +142,7 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq ffmpeg fonts-dejavu-core > /dev/null
-          pip install -q numpy yt-dlp
+          pip install -q numpy yt-dlp faster-whisper
       - name: Traer tendencias del radar
         uses: actions/download-artifact@v4
         continue-on-error: true
@@ -157,7 +157,7 @@ jobs:
           DURACION: ${{ matrix.trabajo.duracion }}
           HANDLE: ${{ matrix.trabajo.handle }}
           TAGS: ${{ matrix.trabajo.tags }}
-        run: python boton.py --url "$URL" --tramo "$TRAMO" -n "$CLIPS" --duracion "$DURACION" --handle "$HANDLE" --tags "$TAGS" --tendencias radar/tendencias.json --borrar-original
+        run: python boton.py --url "$URL" --tramo "$TRAMO" -n "$CLIPS" --duracion "$DURACION" --handle "$HANDLE" --tags "$TAGS" --tendencias radar/tendencias.json --subs --borrar-original
       - name: Textos por plataforma (TikTok, Shorts, Reels, X)
         if: always()
         env:
