@@ -18,6 +18,9 @@ import urllib.request
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
+
+MADRID = ZoneInfo("Europe/Madrid")
 
 APP = os.environ.get("APP_URL", "https://alvarogavilan.github.io/aldiagta6-clips/")
 API = "https://api.telegram.org/bot{token}/{method}"
@@ -56,25 +59,41 @@ def find_chat(token: str) -> str:
     return ""
 
 
+def send_at(t: datetime) -> datetime:
+    """De madrugada en España no se despierta a nadie: la orden llega a las 22:30 de la
+    noche anterior para dejar el clip PROGRAMADO en TikTok/YouTube."""
+    local = t.astimezone(MADRID)
+    if local.hour < 8:
+        return (local - timedelta(days=1)).replace(hour=22, minute=30, second=0, microsecond=0)
+    return t
+
+
 def due(clips: list[dict], sent: set[str], now: datetime) -> list[dict]:
     out = []
     for c in sorted(clips, key=lambda c: c["cuando"]):
         t = datetime.fromisoformat(c["cuando"])
         key = f"{c['archivo']}@{c['cuando']}"
-        if now - LATE <= t <= now and key not in sent:
+        if send_at(t) <= now and t >= now - LATE and key not in sent:
             out.append(c)
     return out
 
 
 def order_text(c: dict) -> str:
     camp = c.get("campana_nombre") or "la campaña"
+    t = datetime.fromisoformat(c["cuando"]).astimezone(MADRID)
+    if t.hour < 8:
+        return (f"🌙 PROGRAMA AHORA · clip #{c['rank']} para las {t:%H:%M}\n"
+                "1️⃣ Toca el vídeo → compartir → TikTok → pega el texto → «Más opciones» → "
+                f"Programar → {t:%H:%M} → Programar\n"
+                f"2️⃣ YouTube Shorts: igual, en «Visibilidad» → Programar → {t:%H:%M}\n"
+                f"3️⃣ Mañana abre la app → pega los 2 enlaces → «Enviar a esta campaña» ({camp})\n{APP}")
     return (f"📲 SUBE AHORA · clip #{c['rank']}\n"
             "1️⃣ Toca el vídeo → compartir → TikTok → pega el texto del mensaje siguiente → Publicar\n"
             "2️⃣ Repite en YouTube Shorts (usa el texto de Shorts)\n"
             f"3️⃣ Abre la app → pega los 2 enlaces → «Enviar a esta campaña» ({camp})\n{APP}")
 
 
-def main(argv: list[str] | None = None, tg=call, fetch=None) -> int:
+def main(argv: list[str] | None = None, tg=call, fetch=None, now: datetime | None = None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--estado", default="estado/telegram.json")
     ap.add_argument("--prueba", action="store_true")
@@ -95,7 +114,7 @@ def main(argv: list[str] | None = None, tg=call, fetch=None) -> int:
         return 1
     state["chat"] = chat
     sent = set(state.get("enviados", []))
-    now = datetime.now(timezone.utc)
+    now = now or datetime.now(timezone.utc)
     try:
         if args.prueba:
             tg(token, "sendMessage", {"chat_id": chat, "text":
