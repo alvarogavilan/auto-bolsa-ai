@@ -309,10 +309,15 @@ def transcribe_srt(src: Path, clip: Clip, srt_path: Path, model_size: str) -> bo
         print("  [subs] faster-whisper no instalado: pip install faster-whisper", file=sys.stderr)
         return False
     wav = srt_path.with_suffix(".wav")
-    run(["ffmpeg", "-v", "error", "-y", "-ss", str(clip.start), "-t", str(clip.end - clip.start),
-         "-i", str(src), "-vn", "-ac", "1", "-ar", "16000", str(wav)])
+    # audio decodificado con ffmpeg y pasado como array: evita depender de PyAV
+    raw = run(["ffmpeg", "-v", "error", "-ss", str(clip.start), "-t", str(clip.end - clip.start),
+               "-i", str(src), "-vn", "-ac", "1", "-ar", "16000", "-f", "s16le", "-"],
+              capture_output=True).stdout
+    audio = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
+    if audio.size == 0:
+        return False
     model = WhisperModel(model_size, device="auto", compute_type="int8")
-    segments, _ = model.transcribe(str(wav), word_timestamps=True, vad_filter=True)
+    segments, _ = model.transcribe(audio, word_timestamps=True, vad_filter=True)
 
     def ts(t: float) -> str:
         ms = int(round(t * 1000))
@@ -372,7 +377,12 @@ def render(src: Path, clip: Clip, out_dir: Path, args, font: str | None) -> None
         last = "v2"
     if args.subs:
         srt = out_dir / f"{name}.srt"
-        if transcribe_srt(src, clip, srt, args.whisper_model):
+        try:
+            has_subs = transcribe_srt(src, clip, srt, args.whisper_model)
+        except Exception as e:  # los subtítulos nunca deben tumbar el clip
+            print(f"  [subs] sin subtítulos para {name}: {e}", file=sys.stderr)
+            has_subs = False
+        if has_subs:
             style = ("FontName=Inter,FontSize=16,Bold=1,PrimaryColour=&H0000FFFF,"
                      "OutlineColour=&H00000000,BorderStyle=1,Outline=3,Alignment=2,MarginV=70")
             filters.append(f"[{last}]subtitles='{ff_escape(str(srt))}':force_style='{style}'[v3]")
