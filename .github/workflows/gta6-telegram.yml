@@ -1,0 +1,44 @@
+name: Órdenes por Telegram
+
+# Cada 10 minutos: si ha llegado la hora de subir un clip, el bot te manda el vídeo y el texto.
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+    inputs:
+      prueba:
+        description: "Mandar un mensaje de prueba"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gta6-telegram
+  cancel-in-progress: false
+
+jobs:
+  ordenes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Recordar chat y clips ya enviados
+        uses: actions/cache@v4
+        with:
+          path: gta6-clips/estado
+          key: gta6-telegram-${{ github.run_id }}
+          restore-keys: gta6-telegram-
+      - name: Enviar órdenes
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          if [ -z "$TELEGRAM_BOT_TOKEN" ]; then echo "Telegram aún sin configurar"; exit 0; fi
+          args="--estado gta6-clips/estado/telegram.json"
+          if [ "${{ inputs.prueba }}" = "true" ]; then args="$args --prueba"; fi
+          python gta6-clips/telegram_avisos.py $args
