@@ -3,7 +3,6 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="Clips GTA 6">
 <meta name="theme-color" content="#14111c">
 <title>Clips GTA 6 Al Día</title>
@@ -111,12 +110,59 @@ footer{display:flex;flex-direction:column;gap:8px;border-top:1px solid var(--lin
     return b;
   }
 
+  // Vídeo listo para el menú de compartir del iPhone (Guardar vídeo / TikTok / YouTube)
+  var ficheros = {};
+  function preparar(c, btn){
+    var k = idOf(c);
+    if (ficheros[k]) return ficheros[k];
+    ficheros[k] = fetch(url(c)).then(function(r){
+      if (!r.ok) throw new Error(r.status);
+      var total = +r.headers.get("content-length") || 0, leido = 0, partes = [];
+      var lector = r.body && r.body.getReader ? r.body.getReader() : null;
+      if (!lector) return r.blob();
+      function paso(){
+        return lector.read().then(function(x){
+          if (x.done) return new Blob(partes, {type:"video/mp4"});
+          partes.push(x.value); leido += x.value.length;
+          if (btn && total) btn.textContent = "⏳ Preparando vídeo… " + Math.round(leido / total * 100) + "%";
+          return paso();
+        });
+      }
+      return paso();
+    }).then(function(blob){
+      var f = new File([blob], c.archivo, {type:"video/mp4"});
+      if (btn) btn.textContent = "📲 Guardar o enviar a TikTok";
+      return f;
+    }).catch(function(e){ delete ficheros[k]; if (btn) btn.textContent = "📲 Guardar o enviar a TikTok"; throw e; });
+    return ficheros[k];
+  }
+  function compartirBtn(c, auto){
+    var b = el("button", {type:"button", "class":"btn primary"}, "📲 Guardar o enviar a TikTok");
+    var listo = null;
+    function cargar(){ preparar(c, b).then(function(f){ listo = f; }, function(){}); }
+    if (auto) cargar();
+    b.addEventListener("click", function(){
+      var puede = navigator.canShare && listo && navigator.canShare({files:[listo]});
+      if (puede) {
+        navigator.share({files:[listo], title:c.archivo}).catch(function(){});
+      } else if (navigator.canShare && !listo) {
+        b.textContent = "⏳ Preparando vídeo…";
+        preparar(c, b).then(function(f){ listo = f; b.textContent = "✅ Listo: toca otra vez para guardar"; },
+                            function(){ window.open(url(c), "_blank"); });
+      } else {
+        window.open(url(c), "_blank");  // sin menú de compartir: abre el vídeo (Compartir → Guardar vídeo)
+      }
+    });
+    return b;
+  }
+
   function actions(c, big){
     var box = el("div", {"class":"btns"});
-    var dl = el("a", {"class":"btn primary", href:url(c), target:"_blank", rel:"noopener"}, "⬇️ Descargar vídeo");
-    box.appendChild(dl);
+    box.appendChild(compartirBtn(c, big));
     box.appendChild(copyBtn("📋 Texto TikTok", c.tiktok));
     box.appendChild(copyBtn("📋 Texto Shorts", c.shorts));
+    var ver = el("a", {"class":"btn", href:url(c), target:"_blank", rel:"noopener", style:"grid-column:1/-1"}, "▶️ Abrir el vídeo (plan B: Compartir → Guardar vídeo)");
+    box.appendChild(ver);
     var done = el("button", {type:"button", "class":"btn done"}, hechos[idOf(c)] ? "↩️ Marcar como pendiente" : "✅ Hecho: subido y enviado");
     done.addEventListener("click", function(){
       if (hechos[idOf(c)]) delete hechos[idOf(c)]; else hechos[idOf(c)] = Date.now();
@@ -133,7 +179,7 @@ footer{display:flex;flex-direction:column;gap:8px;border-top:1px solid var(--lin
     (c.avisos || []).forEach(function(a){ frag.appendChild(el("div", {"class":"warn"}, "⚠️ " + a)); });
     if (big) {
       var ol = el("ol", {"class":"steps"});
-      ["Descarga el vídeo → Compartir → Guardar vídeo.",
+      ["Toca «Guardar o enviar a TikTok» → elige TikTok (o «Guardar vídeo»).",
        "Súbelo a TikTok con el texto de TikTok y a YouTube Shorts con el de Shorts.",
        "Copia el enlace de cada publicación y pégalo en «Enviar clip» de la campaña.",
        "Pulsa «Hecho»."].forEach(function(t){ ol.appendChild(el("li", null, t)); });

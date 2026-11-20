@@ -79,40 +79,40 @@ jobs:
             PUB_REPO="$found"; export PUB_REPO
             echo "Usando $PUB_REPO"
           fi
-          TAG="clips-${RUN_ID}"
-          owner="${PUB_REPO%%/*}"; name="${PUB_REPO#*/}"
-          gh release create "$TAG" salida/*.mp4 --repo "$PUB_REPO" --title "Clips ${TAG}" \
-            --notes "Clips de GTA 6 Al Día" --latest \
-            || gh release upload "$TAG" salida/*.mp4 --repo "$PUB_REPO" --clobber
+          # Web completa (app + datos + vídeos) servida por GitHub Pages desde el mismo sitio:
+          # así el iPhone reproduce y comparte el vídeo sin descargas "adjuntas" que se cuelgan.
+          rm -rf site && mkdir -p site/data site/videos
+          cp gta6-app/index.html site/index.html
+          cp salida/*.mp4 site/videos/
+          touch site/.nojekyll
           python - <<'EOF'
           import json, os
           d = json.load(open("salida/clips.json", encoding="utf-8"))
-          repo, tag = os.environ["PUB_REPO"], "clips-" + os.environ["RUN_ID"]
-          d["tag"] = tag
-          d["base"] = f"https://github.com/{repo}/releases/download/{tag}/"
+          d["tag"] = "clips-" + os.environ["RUN_ID"]
+          d["base"] = "videos/"
           d["recortar"] = f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/actions/workflows/gta6-clips.yml"
           try:
               camps = json.load(open("gta6-clips/campanas.seguimiento.json", encoding="utf-8"))["campanas"]
               d["campana"] = next((c["permiso"] for c in camps if c.get("permiso")), "")
           except Exception:
               d["campana"] = ""
-          json.dump(d, open("app-clips.json", "w", encoding="utf-8"), ensure_ascii=False)
+          json.dump(d, open("site/data/clips.json", "w", encoding="utf-8"), ensure_ascii=False)
           EOF
-          put() {
-            sha=$(gh api "repos/$PUB_REPO/contents/$1" -q .sha 2>/dev/null || true)
-            args=(-X PUT "repos/$PUB_REPO/contents/$1" -f message="Actualizar $1" -f content="$(base64 -w0 "$2")")
-            [ -n "$sha" ] && args+=(-f sha="$sha")
-            gh api "${args[@]}" > /dev/null
-          }
-          put index.html gta6-app/index.html
-          put data/clips.json app-clips.json
+          # una sola versión (historial reemplazado): el repositorio no crece con cada tanda
+          cd site
+          git init -q -b main
+          git config user.name "gta6-bot"; git config user.email "gta6-bot@users.noreply.github.com"
+          git add -A && git commit -q -m "Clips ${RUN_ID}"
+          git push -q --force "https://x-access-token:${PUB_TOKEN}@github.com/${PUB_REPO}.git" main
+          cd ..
+          echo "Web publicada: $(ls site/videos | wc -l) vídeos"
           if ! gh api "repos/$PUB_REPO/pages" -q '"Pages: " + .status + " · " + .html_url' 2>/dev/null; then
             echo "Pages no estaba activo: lo activo"
             gh api -X POST "repos/$PUB_REPO/pages" -f "source[branch]=main" -f "source[path]=/" -q .html_url \
               || echo "::warning::No pude activar GitHub Pages con la llave. Actívalo en Settings → Pages → Deploy from a branch → main / (root)."
           fi
           gh release list --repo "$PUB_REPO" --limit 100 --json tagName,createdAt -q 'sort_by(.createdAt) | reverse | .[].tagName' \
-            | grep '^clips-' | tail -n +4 | xargs -r -I{} gh release delete {} --repo "$PUB_REPO" --yes --cleanup-tag || true
+            | grep '^clips-' | xargs -r -I{} gh release delete {} --repo "$PUB_REPO" --yes --cleanup-tag || true
           owner="${PUB_REPO%%/*}"; name="${PUB_REPO#*/}"
           echo "📱 App: https://${owner}.github.io/${name}/" >> "$GITHUB_STEP_SUMMARY"
       - name: Borrar la página indicada
