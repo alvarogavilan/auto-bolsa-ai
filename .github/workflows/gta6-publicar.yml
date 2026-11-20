@@ -84,6 +84,7 @@ jobs:
           rm -rf site && mkdir -p site/data site/videos
           cp gta6-app/index.html site/index.html
           cp salida/*.mp4 site/videos/
+          cp salida/calendario.ics site/calendario.ics
           touch site/.nojekyll
           python - <<'EOF'
           import json, os
