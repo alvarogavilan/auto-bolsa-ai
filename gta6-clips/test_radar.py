@@ -172,3 +172,24 @@ class ViralIATest(unittest.TestCase):
         self.assertFalse(viral_ia.judge(clips, client=client))
         self.assertEqual([c["credit"] for c in clips], ["@a", "@b", "@c"])
         self.assertNotIn("ia_score", clips[0])
+
+
+class ViralLocalTest(unittest.TestCase):
+    def test_free_local_model_scores_each_clip(self):
+        import viral_ia
+        sent = []
+
+        def post(payload, timeout):
+            sent.append(payload)
+            good = "flew" in payload["messages"][1]["content"]
+            return {"message": {"content": json.dumps({
+                "puntuacion": 90 if good else 30, "sin_contexto": good, "spoiler": False,
+                "descartar": not good, "motivo": "m", "titulo_en": "Car flew 💀", "titulo_es": "Vuela"})}}
+        clips = [{"credit": "@a", "rank": 20.0, "transcript": "menu"},
+                 {"credit": "@b", "rank": 10.0, "transcript": "the car flew"}]
+        with mock.patch.dict("os.environ", {"VIRAL_IA_LOCAL": "qwen2.5:3b"}, clear=True):
+            self.assertTrue(viral_ia.judge(clips, post=post))
+        self.assertEqual([c["credit"] for c in clips], ["@b", "@a"])
+        self.assertEqual(len(sent), 2)
+        self.assertEqual(sent[0]["model"], "qwen2.5:3b")
+        self.assertNotIn("id", sent[0]["format"]["properties"])
