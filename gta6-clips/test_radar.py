@@ -209,11 +209,11 @@ class AvisosTest(unittest.TestCase):
             fake = lambda topic, title, msg, delay=None, **kw: sent.append((title, delay))
             with mock.patch.dict("os.environ", {"NTFY_TOPIC": "t"}):
                 avisos.main([str(cj), "--estado", str(st)], sender=fake)
-                self.assertEqual(len(sent), 3)  # tanda nueva + 2 horas próximas (no >70 h ni pasadas)
-                self.assertIsNone(sent[0][1])
+                self.assertEqual(len(sent), 2)  # solo las 2 horas próximas (no >70 h ni pasadas)
+                self.assertTrue(sent[0][0].startswith("📲 Sube AHORA el clip #1"))
                 sent.clear()
                 avisos.main([str(cj), "--estado", str(st)], sender=fake)
-                self.assertEqual(len(sent), 1)  # al republicar no repite recordatorios
+                self.assertEqual(len(sent), 0)  # al republicar no repite avisos
             with mock.patch.dict("os.environ", {}, clear=True):
                 sent.clear()
                 avisos.main([str(cj), "--estado", str(st)], sender=fake)

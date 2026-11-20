@@ -8,7 +8,7 @@
 <title>Clips GTA 6 Al Día</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@600;700&display=swap">
 <style>
-/* Una columna de móvil: tarjeta grande "Siguiente clip a programar" y debajo la cola por orden */
+/* Una columna de móvil: tarjeta grande "📲 Siguiente clip: súbelo cuando te avise el móvil" y debajo la cola por orden */
 :root{
   --bg:#f5f3f8; --card:#ffffff; --ink:#1b1724; --muted:#6b6478; --line:#e3dfea;
   --sunset:#e8487d; --sunset-soft:#fde6ee; --palm:#12866f; --palm-soft:#dff3ee; --amber:#a86400;
@@ -193,7 +193,7 @@ footer{display:flex;flex-direction:column;gap:8px;border-top:1px solid var(--lin
   function detail(c, big){
     var frag = document.createDocumentFragment();
     if (c.campana_nombre) frag.appendChild(el("div", {"class":"camp"}, "🎯 Campaña: " + c.campana_nombre + " · envíalo SOLO a esta"));
-    frag.appendChild(el("div", {"class":"prog"}, "⏰ Programar para: " + c.cuando_txt + (c.hora_ny ? "  (" + c.hora_ny + " en Nueva York)" : "")));
+    frag.appendChild(el("div", {"class":"prog"}, "⏰ Súbelo a las: " + c.cuando_txt + (c.hora_ny ? "  (" + c.hora_ny + " en Nueva York)" : "")));
     if (c.ia_puntuacion != null) {
       var lvl = c.ia_puntuacion >= 80 ? "🔥 Muy viral" : c.ia_puntuacion >= 60 ? "👍 Bueno" : "😐 Normal";
       frag.appendChild(el("div", {"class":"ia"}, "🧠 Departamento viral: " + c.ia_puntuacion + "/100 · " + lvl));
@@ -240,7 +240,7 @@ footer{display:flex;flex-direction:column;gap:8px;border-top:1px solid var(--lin
     } else {
       var c = pend.slice().sort(function(a,b){ return a.cuando < b.cuando ? -1 : 1; })[0];
       var card = el("div", {"class":"now"});
-      card.appendChild(el("span", {"class":"tag"}, "Siguiente clip a programar"));
+      card.appendChild(el("span", {"class":"tag"}, "📲 Siguiente clip: súbelo cuando te avise el móvil"));
       card.appendChild(el("div", {"class":"when"}, "#" + c.rank + " · " + c.cuando_txt));
       card.appendChild(detail(c, true));
       now.appendChild(card);
