@@ -68,6 +68,17 @@ jobs:
         run: |
           set -e
           export GH_TOKEN="$PUB_TOKEN"
+          visibles=$(gh api /user/repos --paginate -q '.[].full_name' 2>/dev/null || true)
+          echo "Repositorios que ve la llave: $(echo $visibles)"
+          if ! gh api "repos/$PUB_REPO" > /dev/null 2>&1; then
+            found=$(echo "$visibles" | tr ' ' '\n' | grep -i 'aldiagta6-clips' | head -1 || true)
+            if [ -z "$found" ]; then
+              echo "::error::La llave no tiene acceso al repositorio de clips. Créala eligiendo ese repositorio en 'Only select repositories'."
+              exit 1
+            fi
+            PUB_REPO="$found"; export PUB_REPO
+            echo "Usando $PUB_REPO"
+          fi
           TAG="clips-${RUN_ID}"
           owner="${PUB_REPO%%/*}"; name="${PUB_REPO#*/}"
           gh release create "$TAG" salida/*.mp4 --repo "$PUB_REPO" --title "Clips ${TAG}" \
