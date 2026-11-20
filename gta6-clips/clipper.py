@@ -7,8 +7,9 @@ Cómo funciona:
   1. Analiza el audio (picos de volumen respecto al contexto: explosiones,
      persecuciones, gritos, risas) y los cortes de escena (acción rápida).
   2. Puntúa cada medio segundo y elige los N mejores momentos sin solaparse.
-  3. Corta cada momento con "pre-roll": el pico cae DESPUÉS del segundo 7
-     (YouTube desmonetiza violencia gráfica en los primeros 7 s de un vídeo).
+  3. Corta cada momento con el pico en el segundo ~3: el gancho entra en la ventana
+     decisiva de los 2-3 primeros segundos y el resto es la reacción del streamer.
+     (Cobramos por campaña, no por anuncios de YouTube: la regla del segundo 7 no aplica.)
   4. Renderiza en 1080x1920 con fondo difuminado, título, tu @handle,
      audio normalizado a -14 LUFS y (opcional) subtítulos automáticos.
   5. Genera títulos, hashtags y un calendario de publicación (CSV + JSON).
@@ -212,8 +213,6 @@ def pick_clips(score: np.ndarray, duration: float, n: int, length: float,
     chosen.sort(key=lambda c: c.start)
     for k, c in enumerate(chosen, 1):
         c.index = k
-        if c.peak - c.start < 7.5:
-            c.notes.append("pico antes del s7: revisa que no haya violencia gráfica al inicio")
     return chosen
 
 
@@ -340,12 +339,12 @@ def transcribe_srt(src: Path, clip: Clip, srt_path: Path, model_size: str) -> bo
         ms = int(round(t * 1000))
         return f"{ms // 3600000:02d}:{ms // 60000 % 60:02d}:{ms // 1000 % 60:02d},{ms % 1000:03d}"
 
-    # bloques cortos de 3 palabras: estilo "subtítulo dinámico" de Shorts/TikTok
+    # bloques de 2 palabras: ritmo de los subtítulos dinámicos que mejor retienen en Shorts/TikTok
     lines, n = [], 0
     for seg in segments:
         words = list(seg.words or [])
-        for i in range(0, len(words), 3):
-            chunk = words[i:i + 3]
+        for i in range(0, len(words), 2):
+            chunk = words[i:i + 2]
             n += 1
             text = censor(" ".join(w.word.strip() for w in chunk)).upper()
             lines.append(f"{n}\n{ts(chunk[0].start)} --> {ts(chunk[-1].end)}\n{text}\n")
@@ -400,7 +399,7 @@ def render(src: Path, clip: Clip, out_dir: Path, args, font: str | None) -> None
             print(f"  [subs] sin subtítulos para {name}: {e}", file=sys.stderr)
             has_subs = False
         if has_subs:
-            style = ("FontName=Inter,FontSize=16,Bold=1,PrimaryColour=&H0000FFFF,"
+            style = ("FontName=Inter,FontSize=19,Bold=1,PrimaryColour=&H0000FFFF,"
                      "OutlineColour=&H00000000,BorderStyle=1,Outline=3,Alignment=2,MarginV=70")
             filters.append(f"[{last}]subtitles='{ff_escape(str(srt))}':force_style='{style}'[v3]")
             last = "v3"
@@ -504,7 +503,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("inputs", nargs="*", help="vídeos o carpetas con grabaciones")
     ap.add_argument("-n", "--num", type=int, default=6, help="clips por vídeo (6)")
     ap.add_argument("--length", type=float, default=30, help="duración de cada clip en s (30)")
-    ap.add_argument("--preroll", type=float, default=9, help="segundos antes del pico (9; >7 por la regla de YouTube)")
+    ap.add_argument("--preroll", type=float, default=3, help="segundos antes del pico (3: el gancho en los 3 primeros s)")
     ap.add_argument("--min-gap", type=float, default=20, help="separación mínima entre clips en s")
     ap.add_argument("--min-score", type=float, default=1.0, help="umbral de emoción (1.0); bájalo si salen pocos clips")
     ap.add_argument("--layout", choices=["blur", "crop"], default="blur")

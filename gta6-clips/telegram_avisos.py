@@ -29,6 +29,7 @@ MADRID = ZoneInfo("Europe/Madrid")
 APP = os.environ.get("APP_URL", "https://alvarogavilan.github.io/aldiagta6-clips/")
 API = "https://api.telegram.org/bot{token}/{method}"
 PLAN_AT = (9, 0)  # hora del plan diario (España)
+MIN_IA = 50  # calidad mínima: mejor 2 clips buenos que 4 flojos (muchas campañas no pagan < 1.000 vistas)
 # horas de publicación por público (hora de España); deben coincidir con publicar.py
 SLOTS = {"es": ["13:00", "16:00", "19:00", "21:30"],
          "en": ["18:00", "21:00", "00:30", "02:30"]}  # EE. UU.: 12:00, 15:00, 18:30, 20:30 NY
@@ -93,7 +94,8 @@ def make_plan(clips: list[dict], planned: set[str], now: datetime) -> list[tuple
     plan = []
     for lang in ("en", "es"):
         cands = [c for c in sorted(clips, key=lambda c: c["rank"])
-                 if c["archivo"] not in planned and (("en" if c.get("hora_ny") else "es") == lang)]
+                 if c["archivo"] not in planned and (("en" if c.get("hora_ny") else "es") == lang)
+                 and (c.get("ia_puntuacion") is None or c["ia_puntuacion"] >= MIN_IA)]
         plan += list(zip(cands, day_slots(lang, day, now)))
     return sorted(plan, key=lambda p: p[1])
 
@@ -137,13 +139,18 @@ def read_links(token: str, chat: str, state: dict, tg=None, probe=None) -> int:
         return 0
     probe = probe or _probe
     waiting = [k for k, p in sorted(pubs.items(), key=lambda kv: kv[1].get("hora", "")) if len(p.get("enlaces", {})) < 2]
+    info_ok, avisos = {}, []
     for link in got:
         red = "tiktok" if "tiktok" in link.lower() else "shorts"
-        key = match_clip(link, pubs, probe(link))
+        info = probe(link)
+        info_ok[link] = bool(info) or probe is not _probe or not _has_ytdlp()
+        key = match_clip(link, pubs, info)
         if key is None:  # sin texto reconocible: al primer clip al que le falte esa red
             key = next((k for k in waiting if red not in pubs[k].get("enlaces", {})), None)
         if key:
             pubs[key].setdefault("enlaces", {})[red] = link
+        if not info_ok.get(link, True):
+            avisos.append(link)
     camps: dict = {}
     for p in pubs.values():
         for l in p.get("enlaces", {}).values():
@@ -157,10 +164,18 @@ def read_links(token: str, chat: str, state: dict, tg=None, probe=None) -> int:
             p["enviado_campana"] = True
     faltan = [str(p["rank"]) for p in pubs.values() if p.get("hora", "") < datetime.now(timezone.utc).isoformat()
               and len(p.get("enlaces", {})) < 2]
+    if avisos:
+        lines.append("\n⚠️ Estos no se pueden ver desde fuera: comprueba que son PÚBLICOS antes de enviarlos "
+                     "(un vídeo privado o borrado se rechaza):\n" + "\n".join(f"• {l}" for l in avisos))
     if faltan:
         lines.append(f"\nAún me faltan enlaces de los clips #{', #'.join(faltan)}.")
     tg(token, "sendMessage", {"chat_id": chat, "text": "\n".join(lines), "disable_web_page_preview": "true"})
     return len(got)
+
+
+def _has_ytdlp() -> bool:
+    import shutil
+    return bool(shutil.which("yt-dlp"))
 
 
 def _probe(url: str) -> dict:

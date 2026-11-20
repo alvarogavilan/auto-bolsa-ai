@@ -38,7 +38,10 @@ What makes a GTA 6 clip go viral:
 - It is understandable with zero context: a stranger scrolling gets it immediately.
 - A clear payoff or punchline before the end; no slow build-up, no menus, no loading screens,
   no long talking about unrelated things.
-- Novelty: something people have not seen yet in GTA 6.
+- Novelty: something people have not seen yet in GTA 6. Many clippers post the same obvious moments
+  of the same streamer; a strong but less obvious moment (funny line, absurd detail, genuine reaction)
+  is worth more than a fifth copy of the loudest scream.
+- Silent test: the first 3 seconds should make sense with the sound off.
 - If "nuestros_resultados_vistas" is given, those are REAL view counts of our own past posts:
   favour clips similar to the top ones and avoid what flopped. This beats general rules.
 
