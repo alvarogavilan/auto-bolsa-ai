@@ -220,70 +220,61 @@ class AvisosTest(unittest.TestCase):
                 self.assertEqual(sent, [])
 
 
-class TelegramTest(unittest.TestCase):
-    def test_sends_video_and_text_once_when_time_arrives(self):
+class TelegramPlanTest(unittest.TestCase):
+    def _clips(self):
+        mk = lambda r, en: {"rank": r, "archivo": f"0{r}_x.mp4", "cuando": "2026-11-21T18:00:00+01:00",
+                            "hora_ny": "12:00" if en else "", "tiktok": f"Title {r} 💀\n\n#GTA6",
+                            "shorts": f"Title {r} 💀 #Shorts", "campana_url": "https://cr/c", "ia_puntuacion": 90 - r}
+        return {"base": "videos/", "clips": [mk(i, True) for i in range(1, 7)]}
+
+    def _run(self, st, now, calls, probe=None, updates=None):
         import telegram_avisos as ta
-        now = datetime(2026, 11, 21, 17, 0, tzinfo=ta.MADRID)  # de día en España
-        mk = lambda mins, r: {"rank": r, "archivo": f"0{r}_x.mp4", "cuando": (now + timedelta(minutes=mins)).isoformat(),
-                              "tiktok": "Car flies 💀 #GTA6", "shorts": "Car flies 💀 #GTA6 #Shorts",
-                              "campana_nombre": "Dom"}
-        clips = {"base": "videos/", "clips": [mk(-5, 1), mk(30, 2), mk(-300, 3)]}
-        calls = []
-        tg = lambda token, method, fields, file=None: calls.append((method, fields, file)) or {}
-        fetch = lambda url: json.dumps(clips).encode() if url.endswith("clips.json") else b"MP4"
-        with tempfile.TemporaryDirectory() as d, mock.patch.dict(
-                "os.environ", {"TELEGRAM_BOT_TOKEN": "t", "TELEGRAM_CHAT_ID": "42"}):
-            st = str(Path(d, "tg.json"))
-            ta.main(["--estado", st], tg=tg, fetch=fetch, now=now)
-            methods = [m for m, _, _ in calls if m != "getUpdates"]
-            self.assertEqual(methods, ["sendVideo", "sendMessage", "sendMessage"])  # solo el clip #1
-            self.assertIn("SUBE AHORA · clip #1", calls[0][1]["caption"])
-            self.assertEqual(calls[0][2], ("01_x.mp4", b"MP4"))
-            calls.clear()
-            ta.main(["--estado", st], tg=tg, fetch=fetch, now=now)
-            self.assertEqual([m for m, _, _ in calls if m != "getUpdates"], [])  # no repite
-
-
-class TelegramNightTest(unittest.TestCase):
-    def test_night_slot_is_sent_at_2230_as_schedule_order(self):
-        import telegram_avisos as ta
-        slot = datetime(2026, 11, 22, 2, 30, tzinfo=ta.MADRID)
-        c = {"rank": 3, "archivo": "03.mp4", "cuando": slot.isoformat()}
-        self.assertEqual(ta.send_at(slot), datetime(2026, 11, 21, 22, 30, tzinfo=ta.MADRID))
-        self.assertEqual(ta.due([c], set(), datetime(2026, 11, 21, 22, 0, tzinfo=ta.MADRID)), [])
-        self.assertEqual(len(ta.due([c], set(), datetime(2026, 11, 21, 22, 40, tzinfo=ta.MADRID))), 1)
-        self.assertIn("PROGRAMA AHORA", ta.order_text(c))
-
-
-class TelegramLinksTest(unittest.TestCase):
-    def test_links_are_recorded_replied_and_views_read(self):
-        import telegram_avisos as ta
-        state = {"publicados": {"01.mp4": {"rank": 1, "enviado": "2026-11-21T17:00:00+00:00",
-                                           "campana_url": "https://contentrewards.com/c/x"}}}
-        replies = []
+        clips = self._clips()
 
         def tg(token, method, fields, file=None):
-            if method == "getUpdates":
-                return [{"update_id": 7, "message": {"chat": {"id": 42},
-                         "text": "https://www.tiktok.com/@aldiagta6/video/123 https://youtube.com/shorts/abc"}}]
-            replies.append(fields["text"])
-            return {}
-        self.assertEqual(ta.read_links("t", "42", state, tg), 1)
-        clip = state["publicados"]["01.mp4"]
-        self.assertEqual(set(clip["enlaces"]), {"tiktok", "shorts"})
-        self.assertIn("contentrewards.com/c/x", replies[0])
-        self.assertEqual(state["offset"], 7)
-        n = ta.update_views(state, datetime(2026, 11, 22, tzinfo=timezone.utc),
-                            run=lambda url: json.dumps({"view_count": 1500 if "tiktok" in url else 300}))
-        self.assertEqual(n, 2)
-        self.assertEqual(clip["vistas"], {"tiktok": 1500, "shorts": 300})
+            calls.append((method, fields, file))
+            return updates or [] if method == "getUpdates" else {}
+        fetch = lambda url: json.dumps(clips).encode() if url.endswith("clips.json") else b"MP4"
+        with mock.patch.dict("os.environ", {"TELEGRAM_BOT_TOKEN": "t", "TELEGRAM_CHAT_ID": "42"}):
+            ta.main(["--estado", st], tg=tg, fetch=fetch, now=now, probe=probe or (lambda u: {}))
+
+    def test_one_morning_plan_with_all_videos_then_silence(self):
+        import telegram_avisos as ta
+        with tempfile.TemporaryDirectory() as d:
+            st = str(Path(d, "tg.json"))
+            calls = []
+            self._run(st, datetime(2026, 11, 21, 8, 0, tzinfo=ta.MADRID), calls)  # antes de las 9: nada
+            self.assertEqual([m for m, _, _ in calls if m != "getUpdates"], [])
+            self._run(st, datetime(2026, 11, 21, 9, 5, tzinfo=ta.MADRID), calls)
+            videos = [f for m, f, _ in calls if m == "sendVideo"]
+            self.assertEqual(len(videos), 4)  # 4 horas de EE. UU. de hoy (18:00, 21:00, 00:30, 02:30)
+            self.assertIn("PROGRAMA para las 18:00", videos[0]["caption"])
+            self.assertIn("00:30 de esta madrugada", videos[2]["caption"])
+            calls.clear()
+            self._run(st, datetime(2026, 11, 21, 15, 0, tzinfo=ta.MADRID), calls)  # resto del día: silencio
+            self.assertEqual([m for m, _, _ in calls if m != "getUpdates"], [])
+
+    def test_pasted_links_are_matched_by_text_and_listed_for_campaign(self):
+        import telegram_avisos as ta
+        with tempfile.TemporaryDirectory() as d:
+            st = str(Path(d, "tg.json"))
+            calls = []
+            self._run(st, datetime(2026, 11, 21, 9, 5, tzinfo=ta.MADRID), calls)
+            ups = [{"update_id": 5, "message": {"chat": {"id": 42}, "text":
+                    "https://www.tiktok.com/@a/video/2 https://youtube.com/shorts/1"}}]
+            probe = lambda u: {"title": "Title 2 💀"} if "video/2" in u else {"title": "Title 1 💀 #Shorts"}
+            calls.clear()
+            self._run(st, datetime(2026, 11, 22, 9, 5, tzinfo=ta.MADRID), calls, probe=probe, updates=ups)
+            state = json.loads(Path(st).read_text())
+            self.assertEqual(state["publicados"]["02_x.mp4"]["enlaces"], {"tiktok": "https://www.tiktok.com/@a/video/2"})
+            self.assertEqual(state["publicados"]["01_x.mp4"]["enlaces"], {"shorts": "https://youtube.com/shorts/1"})
+            reply = next(f["text"] for m, f, _ in calls if m == "sendMessage" and "Apuntados" in f.get("text", ""))
+            self.assertIn("https://cr/c", reply)
 
     def test_quiet_hours(self):
         import telegram_avisos as ta
         self.assertTrue(ta.is_quiet(datetime(2026, 11, 22, 8, 15, tzinfo=ta.MADRID)))
         self.assertFalse(ta.is_quiet(datetime(2026, 11, 22, 8, 30, tzinfo=ta.MADRID)))
-        self.assertEqual(ta.send_at(datetime(2026, 11, 22, 0, 30, tzinfo=ta.MADRID)),
-                         datetime(2026, 11, 21, 22, 30, tzinfo=ta.MADRID))
 
 
 class ResultsTest(unittest.TestCase):
