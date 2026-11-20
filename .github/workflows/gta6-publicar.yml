@@ -28,6 +28,9 @@ jobs:
       TZ: Europe/Madrid
       GH_TOKEN: ${{ github.token }}
       RUN_ID: ${{ inputs.run_id || github.event.workflow_run.id }}
+      # App pública (GitHub Pages): se activa al crear el secreto PUBLIC_CLIPS_TOKEN
+      PUB_TOKEN: ${{ secrets.PUBLIC_CLIPS_TOKEN }}
+      PUB_REPO: ${{ vars.PUBLIC_CLIPS_REPO || 'alvarogavilan/aldiagta6-clips' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -55,6 +58,42 @@ jobs:
           gh release create "clips-${RUN_ID}" salida/*.mp4 \
             --title "🎬 Clips listos · ${fecha}" --notes-file salida/notas.md --latest
           cat salida/notas.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Actualizar la app (GitHub Pages)
+        if: steps.prep.outputs.hay == 'si' && env.PUB_TOKEN != ''
+        run: |
+          set -e
+          export GH_TOKEN="$PUB_TOKEN"
+          TAG="clips-${RUN_ID}"
+          owner="${PUB_REPO%%/*}"; name="${PUB_REPO#*/}"
+          gh release create "$TAG" salida/*.mp4 --repo "$PUB_REPO" --title "Clips ${TAG}" \
+            --notes "Clips de GTA 6 Al Día" --latest \
+            || gh release upload "$TAG" salida/*.mp4 --repo "$PUB_REPO" --clobber
+          python - <<'EOF'
+          import json, os
+          d = json.load(open("salida/clips.json", encoding="utf-8"))
+          repo, tag = os.environ["PUB_REPO"], "clips-" + os.environ["RUN_ID"]
+          d["tag"] = tag
+          d["base"] = f"https://github.com/{repo}/releases/download/{tag}/"
+          d["recortar"] = f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/actions/workflows/gta6-clips.yml"
+          try:
+              camps = json.load(open("gta6-clips/campanas.seguimiento.json", encoding="utf-8"))["campanas"]
+              d["campana"] = next((c["permiso"] for c in camps if c.get("permiso")), "")
+          except Exception:
+              d["campana"] = ""
+          json.dump(d, open("app-clips.json", "w", encoding="utf-8"), ensure_ascii=False)
+          EOF
+          put() {
+            sha=$(gh api "repos/$PUB_REPO/contents/$1" -q .sha 2>/dev/null || true)
+            args=(-X PUT "repos/$PUB_REPO/contents/$1" -f message="Actualizar $1" -f content="$(base64 -w0 "$2")")
+            [ -n "$sha" ] && args+=(-f sha="$sha")
+            gh api "${args[@]}" > /dev/null
+          }
+          put index.html gta6-app/index.html
+          put data/clips.json app-clips.json
+          gh api -X POST "repos/$PUB_REPO/pages" -f "source[branch]=main" -f "source[path]=/" > /dev/null 2>&1 || true
+          gh release list --repo "$PUB_REPO" --limit 100 --json tagName,createdAt -q 'sort_by(.createdAt) | reverse | .[].tagName' \
+            | grep '^clips-' | tail -n +4 | xargs -r -I{} gh release delete {} --repo "$PUB_REPO" --yes --cleanup-tag || true
+          echo "📱 App: https://${owner}.github.io/${name}/" >> "$GITHUB_STEP_SUMMARY"
       - name: Borrar la página indicada
         if: inputs.borrar_tag != ''
         env:
