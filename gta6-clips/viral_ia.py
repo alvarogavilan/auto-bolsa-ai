@@ -5,8 +5,11 @@ Por cada clip devuelve: puntuación 0-100, si se entiende sin contexto, si el ga
 destripa algo (spoiler), si hay que descartarlo, el motivo y un título gancho en
 inglés y en español. publicar.py reordena la lista con esa nota.
 
-Solo se activa si existe el secreto ANTHROPIC_API_KEY. Sin clave, o si algo falla,
-no hace nada y la publicación sigue con la puntuación automática de siempre.
+Dos motores:
+  - GRATIS (por defecto en GitHub Actions): un modelo abierto (Qwen 2.5) que corre dentro
+    del propio servidor con Ollama. Sin claves, sin tarjeta, sin coste.
+  - Claude (opcional, mejor criterio y ve el fotograma): si existe ANTHROPIC_API_KEY.
+Si ninguno está disponible, o algo falla, la publicación sigue con la puntuación automática.
 """
 from __future__ import annotations
 
@@ -15,10 +18,14 @@ import json
 import os
 import shutil
 import subprocess
+import time
+import urllib.request
 from pathlib import Path
 
 MODEL = os.environ.get("VIRAL_IA_MODELO", "claude-opus-5-5")
 MAX_CANDIDATOS = int(os.environ.get("VIRAL_IA_MAX", "20"))  # limita el gasto por tanda
+OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434")
+LOCAL_DEADLINE_S = 15 * 60  # el modelo gratis va en CPU: tope de tiempo por tanda
 
 SYSTEM = """You are the head of a short-form video team that clips GTA 6 livestreams for paid
 clipping campaigns (TikTok and YouTube Shorts, paid per 1,000 views). You judge which clips
@@ -120,14 +127,56 @@ def ask_claude(content: list[dict], client=None) -> list[dict]:
     return json.loads(text).get("clips", [])
 
 
-def judge(clips: list[dict], trends: dict | None = None, client=None) -> bool:
+ONE = SCHEMA["properties"]["clips"]["items"]
+ONE_SCHEMA = {**ONE, "properties": {k: v for k, v in ONE["properties"].items() if k != "id"},
+              "required": [k for k in ONE["required"] if k != "id"]}
+
+
+def _ollama(payload: dict, timeout: float) -> dict:
+    req = urllib.request.Request(f"{OLLAMA_URL}/api/chat", data=json.dumps(payload).encode(),
+                                 headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return json.loads(r.read().decode())
+
+
+def ask_local(clips: list[dict], trends: dict | None, model: str, post=_ollama) -> list[dict]:
+    """Modelo gratis en el propio servidor: un clip por consulta (va mejor con modelos pequeños)."""
+    out, start = [], time.monotonic()
+    extra = (f"\nTrending now in GTA 6 Shorts: {json.dumps(trends, ensure_ascii=False)[:600]}" if trends else "")
+    for i, c in enumerate(clips):
+        if time.monotonic() - start > LOCAL_DEADLINE_S:
+            print(f"Departamento viral (gratis): tiempo agotado tras {i} clips.")
+            break
+        info = {"streamer": c.get("credit", ""), "campaign_language": (c.get("camp") or {}).get("idioma", "es"),
+                "audio_intensity": c.get("score"), "reaction_words": c.get("reactions"),
+                "transcript": (c.get("transcript") or "")[:900] or "(no speech)"}
+        payload = {"model": model, "stream": False, "format": ONE_SCHEMA,
+                   "options": {"temperature": 0.2, "num_ctx": 4096},
+                   "messages": [{"role": "system", "content": SYSTEM},
+                                {"role": "user", "content": "Judge this GTA 6 clip (puntuacion 0-100)." + extra
+                                 + "\n" + json.dumps(info, ensure_ascii=False)}]}
+        try:
+            v = json.loads(post(payload, 240)["message"]["content"])
+        except Exception as e:  # un clip fallido no para los demás
+            print(f"Departamento viral (gratis): clip {i} sin valorar ({type(e).__name__}).")
+            continue
+        out.append({**v, "id": i})
+    return out
+
+
+def judge(clips: list[dict], trends: dict | None = None, client=None, post=None) -> bool:
     """Añade la opinión de la IA a los mejores candidatos y reordena la lista en sitio.
     Devuelve True si la IA ha opinado."""
-    if not clips or not (client or os.environ.get("ANTHROPIC_API_KEY")):
+    local = os.environ.get("VIRAL_IA_LOCAL", "")  # nombre del modelo gratis, p.ej. qwen2.5:3b
+    use_claude = bool(client or os.environ.get("ANTHROPIC_API_KEY"))
+    if not clips or not (use_claude or local):
         return False
     cands = clips[:MAX_CANDIDATOS]
     try:
-        verdicts = ask_claude(build_content(cands, trends), client)
+        if use_claude:
+            verdicts = ask_claude(build_content(cands, trends), client)
+        else:
+            verdicts = ask_local(cands, trends, local, post or _ollama)
     except Exception as e:  # nunca romper la publicación por la IA
         print(f"Departamento viral no disponible ({type(e).__name__}: {e}); se usa la puntuación automática.")
         return False
