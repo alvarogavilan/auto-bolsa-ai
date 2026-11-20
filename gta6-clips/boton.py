@@ -47,7 +47,7 @@ def download(url: str, tramo: str = "") -> tuple[Path, str]:
     DL.mkdir(exist_ok=True)
     opts = {
         "outtmpl": str(DL / "%(id)s.%(ext)s"),
-        "format": "bv*[height<=1080]+ba/b[height<=1080]/b",
+        "format": "bv*[height<=720]+ba/b[height<=720]/b",  # 720p: directos largos caben y van más rápido
         "merge_output_format": "mp4",
         "quiet": True, "noprogress": True,
     }
