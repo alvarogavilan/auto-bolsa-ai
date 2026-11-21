@@ -226,7 +226,11 @@ class Instagram:
 
     def __init__(self, token: str, api=ig_call):
         self.token, self.api = token, api
-        self.user = str(api("GET", "me", {"fields": "user_id,username", "access_token": token}).get("user_id", ""))
+        me = api("GET", "me", {"fields": "user_id,username", "access_token": token})
+        self.user, self.username = str(me.get("user_id", "")), me.get("username", "")
+        if not self.user:
+            raise RuntimeError("la llave no devuelve la cuenta")
+        print(f"📸 Instagram conectado: @{self.username} ({self.user})")
 
     def prepare(self, video_url: str, caption: str) -> str:
         return self.api("POST", f"{self.user}/media", {"media_type": "REELS", "video_url": video_url,
