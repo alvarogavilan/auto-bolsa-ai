@@ -333,6 +333,7 @@ def main(argv: list[str] | None = None, tg=call, fetch=None, now: datetime | Non
     ap.add_argument("--estado", default="estado/telegram.json")
     ap.add_argument("--prueba", action="store_true")
     ap.add_argument("--mensaje", default="", help="tarea puntual para el usuario (se envía tal cual)")
+    ap.add_argument("--replan", action="store_true", help="mandar hoy otro plan con los clips aún no planificados")
     args = ap.parse_args(argv)
     token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
     if not token:
@@ -380,7 +381,7 @@ def main(argv: list[str] | None = None, tg=call, fetch=None, now: datetime | Non
         if ig:
             print(f"📸 Reels publicados solos: {run_instagram(ig, state, now, tg, token, chat)}")
         today = local.date().isoformat()
-        if (local.hour, local.minute) >= PLAN_AT and local.hour < 23 and state.get("plan_dia") != today:
+        if (local.hour, local.minute) >= PLAN_AT and local.hour < 23 and (state.get("plan_dia") != today or args.replan):
             data = json.loads(fetch(APP + "data/clips.json").decode())
             base = APP + data.get("base", "videos/")
             planned = set(state.get("planificados", []))
