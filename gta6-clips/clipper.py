@@ -199,7 +199,7 @@ def smart_end(score: np.ndarray, start: float, peak: float, length: float, durat
     calm = int(3 / HOP)
     for i in range(lo, hi - calm):
         if np.all(score[i:i + calm] < 0):
-            return round(max(start + MIN_LEN, min(i * HOP + 1.0, start + length)), 2)
+            return round(max(start + min(MIN_LEN, length), min(i * HOP + 1.0, start + length)), 2)
     return round(min(start + length, duration), 2)
 
 
@@ -213,8 +213,14 @@ def pick_clips(score: np.ndarray, duration: float, n: int, length: float,
         if len(chosen) >= n or score[i] < min_score:
             break  # mejor menos clips que clips aburridos
         peak = float(i * HOP)
+        if duration - peak < 8 and duration > length * 2:
+            continue  # pico pegado al final del tramo: sin reacción; el tramo siguiente lo recoge entero
         start = max(0.0, min(peak - preroll, duration - length))
+        if peak - start > preroll + 2 and duration - (peak - preroll) >= min(MIN_LEN, length):
+            start = max(0.0, peak - preroll)  # el gancho manda: mejor clip más corto que pico tardío
         end = smart_end(score, start, peak, length, duration)
+        if end - start < min(MIN_LEN, length) - 0.01:
+            continue
         if any(start < c.end + min_gap and end > c.start - min_gap for c in chosen):
             continue
         chosen.append(Clip(source, 0, round(peak, 2), round(start, 2),

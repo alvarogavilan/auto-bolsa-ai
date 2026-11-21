@@ -92,3 +92,15 @@ class SmartEndTest(unittest.TestCase):
         self.assertEqual(clipper.smart_end(flat, 7, 10, 30, 120), 7 + clipper.MIN_LEN)
         busy = np.full(int(120 / hop), 1.0)
         self.assertEqual(clipper.smart_end(busy, 7, 10, 30, 120), 37)
+
+
+class EdgePeakTest(unittest.TestCase):
+    def test_peak_at_end_of_chunk_is_skipped_hook_stays_early(self):
+        import numpy as np
+        hop = clipper.HOP
+        score = np.full(int(2400 / hop), -1.0)
+        score[int(1000 / hop)] = 9.0
+        score[int(2399 / hop)] = 12.0  # pico en el último segundo del tramo
+        clips = clipper.pick_clips(score, 2400, 5, 30, 3, 20, "x")
+        self.assertEqual([round(c.peak) for c in clips], [1000])
+        self.assertTrue(all(c.peak - c.start <= 3.5 for c in clips))
