@@ -55,7 +55,8 @@ def load_campaigns() -> dict[str, dict]:
         if c.get("permiso") and c.get("mencion"):
             out[c["mencion"].lower()] = {"nombre": c.get("nombre", ""), "url": c["permiso"],
                                          "idioma": c.get("idioma", "es"), "origen": c.get("origen", "Kick"),
-                                         "plataformas": c.get("plataformas", ["tiktok", "youtube"])}
+                                         "plataformas": c.get("plataformas", ["tiktok", "youtube"]),
+                                         "cta": c.get("cta", ""), "regla": c.get("contexto", "")}
     return out
 
 
@@ -67,7 +68,8 @@ def captions_en(c: dict, credit: str, i: int) -> dict[str, str]:
         first = (hook.capitalize() + " 😂") if hook and "**" not in hook and len(hook) <= 60 else HOOKS_EN[i % len(HOOKS_EN)]
     who = credit.lstrip("@").replace(".", "")
     origen = (c.get("camp") or {}).get("origen", "Kick")
-    body = f"{first}\n\n🎥 {credit} ({origen})\n\n{TAGS_EN} #{who}"
+    cta = (c.get("camp") or {}).get("cta", "")
+    body = f"{first}\n\n🎥 {credit} ({origen})" + (f"\n👉 {cta}" if cta else "") + f"\n\n{TAGS_EN} #{who}"
     return {"TikTok": body, "YouTube Shorts": body + " #Shorts"}
 REACTION = re.compile(r"\b(no way|bro|wtf|oh my god|omg|what|yo+|dude|bruh|holy|let'?s go|nah|crazy|insane|hell)\b", re.I)
 

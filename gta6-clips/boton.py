@@ -78,7 +78,8 @@ def video_ts(*infos: dict) -> float:
     return 0.0
 
 
-def recent_videos(fuente: str, filtro: str, horas: float, max_videos: int, desde: float = 0.0) -> list[dict]:
+def recent_videos(fuente: str, filtro: str, horas: float, max_videos: int, desde: float = 0.0,
+                  excluir: tuple = ()) -> list[dict]:
     import yt_dlp  # type: ignore
 
     with yt_dlp.YoutubeDL({"quiet": True, "extract_flat": "in_playlist",
@@ -94,7 +95,8 @@ def recent_videos(fuente: str, filtro: str, horas: float, max_videos: int, desde
             ts = video_ts(full, e)
             # sin fecha: se acepta (el registro de procesados evita repetirlo)
             fresh = ts == 0 or (ts >= limit and ts >= desde)
-            ok = fresh and filtro.lower() in title.lower() and not full.get("is_live")
+            ok = (fresh and filtro.lower() in title.lower() and not full.get("is_live")
+                  and not any(x.lower() in title.lower() for x in excluir))
             print(f"[seguimiento] {url} fecha={int(ts)} vivo={bool(full.get('is_live'))} "
                   f"aceptado={ok} titulo={title[:60]!r}", file=sys.stderr)
             if ok:
@@ -154,7 +156,8 @@ def list_jobs(cfg_path: Path, horas: float, procesados: set[str] | None = None) 
         for fuente in camp.get("fuentes", []):
             try:
                 desde = datetime.fromisoformat(camp["desde"]).replace(tzinfo=timezone.utc).timestamp() if camp.get("desde") else 0.0
-                vids = recent_videos(fuente, camp.get("filtro", "GTA"), horas, camp.get("max_videos", 2), desde)
+                vids = recent_videos(fuente, camp.get("filtro", "GTA"), horas, camp.get("max_videos", 2), desde,
+                                     tuple(camp.get("excluir", [])))
             except Exception as e:
                 print(f"No pude leer {fuente}: {e}", file=sys.stderr)
                 continue

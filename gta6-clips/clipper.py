@@ -188,6 +188,18 @@ def score_timeline(path: Path, duration: float, scene_thr: float,
     return smooth(audio_w * audio_score + scene_w * scene_score, 3)
 
 
+def campaign_of(handle: str) -> dict:
+    """Ajustes de la campaña de ese streamer (campanas.seguimiento.json): CTA, idioma…"""
+    try:
+        cfg = json.loads((Path(__file__).parent / "campanas.seguimiento.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    for c in cfg.get("campanas", []):
+        if (c.get("mencion") or "").lower() == handle.lower():
+            return c
+    return {}
+
+
 MIN_LEN = 15.0  # nunca menos de 15 s: hace falta contexto y algunas campañas piden mínimo
 
 
@@ -397,7 +409,8 @@ def render(src: Path, clip: Clip, out_dir: Path, args, font: str | None) -> None
 
     if font and not args.no_title:
         # una drawtext por línea: centrado fiable en cualquier versión de ffmpeg
-        for li, line in enumerate(textwrap.wrap(strip_emoji(clip.title), width=20)[:3]):
+        shown = clip.title_en if getattr(args, "en", False) and clip.title_en else clip.title
+        for li, line in enumerate(textwrap.wrap(strip_emoji(shown), width=20)[:3]):
             nxt = f"t{li}"
             filters.append(
                 f"[{last}]drawtext=fontfile='{ff_escape(font)}':text='{ff_escape(line)}':"
@@ -412,6 +425,18 @@ def render(src: Path, clip: Clip, out_dir: Path, args, font: str | None) -> None
             f"x=(w-text_w)/2:y=h-330[v2]"
         )
         last = "v2"
+    cta = getattr(args, "cta", "")
+    if font and cta:
+        # llamada a la acción que exige la campaña, en los últimos 3,5 s
+        dur_cta = max(clip.end - clip.start - 3.5, 0)
+        for li, line in enumerate(textwrap.wrap(strip_emoji(cta), width=18)[:2]):
+            nxt = f"c{li}"
+            filters.append(
+                f"[{last}]drawtext=fontfile='{ff_escape(font)}':text='{ff_escape(line)}':"
+                f"fontsize=76:fontcolor=0xFFD400:borderw=7:bordercolor=black:"
+                f"x=(w-text_w)/2:y=h*0.30+{li * 96}:enable='gte(t,{dur_cta:.2f})'[{nxt}]"
+            )
+            last = nxt
     if args.subs:
         srt = out_dir / f"{name}.srt"
         try:
@@ -448,6 +473,10 @@ def process(src: Path, args, font: str | None) -> list[Clip]:
     duration = probe_duration(src)
     print(f"▶ {src.name}  ({duration / 60:.1f} min) — analizando…")
     score = score_timeline(src, duration, args.scene_threshold, 1.0, args.scene_weight)
+    camp = campaign_of(args.handle) if args.handle else {}
+    if not args.cta:
+        args.cta = camp.get("cta", "")
+    args.en = camp.get("idioma") == "en"  # título en pantalla en el idioma del público de la campaña
     clips = pick_clips(score, duration, args.num, args.length, args.preroll, args.min_gap, str(src),
                        args.min_score)
     trends = load_trends(args.tendencias)
@@ -530,6 +559,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("inputs", nargs="*", help="vídeos o carpetas con grabaciones")
     ap.add_argument("-n", "--num", type=int, default=6, help="clips por vídeo (6)")
     ap.add_argument("--length", type=float, default=30, help="duración de cada clip en s (30)")
+    ap.add_argument("--cta", default="", help="texto final obligatorio (si vacío, el de la campaña del @handle)")
     ap.add_argument("--preroll", type=float, default=3, help="segundos antes del pico (3: el gancho en los 3 primeros s)")
     ap.add_argument("--min-gap", type=float, default=20, help="separación mínima entre clips en s")
     ap.add_argument("--min-score", type=float, default=1.0, help="umbral de emoción (1.0); bájalo si salen pocos clips")

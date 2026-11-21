@@ -26,8 +26,8 @@
     },
     {
       "nombre": "Bobby Van Riper | GTA VI (Clipping Nation)",
-      "permiso": "https://contentrewards.com/c/campaigns?q=bobby%20van%20riper",
-      "notas": "TikTok, Instagram y YouTube · 1,50 $ por 1.000 vistas · mínimo 2,25 $ y máximo 150 $ por vídeo · presupuesto 1.000 $ (965 $ libres el 21-nov) · contenido de GTA VI de Bobby (Twitch bobby_vanriper) · PENDIENTE: pegar aquí el enlace exacto de la campaña y revisar sus reglas",
+      "permiso": "https://contentrewards.com/c/campaigns/f583b069-ced7-49e5-9ed3-2d3a13d6df0c",
+      "notas": "TikTok, Instagram y YouTube · 1,50 $/1.000 vistas · mínimo 1.500 vistas para cobrar · máx. 150 $ por vídeo · presupuesto 1.000 $ (965 $ libres el 21-nov) · SOLO momentos de GTA VI con Bobby (nada de IRL/partidos) · gancho en 2 s, un momento claro, CTA con su nombre y Twitch · prioridad: momentos graciosos y primeras reacciones · OBLIGATORIO unirse al Discord de Clipping Nation para cobrar: discord.gg/DQyAcKa3nU",
       "fuentes": [
         "https://www.twitch.tv/bobby_vanriper/videos?filter=archives&sort=time"
       ],
@@ -45,8 +45,14 @@
         "instagram"
       ],
       "hashtags_obligatorios": [],
-      "contexto": "",
-      "subtitulos": true
+      "contexto": "GTA VI gameplay only (no IRL, sports or chatting segments). Priority: funny moments and first reactions to new GTA VI features, cars, places and missions.",
+      "subtitulos": true,
+      "excluir": [
+        "HEAT GAME",
+        "NBA",
+        "JUST CHATTING"
+      ],
+      "cta": "Follow Bobby Vanriper on Twitch"
     }
   ]
 }

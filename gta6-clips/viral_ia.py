@@ -41,6 +41,8 @@ What makes a GTA 6 clip go viral:
 - Novelty: something people have not seen yet in GTA 6. Many clippers post the same obvious moments
   of the same streamer; a strong but less obvious moment (funny line, absurd detail, genuine reaction)
   is worth more than a fifth copy of the loudest scream.
+- If a campaign rule is given, it is mandatory: a clip that breaks it (e.g. not GTA VI gameplay)
+  must get descartar=true, because it will not be paid.
 - Silent test: the first 3 seconds should make sense with the sound off.
 - If "nuestros_resultados_vistas" is given, those are REAL view counts of our own past posts:
   favour clips similar to the top ones and avoid what flopped. This beats general rules.
@@ -110,7 +112,8 @@ def build_content(clips: list[dict], trends: dict | None) -> list[dict]:
                 "duracion_s": round(float(c.get("end", 0)) - float(c.get("start", 0)), 1) or None,
                 "segundo_pico": round(float(c.get("peak", 0)) - float(c.get("start", 0)), 1),
                 "intensidad_audio": c.get("score"), "reacciones": c.get("reactions"),
-                "transcripcion": (c.get("transcript") or "")[:1200] or "(sin voz)"}
+                "transcripcion": (c.get("transcript") or "")[:1200] or "(sin voz)",
+                "regla_campana": (c.get("camp") or {}).get("regla", "")}
         content.append({"type": "text", "text": json.dumps(info, ensure_ascii=False)})
         img = frame_b64(Path(c["mp4"]), float(info["segundo_pico"])) if c.get("mp4") else None
         if img:
@@ -175,7 +178,8 @@ def ask_local(clips: list[dict], trends: dict | None, model: str, post=_ollama) 
             break
         info = {"streamer": c.get("credit", ""), "campaign_language": (c.get("camp") or {}).get("idioma", "es"),
                 "audio_intensity": c.get("score"), "reaction_words": c.get("reactions"),
-                "transcript": (c.get("transcript") or "")[:900] or "(no speech)"}
+                "transcript": (c.get("transcript") or "")[:900] or "(no speech)",
+                "campaign_rule": (c.get("camp") or {}).get("regla", "")}
         payload = {"model": model, "stream": False, "format": ONE_SCHEMA,
                    "options": {"temperature": 0.2, "num_ctx": 4096},
                    "messages": [{"role": "system", "content": SYSTEM},
