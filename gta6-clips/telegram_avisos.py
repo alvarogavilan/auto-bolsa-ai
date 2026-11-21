@@ -33,7 +33,7 @@ PLAN_AT = (9, 0)  # hora del plan diario (España)
 MIN_IA = 50  # calidad mínima: mejor 2 clips buenos que 4 flojos (muchas campañas no pagan < 1.000 vistas)
 # horas de publicación por público (hora de España); deben coincidir con publicar.py
 SLOTS = {"es": ["13:00", "16:00", "19:00", "21:30"],
-         "en": ["16:00", "18:00", "21:00", "00:30", "02:30"]}  # EE. UU.: 10:00, 12:00, 15:00, 18:30, 20:30 NY
+         "en": ["16:00", "18:00", "21:00", "23:00", "00:30", "02:30"]}  # EE. UU.: 10:00, 12:00, 15:00, 18:30, 20:30 NY
 LINK = re.compile(r"https?://(?:www\.|vm\.|vt\.|m\.)?(tiktok\.com|youtube\.com|youtu\.be|instagram\.com)/\S+", re.I)
 
 

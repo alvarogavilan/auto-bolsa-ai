@@ -55,6 +55,59 @@
         "JUST CHATTING"
       ],
       "cta": "Follow Bobby Vanriper on Twitch"
+    },
+    {
+      "nombre": "Kai Cenat | GTA 6 Pool $10K",
+      "permiso": "https://contentrewards.com/c/campaigns/1d2bcb00-c904-415f-aa82-f95b96baad86",
+      "notas": "BOLSA de 10.000 $: se reparte por vistas; hacen falta 400K vistas en total para entrar y 500 por clip para contar · TikTok, Instagram Reels, YouTube Shorts y X · desde el 18-nov (maratón de GTA) · Kai debe ser el protagonista · nombrar a Kai Cenat en texto o vídeo y usar #KAICENAT · público ≥50 % de países angloparlantes · nada de logos, ni negativo, ni resubir sus Shorts · prioridad: momentos graciosos, frases memorables y reacciones",
+      "fuentes": [
+        "https://www.twitch.tv/kaicenat/videos?filter=archives&sort=time"
+      ],
+      "filtro": "",
+      "desde": "2026-11-18",
+      "max_videos": 2,
+      "clips_por_video": 8,
+      "duracion": 30,
+      "mencion": "@kaicenat",
+      "idioma": "en",
+      "origen": "Twitch",
+      "plataformas": [
+        "tiktok",
+        "youtube",
+        "instagram"
+      ],
+      "hashtags_obligatorios": [
+        "#KAICENAT"
+      ],
+      "cta": "Kai Cenat GTA 6 Marathon",
+      "contexto": "Kai Cenat must be the primary focus of the clip. Funny moments, memorable quotes and reactions from his GTA 6 marathon. Never portray him negatively.",
+      "subtitulos": true
+    },
+    {
+      "nombre": "Clix | GTA VI Marathon Pool $5K",
+      "permiso": "https://contentrewards.com/c/campaigns/985dc674-c75e-44fc-ac87-1b1506324389",
+      "notas": "BOLSA de 5.000 $: 400K vistas en total para entrar, 500 por clip · TikTok, Instagram y X (YouTube no) · hasta que acabe su maratón · reglas: https://reachclipping.com/ClixGTA · HAY QUE UNIRSE a la campaña antes de enviar",
+      "fuentes": [
+        "https://www.twitch.tv/clix/videos?filter=archives&sort=time"
+      ],
+      "filtro": "",
+      "desde": "2026-11-18",
+      "max_videos": 2,
+      "clips_por_video": 6,
+      "duracion": 30,
+      "mencion": "@clix",
+      "idioma": "en",
+      "origen": "Twitch",
+      "plataformas": [
+        "tiktok",
+        "instagram"
+      ],
+      "hashtags_obligatorios": [
+        "#Clix"
+      ],
+      "cta": "Follow Clix on Twitch",
+      "contexto": "Clix must be the main focus. Funny, hype or skillful moments from his GTA VI marathon.",
+      "subtitulos": true
     }
   ]
 }

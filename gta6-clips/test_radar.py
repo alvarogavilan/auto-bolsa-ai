@@ -247,9 +247,9 @@ class TelegramPlanTest(unittest.TestCase):
             self.assertEqual([m for m, _, _ in calls if m != "getUpdates"], [])
             self._run(st, datetime(2026, 11, 21, 9, 5, tzinfo=ta.MADRID), calls)
             videos = [f for m, f, _ in calls if m == "sendVideo"]
-            self.assertEqual(len(videos), 5)  # 5 horas de EE. UU. (16:00, 18:00, 21:00, 00:30, 02:30)
+            self.assertEqual(len(videos), 6)  # 6 horas de EE. UU. (16:00, 18:00, 21:00, 23:00, 00:30, 02:30)
             self.assertIn("Prográmalo para las 16:00", videos[0]["caption"])
-            self.assertIn("00:30 (mañana de madrugada", videos[3]["caption"])
+            self.assertIn("00:30 (mañana de madrugada", videos[4]["caption"])
             self.assertTrue(any("CÓMO PROGRAMAR" in f.get("text", "") for m, f, _ in calls if m == "sendMessage"))
             self.assertTrue(any("<code>" in f.get("text", "") for m, f, _ in calls if m == "sendMessage"))
             calls.clear()
@@ -379,3 +379,15 @@ class CaptionCleanTest(unittest.TestCase):
             with mock.patch.object(boton, "recent_videos") as rv:
                 self.assertEqual(boton.list_jobs(cfg, 24), [])
                 rv.assert_not_called()
+
+
+class RequiredTagsTest(unittest.TestCase):
+    def test_campaign_hashtag_and_name_in_both_texts(self):
+        import publicar
+        c = {"ia_titulo_en": "He crashed the cop car 😂",
+             "camp": {"origen": "Twitch", "cta": "Kai Cenat GTA 6 Marathon", "tags": "#KAICENAT"}}
+        caps = publicar.captions_en(c, "@kaicenat", 0)
+        self.assertIn("#KAICENAT", caps["TikTok"])
+        self.assertIn("Kai Cenat", caps["TikTok"])
+        self.assertIn("#KAICENAT", caps["YouTube Shorts"])
+        self.assertLessEqual(len(caps["YouTube Shorts"]), 100)
