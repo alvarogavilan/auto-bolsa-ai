@@ -316,3 +316,43 @@ class MultiCampaignTest(unittest.TestCase):
         cs = [{"camp": {"nombre": "Dom"}, "r": i} for i in range(5)] + [{"camp": {"nombre": "Bobby"}, "r": 9}]
         mixed = publicar.fair_mix(cs, 3)
         self.assertEqual([c["camp"]["nombre"] for c in mixed], ["Dom", "Bobby", "Dom"])
+
+
+class InstagramAutoTest(unittest.TestCase):
+    def test_reels_prepared_at_plan_and_published_at_their_time(self):
+        import telegram_avisos as ta
+        calls = []
+
+        def api(method, path, params):
+            calls.append((method, path, params))
+            if path == "me":
+                return {"user_id": "17", "username": "aldiagta6"}
+            if path.endswith("/media"):
+                return {"id": f"c{len(calls)}"}
+            if path.endswith("/media_publish"):
+                return {"id": "m1"}
+            if params.get("fields") == "status_code":
+                return {"status_code": "FINISHED"}
+            if params.get("fields") == "permalink":
+                return {"permalink": "https://www.instagram.com/reel/abc/"}
+            return {}
+        clip = {"rank": 1, "archivo": "01.mp4", "hora_ny": "12:00", "ia_puntuacion": 90, "tiktok": "Wow 💀",
+                "shorts": "Wow 💀 #Shorts", "campana_nombre": "Bobby", "campana_url": "https://cr/b",
+                "plataformas": ["tiktok", "youtube", "instagram"]}
+        data = {"base": "videos/", "clips": [clip]}
+        sent = []
+        tg = lambda token, method, fields, file=None: sent.append((method, fields)) or ([] if method == "getUpdates" else {})
+        fetch = lambda url: json.dumps(data).encode() if url.endswith("clips.json") else b"MP4"
+        env = {"TELEGRAM_BOT_TOKEN": "t", "TELEGRAM_CHAT_ID": "42", "INSTAGRAM_TOKEN": "ig"}
+        with tempfile.TemporaryDirectory() as d, mock.patch.dict("os.environ", env):
+            st = str(Path(d, "tg.json"))
+            ta.main(["--estado", st], tg=tg, fetch=fetch, now=datetime(2026, 11, 21, 9, 5, tzinfo=ta.MADRID), ig_api=api)
+            self.assertTrue(any(p.endswith("/media") and q["video_url"].endswith("videos/01.mp4") for _, p, q in calls))
+            cap = next(f["caption"] for m, f in sent if m == "sendVideo")
+            self.assertIn("se publica SOLO", cap)
+            self.assertFalse(any(p.endswith("media_publish") for _, p, _ in calls))  # aún no es la hora
+            ta.main(["--estado", st], tg=tg, fetch=fetch, now=datetime(2026, 11, 21, 16, 5, tzinfo=ta.MADRID), ig_api=api)
+            self.assertTrue(any(p.endswith("media_publish") for _, p, _ in calls))
+            state = json.loads(Path(st).read_text())
+            self.assertEqual(state["publicados"]["01.mp4"]["enlaces"]["instagram"], "https://www.instagram.com/reel/abc/")
+            self.assertEqual(state["ig_cola"], [])
