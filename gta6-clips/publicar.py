@@ -290,6 +290,11 @@ def main(argv: list[str] | None = None) -> int:
     camps = load_campaigns()
     for c in clips:
         c["camp"] = camps.get(c["credit"].lower(), {})
+    # si la campaña exige un CTA en el vídeo, un clip sin él no cobraría: fuera
+    antes = len(clips)
+    clips = [c for c in clips if not c["camp"].get("cta") or c.get("cta")]
+    if len(clips) < antes:
+        print(f"Descartados {antes - len(clips)} clips sin el CTA obligatorio de su campaña.")
     trends = None
     if args.tendencias and Path(args.tendencias).exists():
         try:
