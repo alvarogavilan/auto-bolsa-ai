@@ -248,8 +248,10 @@ class TelegramPlanTest(unittest.TestCase):
             self._run(st, datetime(2026, 11, 21, 9, 5, tzinfo=ta.MADRID), calls)
             videos = [f for m, f, _ in calls if m == "sendVideo"]
             self.assertEqual(len(videos), 5)  # 5 horas de EE. UU. (16:00, 18:00, 21:00, 00:30, 02:30)
-            self.assertIn("PROGRAMA para las 16:00", videos[0]["caption"])
-            self.assertIn("00:30 de esta madrugada", videos[3]["caption"])
+            self.assertIn("Prográmalo para las 16:00", videos[0]["caption"])
+            self.assertIn("00:30 (mañana de madrugada", videos[3]["caption"])
+            self.assertTrue(any("CÓMO PROGRAMAR" in f.get("text", "") for m, f, _ in calls if m == "sendMessage"))
+            self.assertTrue(any("<code>" in f.get("text", "") for m, f, _ in calls if m == "sendMessage"))
             calls.clear()
             self._run(st, datetime(2026, 11, 21, 15, 0, tzinfo=ta.MADRID), calls)  # resto del día: silencio
             self.assertEqual([m for m, _, _ in calls if m != "getUpdates"], [])
@@ -308,7 +310,7 @@ class MultiCampaignTest(unittest.TestCase):
         plan = ta.make_plan(clips, set(), datetime(2026, 11, 21, 9, 5, tzinfo=ta.MADRID))
         self.assertEqual([c["campana_nombre"] for c, _ in plan][:2], ["Dom", "Bobby"])
         bobby = next((c, t) for c, t in plan if c["campana_nombre"] == "Bobby")
-        self.assertIn("Instagram", ta.plan_text(bobby[0], bobby[1], 1, 4))
+        self.assertIn("Instagram Reels", ta.plan_text(bobby[0], bobby[1], 1, 4))
         self.assertIn("Campaña: Bobby", ta.plan_text(bobby[0], bobby[1], 1, 4))
 
     def test_publish_fair_mix(self):
@@ -349,7 +351,7 @@ class InstagramAutoTest(unittest.TestCase):
             ta.main(["--estado", st], tg=tg, fetch=fetch, now=datetime(2026, 11, 21, 9, 5, tzinfo=ta.MADRID), ig_api=api)
             self.assertTrue(any(p.endswith("/media") and q["video_url"].endswith("videos/01.mp4") for _, p, q in calls))
             cap = next(f["caption"] for m, f in sent if m == "sendVideo")
-            self.assertIn("se publica SOLO", cap)
+            self.assertIn("se publica solo", cap)
             self.assertFalse(any(p.endswith("media_publish") for _, p, _ in calls))  # aún no es la hora
             ta.main(["--estado", st], tg=tg, fetch=fetch, now=datetime(2026, 11, 21, 16, 5, tzinfo=ta.MADRID), ig_api=api)
             self.assertTrue(any(p.endswith("media_publish") for _, p, _ in calls))

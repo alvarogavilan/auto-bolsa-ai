@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import difflib
+import html
 import json
 import os
 import re
@@ -108,19 +109,48 @@ def make_plan(clips: list[dict], planned: set[str], now: datetime) -> list[tuple
     return sorted(plan, key=lambda p: p[1])
 
 
+LINKS = {"tiktok": "https://www.tiktok.com/tiktokstudio/upload",
+         "youtube": "https://studio.youtube.com",
+         "instagram": "https://www.instagram.com"}
+NOMBRES = {"tiktok": "TikTok", "youtube": "YouTube Shorts", "instagram": "Instagram Reels"}
+
+GUIA = """📖 CÓMO PROGRAMAR (igual para cada vídeo, 2 min):
+
+0️⃣ GUARDA EL VÍDEO: mantén el dedo sobre el vídeo de abajo → «Guardar en Fotos».
+
+🎵 TIKTOK
+Abre la app TikTok → ＋ (abajo) → «Galería» → elige el vídeo → Siguiente → Siguiente →
+en la descripción PEGA el texto 1 → «Más opciones» → «Programar vídeo» → pon la HORA → Programar.
+¿No te sale «Programar»? Usa la web: https://www.tiktok.com/tiktokstudio/upload (en Safari: aA → «Solicitar sitio web de escritorio») → sube el vídeo → pega el texto 1 → «Programar» → hora.
+
+▶️ YOUTUBE SHORTS
+Abre la app YouTube → ＋ (abajo) → «Short» → elige el vídeo (abajo a la izquierda) → Siguiente → Siguiente →
+título: PEGA el texto 2 → «Visibilidad» → «Programar» → pon la HORA → Subir Short.
+
+📸 INSTAGRAM REELS (solo si el vídeo lo pide)
+Abre Instagram → ＋ → «Reel» → elige el vídeo → Siguiente → Siguiente → PEGA el texto 1 →
+«Más opciones» u «Opciones avanzadas» → «Programar» → pon la HORA → Compartir.
+
+⏰ La HORA es la de España que pone cada vídeo. Al día siguiente pégame aquí los enlaces."""
+
+
 def plan_text(c: dict, t: datetime, i: int, n: int, auto_ig: bool = False) -> str:
     ny = t.astimezone(ZoneInfo("America/New_York"))
-    when = f"{t:%H:%M}" + (" de esta madrugada" if t.hour < 9 else "") + (f" ({ny:%H:%M} NY)" if c.get("hora_ny") else "")
-    nota = f" · 🧠 {c['ia_puntuacion']}/100" if c.get("ia_puntuacion") is not None else ""
-    camp = f"🎯 Campaña: {c['campana_nombre']}\n" if c.get("campana_nombre") else ""
-    ig = ""
-    if "instagram" in c.get("plataformas", []):
-        ig = (f"\nInstagram: ✅ se publica SOLO a las {t:%H:%M} (no hagas nada)" if auto_ig else
-              "\nInstagram: compartir → Instagram → Reel → pega el 1.er texto → Opciones avanzadas → "
-              f"Programar → {t:%H:%M}")
-    return (f"📅 {i}/{n} · PROGRAMA para las {when}{nota}\n{camp}"
-            f"TikTok: compartir el vídeo → TikTok → pega el 1.er texto → «Más opciones» → Programar → {t:%H:%M}\n"
-            f"Shorts: compartir → YouTube → pega el 2.º texto → Visibilidad → Programar → {t:%H:%M}{ig}")
+    dia = "mañana de madrugada" if t.hour < 9 else "hoy"
+    redes = [r for r in ("tiktok", "youtube", "instagram") if r in c.get("plataformas", ["tiktok", "youtube"])]
+    lines = [f"🎬 VÍDEO {i} de {n}",
+             f"⏰ Prográmalo para las {t:%H:%M} ({dia}, hora de España)"]
+    if c.get("campana_nombre"):
+        lines.append(f"🎯 Campaña: {c['campana_nombre']}")
+    lines.append("📲 Súbelo a:")
+    for r in redes:
+        if r == "instagram" and auto_ig:
+            lines.append("   ✅ Instagram: se publica solo, no hagas nada")
+        else:
+            texto = "texto 2" if r == "youtube" else "texto 1"
+            lines.append(f"   • {NOMBRES[r]} (pega el {texto})")
+    lines.append("👇 Debajo: texto 1 (TikTok/Instagram) y texto 2 (YouTube)")
+    return "\n".join(lines)
 
 
 def match_clip(link: str, pubs: dict, info: dict) -> str | None:
@@ -363,9 +393,10 @@ def main(argv: list[str] | None = None, tg=call, fetch=None, now: datetime | Non
                 if ayer:
                     intro.append("1️⃣ Pega aquí (en un solo mensaje) los enlaces de TikTok y Shorts de lo que se "
                                  "publicó ayer: te devuelvo la lista para la campaña.")
-                intro.append(("2️⃣" if ayer else "1️⃣") + " Programa cada vídeo de abajo a su hora:")
-                intro += [f"   • {t:%H:%M} → clip #{c['rank']}" for c, t in plan]
+                intro.append(("2️⃣" if ayer else "1️⃣") + " Programa cada vídeo de abajo a su hora (la guía va aquí debajo):")
+                intro += [f"   • {t:%H:%M} → vídeo {k}" for k, (c, t) in enumerate(plan, 1)]
                 tg(token, "sendMessage", {"chat_id": chat, "text": "\n".join(intro)})
+                tg(token, "sendMessage", {"chat_id": chat, "text": GUIA, "disable_web_page_preview": "true"})
                 for i, (c, t) in enumerate(plan, 1):
                     video = fetch(base + urllib.parse.quote(c["archivo"]))
                     auto_ig = False
@@ -379,8 +410,11 @@ def main(argv: list[str] | None = None, tg=call, fetch=None, now: datetime | Non
                             print(f"Instagram: no pude preparar el clip #{c['rank']}: {e}")
                     tg(token, "sendVideo", {"chat_id": chat, "caption": plan_text(c, t, i, len(plan), auto_ig)[:1024],
                                             "supports_streaming": "true"}, (c["archivo"], video))
-                    tg(token, "sendMessage", {"chat_id": chat, "text": c["tiktok"]})
-                    tg(token, "sendMessage", {"chat_id": chat, "text": c.get("shorts") or c["tiktok"]})
+                    for label, txt in (("TEXTO 1 · TikTok / Instagram", c["tiktok"]),
+                                       ("TEXTO 2 · YouTube", c.get("shorts") or c["tiktok"])):
+                        # <code>: en Telegram un toque copia SOLO el texto
+                        tg(token, "sendMessage", {"chat_id": chat, "parse_mode": "HTML", "text":
+                           f"{label} (toca el texto para copiarlo):\n<code>{html.escape(txt)}</code>"})
                     planned.add(c["archivo"])
                     pubs[c["archivo"]] = {"rank": c["rank"], "hora": t.isoformat(),
                                           "titulo": c["tiktok"].split("\n")[0], "ia": c.get("ia_puntuacion"),
