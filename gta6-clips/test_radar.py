@@ -247,9 +247,9 @@ class TelegramPlanTest(unittest.TestCase):
             self.assertEqual([m for m, _, _ in calls if m != "getUpdates"], [])
             self._run(st, datetime(2026, 11, 21, 9, 5, tzinfo=ta.MADRID), calls)
             videos = [f for m, f, _ in calls if m == "sendVideo"]
-            self.assertEqual(len(videos), 4)  # 4 horas de EE. UU. de hoy (18:00, 21:00, 00:30, 02:30)
-            self.assertIn("PROGRAMA para las 18:00", videos[0]["caption"])
-            self.assertIn("00:30 de esta madrugada", videos[2]["caption"])
+            self.assertEqual(len(videos), 5)  # 5 horas de EE. UU. (16:00, 18:00, 21:00, 00:30, 02:30)
+            self.assertIn("PROGRAMA para las 16:00", videos[0]["caption"])
+            self.assertIn("00:30 de esta madrugada", videos[3]["caption"])
             calls.clear()
             self._run(st, datetime(2026, 11, 21, 15, 0, tzinfo=ta.MADRID), calls)  # resto del día: silencio
             self.assertEqual([m for m, _, _ in calls if m != "getUpdates"], [])
@@ -296,3 +296,23 @@ class QualityGateTest(unittest.TestCase):
         mk = lambda r, ia: {"rank": r, "archivo": f"{r}.mp4", "hora_ny": "12:00", "ia_puntuacion": ia}
         plan = ta.make_plan([mk(1, 85), mk(2, 30), mk(3, 70)], set(), datetime(2026, 11, 21, 9, 5, tzinfo=ta.MADRID))
         self.assertEqual([c["rank"] for c, _ in plan], [1, 3])
+
+
+class MultiCampaignTest(unittest.TestCase):
+    def test_slots_alternate_between_campaigns_and_instagram_step(self):
+        import telegram_avisos as ta
+        mk = lambda r, camp, plat: {"rank": r, "archivo": f"{r}.mp4", "hora_ny": "12:00", "ia_puntuacion": 90,
+                                    "campana_nombre": camp, "plataformas": plat}
+        clips = [mk(1, "Dom", ["tiktok", "youtube"]), mk(2, "Dom", ["tiktok", "youtube"]),
+                 mk(3, "Dom", ["tiktok", "youtube"]), mk(4, "Bobby", ["tiktok", "youtube", "instagram"])]
+        plan = ta.make_plan(clips, set(), datetime(2026, 11, 21, 9, 5, tzinfo=ta.MADRID))
+        self.assertEqual([c["campana_nombre"] for c, _ in plan][:2], ["Dom", "Bobby"])
+        bobby = next((c, t) for c, t in plan if c["campana_nombre"] == "Bobby")
+        self.assertIn("Instagram", ta.plan_text(bobby[0], bobby[1], 1, 4))
+        self.assertIn("Campaña: Bobby", ta.plan_text(bobby[0], bobby[1], 1, 4))
+
+    def test_publish_fair_mix(self):
+        import publicar
+        cs = [{"camp": {"nombre": "Dom"}, "r": i} for i in range(5)] + [{"camp": {"nombre": "Bobby"}, "r": 9}]
+        mixed = publicar.fair_mix(cs, 3)
+        self.assertEqual([c["camp"]["nombre"] for c in mixed], ["Dom", "Bobby", "Dom"])
