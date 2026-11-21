@@ -38,7 +38,7 @@ except Exception:  # sin base de zonas horarias: aproximación de invierno
     MADRID = timezone(timedelta(hours=1))
     NUEVA_YORK = timezone(timedelta(hours=-5))
 SLOTS = ["13:00", "16:00", "19:00", "21:30"]           # público hispano (hora de España)
-SLOTS_EN = ["16:00", "18:00", "21:00", "00:30", "02:30"]  # = 10:00, 12:00, 15:00, 18:30, 20:30 en Nueva York
+SLOTS_EN = ["16:00", "18:00", "21:00", "23:00", "00:30", "02:30"]  # NY: 10:00, 12:00, 15:00, 17:00, 18:30, 20:30
 TAGS_EN = "#GTA6 #GTAVI #gta6clips #gaming #fyp"
 HOOKS_EN = ["He did NOT expect this in GTA 6 😂", "GTA 6 went crazy here 💀", "This GTA 6 moment is wild 😳",
             "Nobody expected this in GTA 6 🤯", "GTA 6 is unreal 🔥"]
@@ -57,7 +57,8 @@ def load_campaigns() -> dict[str, dict]:
                                          "idioma": c.get("idioma", "es"), "origen": c.get("origen", "Kick"),
                                          "plataformas": c.get("plataformas", ["tiktok", "youtube"]),
                                          "cta": c.get("cta", ""), "regla": c.get("contexto", ""),
-                                         "pausada": bool(c.get("pausada"))}
+                                         "pausada": bool(c.get("pausada")),
+                                         "tags": " ".join(c.get("hashtags_obligatorios", []))}
     return out
 
 
@@ -68,11 +69,13 @@ def captions_en(c: dict, credit: str, i: int) -> dict[str, str]:
     who = credit.lstrip("@").replace(".", "")
     origen = (c.get("camp") or {}).get("origen", "Kick")
     cta = (c.get("camp") or {}).get("cta", "")
-    body = f"{first}\n\n🎥 {credit} ({origen})" + (f"\n👉 {cta}" if cta else "") + f"\n\n{TAGS_EN} #{who}"
+    tags = (c.get("camp") or {}).get("tags", "")  # hashtags que exige la campaña (p. ej. #KAICENAT)
+    body = (f"{first}\n\n🎥 {credit} ({origen})" + (f"\n👉 {cta}" if cta else "")
+            + f"\n\n{tags + ' ' if tags else ''}{TAGS_EN} #{who}")
     # YouTube: el título del Short admite 100 caracteres → versión corta
-    yt = f"{first} {credit} #GTA6 #Shorts"
+    yt = f"{first} {credit} {tags + ' ' if tags else ''}#GTA6 #Shorts"
     if len(yt) > 100:
-        yt = f"{first[:100 - 15].rstrip()} #GTA6 #Shorts"
+        yt = f"{first[:100 - 16 - len(tags)].rstrip()} {tags + ' ' if tags else ''}#GTA6 #Shorts"
     return {"TikTok": body, "YouTube Shorts": yt}
 REACTION = re.compile(r"\b(no way|bro|wtf|oh my god|omg|what|yo+|dude|bruh|holy|let'?s go|nah|crazy|insane|hell)\b", re.I)
 
