@@ -5,7 +5,9 @@
       "nombre": "Dasgasd3m x RUCKUS | GTA 6",
       "permiso": "https://contentrewards.com/c/campaigns/051002dd-5c46-43d0-a446-43f2957ba3a9",
       "notas": "TikTok y YouTube Shorts · 2 $ por 1.000 vistas · mínimo 10 $ y máximo 150 $ por vídeo · entregas hasta el 19-dic-2026 23:59 PST · solo directos de GTA 6 desde el 18-nov, y VOD solo cuando acabe el directo · mantener su cara o su voz · sin spoilers en el gancho · cada post a una sola campaña · dudas: discord.gg/ruckus",
-      "fuentes": ["https://kick.com/dasgasd3m/videos"],
+      "fuentes": [
+        "https://kick.com/dasgasd3m/videos"
+      ],
       "filtro": "",
       "desde": "2026-11-18",
       "max_videos": 2,
@@ -13,6 +15,35 @@
       "duracion": 30,
       "mencion": "@dasgasd3m",
       "idioma": "en",
+      "hashtags_obligatorios": [],
+      "contexto": "",
+      "subtitulos": true,
+      "origen": "Kick",
+      "plataformas": [
+        "tiktok",
+        "youtube"
+      ]
+    },
+    {
+      "nombre": "Bobby Van Riper | GTA VI (Clipping Nation)",
+      "permiso": "https://contentrewards.com/c/campaigns?q=bobby%20van%20riper",
+      "notas": "TikTok, Instagram y YouTube · 1,50 $ por 1.000 vistas · mínimo 2,25 $ y máximo 150 $ por vídeo · presupuesto 1.000 $ (965 $ libres el 21-nov) · contenido de GTA VI de Bobby (Twitch bobby_vanriper) · PENDIENTE: pegar aquí el enlace exacto de la campaña y revisar sus reglas",
+      "fuentes": [
+        "https://www.twitch.tv/bobby_vanriper/videos?filter=archives&sort=time"
+      ],
+      "filtro": "GTA",
+      "desde": "2026-11-19",
+      "max_videos": 2,
+      "clips_por_video": 8,
+      "duracion": 30,
+      "mencion": "@bobby.vanriper",
+      "idioma": "en",
+      "origen": "Twitch",
+      "plataformas": [
+        "tiktok",
+        "youtube",
+        "instagram"
+      ],
       "hashtags_obligatorios": [],
       "contexto": "",
       "subtitulos": true

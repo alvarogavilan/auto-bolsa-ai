@@ -38,7 +38,7 @@ except Exception:  # sin base de zonas horarias: aproximación de invierno
     MADRID = timezone(timedelta(hours=1))
     NUEVA_YORK = timezone(timedelta(hours=-5))
 SLOTS = ["13:00", "16:00", "19:00", "21:30"]           # público hispano (hora de España)
-SLOTS_EN = ["18:00", "21:00", "00:30", "02:30"]        # = 12:00, 15:00, 18:30, 20:30 en Nueva York
+SLOTS_EN = ["16:00", "18:00", "21:00", "00:30", "02:30"]  # = 10:00, 12:00, 15:00, 18:30, 20:30 en Nueva York
 TAGS_EN = "#GTA6 #GTAVI #gta6clips #gaming #fyp"
 HOOKS_EN = ["He did NOT expect this in GTA 6 😂", "GTA 6 went crazy here 💀", "This GTA 6 moment is wild 😳",
             "Nobody expected this in GTA 6 🤯", "GTA 6 is unreal 🔥"]
@@ -54,7 +54,8 @@ def load_campaigns() -> dict[str, dict]:
     for c in cfg.get("campanas", []):
         if c.get("permiso") and c.get("mencion"):
             out[c["mencion"].lower()] = {"nombre": c.get("nombre", ""), "url": c["permiso"],
-                                         "idioma": c.get("idioma", "es")}
+                                         "idioma": c.get("idioma", "es"), "origen": c.get("origen", "Kick"),
+                                         "plataformas": c.get("plataformas", ["tiktok", "youtube"])}
     return out
 
 
@@ -64,8 +65,9 @@ def captions_en(c: dict, credit: str, i: int) -> dict[str, str]:
         first = c["ia_titulo_en"]
     else:
         first = (hook.capitalize() + " 😂") if hook and "**" not in hook and len(hook) <= 60 else HOOKS_EN[i % len(HOOKS_EN)]
-    who = credit.lstrip("@")
-    body = f"{first}\n\n🎥 {credit} (Kick)\n\n{TAGS_EN} #{who}"
+    who = credit.lstrip("@").replace(".", "")
+    origen = (c.get("camp") or {}).get("origen", "Kick")
+    body = f"{first}\n\n🎥 {credit} ({origen})\n\n{TAGS_EN} #{who}"
     return {"TikTok": body, "YouTube Shorts": body + " #Shorts"}
 REACTION = re.compile(r"\b(no way|bro|wtf|oh my god|omg|what|yo+|dude|bruh|holy|let'?s go|nah|crazy|insane|hell)\b", re.I)
 
@@ -159,16 +161,30 @@ def load_results(path: Path) -> list[dict]:
     return rows[:5] + (rows[5:][-3:] if len(rows) > 5 else [])
 
 
+def fair_mix(clips: list[dict], top: int) -> list[dict]:
+    """Reparte los puestos entre campañas por turnos (cada una con sus mejores primero):
+    así ninguna campaña se queda sin clips aunque otra tenga notas más altas."""
+    groups: dict = {}
+    for c in clips:  # ya vienen ordenados de mejor a peor
+        groups.setdefault((c.get("camp") or {}).get("nombre", ""), []).append(c)
+    out, lists = [], list(groups.values())
+    while len(out) < top and any(lists):
+        for g in lists:
+            if g and len(out) < top:
+                out.append(g.pop(0))
+    return out
+
+
 def es_title(c: dict) -> dict:
     return {**c, "title": c["ia_titulo_es"]} if c.get("ia_titulo_es") else c
 
 
 def build(clips: list[dict], out: Path, top: int, now: datetime, ia: bool = False) -> str:
     out.mkdir(parents=True, exist_ok=True)
-    best = clips[:top]
     camps = load_campaigns()
-    for c in best:
+    for c in clips:
         c.setdefault("camp", camps.get(c["credit"].lower(), {}))
+    best = fair_mix(clips, top)
     times: list = [None] * len(best)
     for lang, slots in (("es", SLOTS), ("en", SLOTS_EN)):
         idx = [k for k, c in enumerate(best) if (c["camp"].get("idioma") or "es") == lang]
@@ -214,6 +230,7 @@ def build(clips: list[dict], out: Path, top: int, now: datetime, ia: bool = Fals
                     "hora_ny": c["when"].astimezone(NUEVA_YORK).strftime("%H:%M") if en else "",
                     "porque": why(c), "gancho": hook, "creador": c["credit"],
                     "campana_nombre": c["camp"].get("nombre", ""), "campana_url": c["camp"].get("url", ""),
+                    "plataformas": c["camp"].get("plataformas", ["tiktok", "youtube"]),
                     "tiktok": caps["TikTok"], "shorts": caps["YouTube Shorts"],
                     "avisos": c.get("notes", []),
                     "ia_puntuacion": c.get("ia_score"), "ia_motivo": c.get("ia_motivo", ""),

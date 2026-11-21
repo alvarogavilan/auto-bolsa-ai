@@ -32,8 +32,8 @@ PLAN_AT = (9, 0)  # hora del plan diario (España)
 MIN_IA = 50  # calidad mínima: mejor 2 clips buenos que 4 flojos (muchas campañas no pagan < 1.000 vistas)
 # horas de publicación por público (hora de España); deben coincidir con publicar.py
 SLOTS = {"es": ["13:00", "16:00", "19:00", "21:30"],
-         "en": ["18:00", "21:00", "00:30", "02:30"]}  # EE. UU.: 12:00, 15:00, 18:30, 20:30 NY
-LINK = re.compile(r"https?://(?:www\.|vm\.|vt\.|m\.)?(tiktok\.com|youtube\.com|youtu\.be)/\S+", re.I)
+         "en": ["16:00", "18:00", "21:00", "00:30", "02:30"]}  # EE. UU.: 10:00, 12:00, 15:00, 18:30, 20:30 NY
+LINK = re.compile(r"https?://(?:www\.|vm\.|vt\.|m\.)?(tiktok\.com|youtube\.com|youtu\.be|instagram\.com)/\S+", re.I)
 
 
 def call(token: str, method: str, fields: dict, file: tuple[str, bytes] | None = None) -> dict:
@@ -93,9 +93,17 @@ def make_plan(clips: list[dict], planned: set[str], now: datetime) -> list[tuple
     day = local.date() if (local.hour, local.minute) >= PLAN_AT else local.date() - timedelta(days=1)
     plan = []
     for lang in ("en", "es"):
-        cands = [c for c in sorted(clips, key=lambda c: c["rank"])
-                 if c["archivo"] not in planned and (("en" if c.get("hora_ny") else "es") == lang)
-                 and (c.get("ia_puntuacion") is None or c["ia_puntuacion"] >= MIN_IA)]
+        ok = [c for c in sorted(clips, key=lambda c: c["rank"])
+              if c["archivo"] not in planned and (("en" if c.get("hora_ny") else "es") == lang)
+              and (c.get("ia_puntuacion") is None or c["ia_puntuacion"] >= MIN_IA)]
+        groups: dict = {}
+        for c in ok:
+            groups.setdefault(c.get("campana_nombre", ""), []).append(c)
+        cands, lists = [], list(groups.values())
+        while any(lists):  # por turnos entre campañas: cada una recibe sus horas
+            for g in lists:
+                if g:
+                    cands.append(g.pop(0))
         plan += list(zip(cands, day_slots(lang, day, now)))
     return sorted(plan, key=lambda p: p[1])
 
@@ -104,9 +112,12 @@ def plan_text(c: dict, t: datetime, i: int, n: int) -> str:
     ny = t.astimezone(ZoneInfo("America/New_York"))
     when = f"{t:%H:%M}" + (" de esta madrugada" if t.hour < 9 else "") + (f" ({ny:%H:%M} NY)" if c.get("hora_ny") else "")
     nota = f" · 🧠 {c['ia_puntuacion']}/100" if c.get("ia_puntuacion") is not None else ""
-    return (f"📅 {i}/{n} · PROGRAMA para las {when}{nota}\n"
+    camp = f"🎯 Campaña: {c['campana_nombre']}\n" if c.get("campana_nombre") else ""
+    ig = ("\nInstagram: compartir → Instagram → Reel → pega el 1.er texto → Opciones avanzadas → "
+          f"Programar → {t:%H:%M}") if "instagram" in c.get("plataformas", []) else ""
+    return (f"📅 {i}/{n} · PROGRAMA para las {when}{nota}\n{camp}"
             f"TikTok: compartir el vídeo → TikTok → pega el 1.er texto → «Más opciones» → Programar → {t:%H:%M}\n"
-            f"Shorts: compartir → YouTube → pega el 2.º texto → Visibilidad → Programar → {t:%H:%M}")
+            f"Shorts: compartir → YouTube → pega el 2.º texto → Visibilidad → Programar → {t:%H:%M}{ig}")
 
 
 def match_clip(link: str, pubs: dict, info: dict) -> str | None:
@@ -138,10 +149,11 @@ def read_links(token: str, chat: str, state: dict, tg=None, probe=None) -> int:
     if not got or not pubs:
         return 0
     probe = probe or _probe
-    waiting = [k for k, p in sorted(pubs.items(), key=lambda kv: kv[1].get("hora", "")) if len(p.get("enlaces", {})) < 2]
+    waiting = [k for k, p in sorted(pubs.items(), key=lambda kv: kv[1].get("hora", "")) if len(p.get("enlaces", {})) < p.get("n_redes", 2)]
     info_ok, avisos = {}, []
     for link in got:
-        red = "tiktok" if "tiktok" in link.lower() else "shorts"
+        low = link.lower()
+        red = "tiktok" if "tiktok" in low else "instagram" if "instagram" in low else "shorts"
         info = probe(link)
         info_ok[link] = bool(info) or probe is not _probe or not _has_ytdlp()
         key = match_clip(link, pubs, info)
@@ -160,10 +172,10 @@ def read_links(token: str, chat: str, state: dict, tg=None, probe=None) -> int:
     for url, links in camps.items():
         lines += ["", url or "(campaña)"] + [f"• {l}" for l in links]
     for p in pubs.values():
-        if len(p.get("enlaces", {})) == 2:
+        if len(p.get("enlaces", {})) >= p.get("n_redes", 2):
             p["enviado_campana"] = True
     faltan = [str(p["rank"]) for p in pubs.values() if p.get("hora", "") < datetime.now(timezone.utc).isoformat()
-              and len(p.get("enlaces", {})) < 2]
+              and len(p.get("enlaces", {})) < p.get("n_redes", 2)]
     if avisos:
         lines.append("\n⚠️ Estos no se pueden ver desde fuera: comprueba que son PÚBLICOS antes de enviarlos "
                      "(un vídeo privado o borrado se rechaza):\n" + "\n".join(f"• {l}" for l in avisos))
@@ -252,7 +264,7 @@ def main(argv: list[str] | None = None, tg=call, fetch=None, now: datetime | Non
             if plan:
                 pubs = state.setdefault("publicados", {})
                 ayer = [str(p["rank"]) for p in pubs.values() if p.get("hora", "") < now.isoformat()
-                        and len(p.get("enlaces", {})) < 2]
+                        and len(p.get("enlaces", {})) < p.get("n_redes", 2)]
                 intro = [f"☀️ Plan de hoy: {len(plan)} clips · unos {5 + 2 * len(plan)} min y listo hasta mañana."]
                 if ayer:
                     intro.append("1️⃣ Pega aquí (en un solo mensaje) los enlaces de TikTok y Shorts de lo que se "
@@ -269,7 +281,8 @@ def main(argv: list[str] | None = None, tg=call, fetch=None, now: datetime | Non
                     planned.add(c["archivo"])
                     pubs[c["archivo"]] = {"rank": c["rank"], "hora": t.isoformat(),
                                           "titulo": c["tiktok"].split("\n")[0], "ia": c.get("ia_puntuacion"),
-                                          "campana_url": c.get("campana_url", "")}
+                                          "campana_url": c.get("campana_url", ""),
+                                          "n_redes": len(c.get("plataformas", ["tiktok", "youtube"]))}
                 tg(token, "sendMessage", {"chat_id": chat, "text":
                    "✅ Cuando lo tengas todo programado, ya está: no te escribo más hasta mañana a las 9:00."})
                 state["plan_dia"] = today
