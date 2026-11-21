@@ -108,13 +108,16 @@ def make_plan(clips: list[dict], planned: set[str], now: datetime) -> list[tuple
     return sorted(plan, key=lambda p: p[1])
 
 
-def plan_text(c: dict, t: datetime, i: int, n: int) -> str:
+def plan_text(c: dict, t: datetime, i: int, n: int, auto_ig: bool = False) -> str:
     ny = t.astimezone(ZoneInfo("America/New_York"))
     when = f"{t:%H:%M}" + (" de esta madrugada" if t.hour < 9 else "") + (f" ({ny:%H:%M} NY)" if c.get("hora_ny") else "")
     nota = f" · 🧠 {c['ia_puntuacion']}/100" if c.get("ia_puntuacion") is not None else ""
     camp = f"🎯 Campaña: {c['campana_nombre']}\n" if c.get("campana_nombre") else ""
-    ig = ("\nInstagram: compartir → Instagram → Reel → pega el 1.er texto → Opciones avanzadas → "
-          f"Programar → {t:%H:%M}") if "instagram" in c.get("plataformas", []) else ""
+    ig = ""
+    if "instagram" in c.get("plataformas", []):
+        ig = (f"\nInstagram: ✅ se publica SOLO a las {t:%H:%M} (no hagas nada)" if auto_ig else
+              "\nInstagram: compartir → Instagram → Reel → pega el 1.er texto → Opciones avanzadas → "
+              f"Programar → {t:%H:%M}")
     return (f"📅 {i}/{n} · PROGRAMA para las {when}{nota}\n{camp}"
             f"TikTok: compartir el vídeo → TikTok → pega el 1.er texto → «Más opciones» → Programar → {t:%H:%M}\n"
             f"Shorts: compartir → YouTube → pega el 2.º texto → Visibilidad → Programar → {t:%H:%M}{ig}")
@@ -203,6 +206,70 @@ def _probe(url: str) -> dict:
         return {}
 
 
+IG_API = "https://graph.instagram.com"
+
+
+def ig_call(method: str, path: str, params: dict) -> dict:
+    """Instagram API (con inicio de sesión de Instagram), sin librerías externas."""
+    data = urllib.parse.urlencode(params).encode()
+    if method == "GET":
+        req = urllib.request.Request(f"{IG_API}/{path}?{data.decode()}")
+    else:
+        req = urllib.request.Request(f"{IG_API}/{path}", data=data)
+    with urllib.request.urlopen(req, timeout=60) as r:
+        return json.loads(r.read().decode())
+
+
+class Instagram:
+    """Publica Reels solo: el contenedor se crea a las 9:00 (Instagram baja el vídeo entonces)
+    y se publica a su hora con un solo clic del robot. Los contenedores duran 24 h."""
+
+    def __init__(self, token: str, api=ig_call):
+        self.token, self.api = token, api
+        self.user = str(api("GET", "me", {"fields": "user_id,username", "access_token": token}).get("user_id", ""))
+
+    def prepare(self, video_url: str, caption: str) -> str:
+        return self.api("POST", f"{self.user}/media", {"media_type": "REELS", "video_url": video_url,
+                                                        "caption": caption[:2200], "share_to_feed": "true",
+                                                        "access_token": self.token})["id"]
+
+    def status(self, cid: str) -> str:
+        return self.api("GET", cid, {"fields": "status_code", "access_token": self.token}).get("status_code", "")
+
+    def publish(self, cid: str) -> str:
+        mid = self.api("POST", f"{self.user}/media_publish", {"creation_id": cid, "access_token": self.token})["id"]
+        return self.api("GET", mid, {"fields": "permalink", "access_token": self.token}).get("permalink", "")
+
+    def refresh(self) -> None:
+        self.api("GET", "refresh_access_token", {"grant_type": "ig_refresh_token", "access_token": self.token})
+
+
+def run_instagram(ig: "Instagram", state: dict, now: datetime, tg, token: str, chat: str) -> int:
+    """Publica los Reels cuya hora ha llegado. Si algo falla, avisa una vez para subirlo a mano."""
+    n, keep = 0, []
+    pubs = state.setdefault("publicados", {})
+    for item in state.get("ig_cola", []):
+        if datetime.fromisoformat(item["hora"]) > now:
+            keep.append(item)
+            continue
+        try:
+            st = ig.status(item["id"])
+            if st == "IN_PROGRESS" and now - datetime.fromisoformat(item["hora"]) < timedelta(hours=1):
+                keep.append(item)  # Instagram aún procesa el vídeo: se reintenta en 10 min
+                continue
+            if st != "FINISHED":
+                raise RuntimeError(f"estado {st or 'desconocido'}")
+            link = ig.publish(item["id"])
+            pubs.setdefault(item["archivo"], {}).setdefault("enlaces", {})["instagram"] = link
+            n += 1
+        except Exception as e:
+            tg(token, "sendMessage", {"chat_id": chat, "text":
+               f"⚠️ Instagram no pudo publicar solo el clip #{item.get('rank')} ({type(e).__name__}). "
+               "Súbelo tú a Reels con el vídeo del plan de hoy."})
+    state["ig_cola"] = keep
+    return n
+
+
 def update_views(state: dict, now: datetime, run=None) -> int:
     """Cada 6 h mira las vistas reales de cada vídeo publicado (yt-dlp, sin claves)."""
     import shutil
@@ -226,7 +293,8 @@ def update_views(state: dict, now: datetime, run=None) -> int:
 
 
 
-def main(argv: list[str] | None = None, tg=call, fetch=None, now: datetime | None = None, probe=None) -> int:
+def main(argv: list[str] | None = None, tg=call, fetch=None, now: datetime | None = None, probe=None,
+         ig_api=None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--estado", default="estado/telegram.json")
     ap.add_argument("--prueba", action="store_true")
@@ -261,6 +329,22 @@ def main(argv: list[str] | None = None, tg=call, fetch=None, now: datetime | Non
             print("Mensaje de prueba enviado.")
             return 0
         print(f"🔗 Enlaces apuntados: {read_links(token, chat, state, tg, probe)}")
+        ig = None
+        if os.environ.get("INSTAGRAM_TOKEN", "").strip():
+            try:
+                ig = Instagram(os.environ["INSTAGRAM_TOKEN"].strip(), ig_api or ig_call)
+                if now.timestamp() - state.get("ig_refresh", 0) > 7 * 86400:
+                    ig.refresh()  # alarga la vida de la llave (caduca a los 60 días sin uso)
+                    state["ig_refresh"] = now.timestamp()
+            except Exception as e:
+                ig = None
+                if now.timestamp() - state.get("ig_aviso", 0) > 86400:
+                    state["ig_aviso"] = now.timestamp()
+                    tg(token, "sendMessage", {"chat_id": chat, "text":
+                       f"⚠️ La llave de Instagram no funciona ({type(e).__name__}). Hasta que la renueves, "
+                       "súbelo a Reels a mano con el plan. Escríbeme a Claude «renovar Instagram»."})
+        if ig:
+            print(f"📸 Reels publicados solos: {run_instagram(ig, state, now, tg, token, chat)}")
         today = local.date().isoformat()
         if (local.hour, local.minute) >= PLAN_AT and local.hour < 23 and state.get("plan_dia") != today:
             data = json.loads(fetch(APP + "data/clips.json").decode())
@@ -280,7 +364,16 @@ def main(argv: list[str] | None = None, tg=call, fetch=None, now: datetime | Non
                 tg(token, "sendMessage", {"chat_id": chat, "text": "\n".join(intro)})
                 for i, (c, t) in enumerate(plan, 1):
                     video = fetch(base + urllib.parse.quote(c["archivo"]))
-                    tg(token, "sendVideo", {"chat_id": chat, "caption": plan_text(c, t, i, len(plan))[:1024],
+                    auto_ig = False
+                    if ig and "instagram" in c.get("plataformas", []):
+                        try:
+                            cid = ig.prepare(base + urllib.parse.quote(c["archivo"]), c["tiktok"])
+                            state.setdefault("ig_cola", []).append(
+                                {"id": cid, "hora": t.isoformat(), "archivo": c["archivo"], "rank": c["rank"]})
+                            auto_ig = True
+                        except Exception as e:
+                            print(f"Instagram: no pude preparar el clip #{c['rank']}: {e}")
+                    tg(token, "sendVideo", {"chat_id": chat, "caption": plan_text(c, t, i, len(plan), auto_ig)[:1024],
                                             "supports_streaming": "true"}, (c["archivo"], video))
                     tg(token, "sendMessage", {"chat_id": chat, "text": c["tiktok"]})
                     tg(token, "sendMessage", {"chat_id": chat, "text": c.get("shorts") or c["tiktok"]})
