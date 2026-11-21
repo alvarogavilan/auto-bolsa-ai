@@ -11,6 +11,10 @@ on:
         description: "Mandar un mensaje de prueba"
         type: boolean
         default: true
+      mensaje:
+        description: "Tarea puntual para mandar al usuario por Telegram (\\n = salto de línea)"
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -38,9 +42,10 @@ jobs:
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          MENSAJE: ${{ inputs.mensaje }}
         run: |
           if [ -z "$TELEGRAM_BOT_TOKEN" ]; then echo "Telegram aún sin configurar"; exit 0; fi
           pip install -q yt-dlp || true   # para medir las vistas reales de tus vídeos
           args="--estado gta6-clips/estado/telegram.json"
           if [ "${{ inputs.prueba }}" = "true" ]; then args="$args --prueba"; fi
-          python gta6-clips/telegram_avisos.py $args
+          python gta6-clips/telegram_avisos.py $args --mensaje "$MENSAJE"

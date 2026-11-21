@@ -230,6 +230,7 @@ def main(argv: list[str] | None = None, tg=call, fetch=None, now: datetime | Non
     ap = argparse.ArgumentParser()
     ap.add_argument("--estado", default="estado/telegram.json")
     ap.add_argument("--prueba", action="store_true")
+    ap.add_argument("--mensaje", default="", help="tarea puntual para el usuario (se envía tal cual)")
     args = ap.parse_args(argv)
     token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
     if not token:
@@ -249,6 +250,11 @@ def main(argv: list[str] | None = None, tg=call, fetch=None, now: datetime | Non
     now = now or datetime.now(timezone.utc)
     local = now.astimezone(MADRID)
     try:
+        if args.mensaje.strip():
+            tg(token, "sendMessage", {"chat_id": chat, "text": args.mensaje.replace("\\n", "\n"),
+                                      "disable_web_page_preview": "true"})
+            print("Tarea enviada.")
+            return 0
         if args.prueba:
             tg(token, "sendMessage", {"chat_id": chat, "text":
                "✅ ¡Conectado! Cada mañana a las 9:00 te mando aquí el plan del día completo."})
