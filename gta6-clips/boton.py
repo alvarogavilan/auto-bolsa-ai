@@ -153,6 +153,9 @@ def list_jobs(cfg_path: Path, horas: float, procesados: set[str] | None = None) 
         if not camp.get("permiso"):
             print(f"'{camp.get('nombre')}' omitida: falta 'permiso'", file=sys.stderr)
             continue
+        if camp.get("pausada"):
+            print(f"'{camp.get('nombre')}' en pausa: {camp.get('motivo_pausa', '')}", file=sys.stderr)
+            continue
         for fuente in camp.get("fuentes", []):
             try:
                 desde = datetime.fromisoformat(camp["desde"]).replace(tzinfo=timezone.utc).timestamp() if camp.get("desde") else 0.0

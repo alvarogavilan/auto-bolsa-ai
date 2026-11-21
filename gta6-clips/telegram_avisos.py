@@ -410,8 +410,8 @@ def main(argv: list[str] | None = None, tg=call, fetch=None, now: datetime | Non
                             print(f"Instagram: no pude preparar el clip #{c['rank']}: {e}")
                     tg(token, "sendVideo", {"chat_id": chat, "caption": plan_text(c, t, i, len(plan), auto_ig)[:1024],
                                             "supports_streaming": "true"}, (c["archivo"], video))
-                    for label, txt in (("TEXTO 1 · TikTok / Instagram", c["tiktok"]),
-                                       ("TEXTO 2 · YouTube", c.get("shorts") or c["tiktok"])):
+                    for label, txt in (("✍️ TEXTO 1 · para TikTok e Instagram", c["tiktok"]),
+                                       ("✍️ TEXTO 2 · para YouTube (más corto, es el título)", c.get("shorts") or c["tiktok"])):
                         # <code>: en Telegram un toque copia SOLO el texto
                         tg(token, "sendMessage", {"chat_id": chat, "parse_mode": "HTML", "text":
                            f"{label} (toca el texto para copiarlo):\n<code>{html.escape(txt)}</code>"})
