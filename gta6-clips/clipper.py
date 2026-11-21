@@ -164,6 +164,7 @@ class Clip:
     description: str = ""
     hashtags: str = ""
     publish_at: str = ""
+    cta: str = ""  # llamada a la acción quemada en el vídeo (si la campaña la exige)
     notes: list[str] = field(default_factory=list)
 
 
@@ -409,6 +410,7 @@ def render(src: Path, clip: Clip, out_dir: Path, args, font: str | None) -> None
 
     if font and not args.no_title:
         # una drawtext por línea: centrado fiable en cualquier versión de ffmpeg
+        clip.cta = getattr(args, "cta", "") or ""
         shown = clip.title_en if getattr(args, "en", False) and clip.title_en else clip.title
         for li, line in enumerate(textwrap.wrap(strip_emoji(shown), width=20)[:3]):
             nxt = f"t{li}"
