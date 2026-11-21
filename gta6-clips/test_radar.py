@@ -358,3 +358,24 @@ class InstagramAutoTest(unittest.TestCase):
             state = json.loads(Path(st).read_text())
             self.assertEqual(state["publicados"]["01.mp4"]["enlaces"]["instagram"], "https://www.instagram.com/reel/abc/")
             self.assertEqual(state["ig_cola"], [])
+
+
+class CaptionCleanTest(unittest.TestCase):
+    def test_no_raw_transcript_and_short_youtube_title(self):
+        import publicar
+        c = {"hook": "ayo yo what the f*ck tend to go", "camp": {"origen": "Kick"}}
+        caps = publicar.captions_en(c, "@dasgasd3m", 1)
+        self.assertNotIn("f*ck", caps["TikTok"])
+        self.assertLessEqual(len(caps["YouTube Shorts"]), 100)
+        self.assertNotEqual(caps["TikTok"], caps["YouTube Shorts"])
+        self.assertTrue(caps["YouTube Shorts"].endswith("#Shorts"))
+
+    def test_paused_campaign_is_skipped(self):
+        import boton
+        with tempfile.TemporaryDirectory() as d:
+            cfg = Path(d, "c.json")
+            cfg.write_text(json.dumps({"campanas": [{"nombre": "Dom", "permiso": "x", "pausada": True,
+                                                    "fuentes": ["https://kick.com/x/videos"]}]}))
+            with mock.patch.object(boton, "recent_videos") as rv:
+                self.assertEqual(boton.list_jobs(cfg, 24), [])
+                rv.assert_not_called()

@@ -56,21 +56,24 @@ def load_campaigns() -> dict[str, dict]:
             out[c["mencion"].lower()] = {"nombre": c.get("nombre", ""), "url": c["permiso"],
                                          "idioma": c.get("idioma", "es"), "origen": c.get("origen", "Kick"),
                                          "plataformas": c.get("plataformas", ["tiktok", "youtube"]),
-                                         "cta": c.get("cta", ""), "regla": c.get("contexto", "")}
+                                         "cta": c.get("cta", ""), "regla": c.get("contexto", ""),
+                                         "pausada": bool(c.get("pausada"))}
     return out
 
 
 def captions_en(c: dict, credit: str, i: int) -> dict[str, str]:
-    hook = c.get("hook") or ""
-    if c.get("ia_titulo_en"):
-        first = c["ia_titulo_en"]
-    else:
-        first = (hook.capitalize() + " 😂") if hook and "**" not in hook and len(hook) <= 60 else HOOKS_EN[i % len(HOOKS_EN)]
+    # título: el de la IA si pasó el filtro de calidad; si no, un gancho probado.
+    # (La frase transcrita tal cual suele salir rota o con palabrotas: no se usa como título.)
+    first = c.get("ia_titulo_en") or HOOKS_EN[i % len(HOOKS_EN)]
     who = credit.lstrip("@").replace(".", "")
     origen = (c.get("camp") or {}).get("origen", "Kick")
     cta = (c.get("camp") or {}).get("cta", "")
     body = f"{first}\n\n🎥 {credit} ({origen})" + (f"\n👉 {cta}" if cta else "") + f"\n\n{TAGS_EN} #{who}"
-    return {"TikTok": body, "YouTube Shorts": body + " #Shorts"}
+    # YouTube: el título del Short admite 100 caracteres → versión corta
+    yt = f"{first} {credit} #GTA6 #Shorts"
+    if len(yt) > 100:
+        yt = f"{first[:100 - 15].rstrip()} #GTA6 #Shorts"
+    return {"TikTok": body, "YouTube Shorts": yt}
 REACTION = re.compile(r"\b(no way|bro|wtf|oh my god|omg|what|yo+|dude|bruh|holy|let'?s go|nah|crazy|insane|hell)\b", re.I)
 
 
@@ -290,6 +293,11 @@ def main(argv: list[str] | None = None) -> int:
     camps = load_campaigns()
     for c in clips:
         c["camp"] = camps.get(c["credit"].lower(), {})
+    # campaña en pausa (p. ej. límite de clips sin aprobar): sus clips no entran en el plan
+    pausados = [c for c in clips if c["camp"].get("pausada")]
+    clips = [c for c in clips if not c["camp"].get("pausada")]
+    if pausados:
+        print(f"Apartados {len(pausados)} clips de campañas en pausa.")
     # si la campaña exige un CTA en el vídeo, un clip sin él no cobraría: fuera
     antes = len(clips)
     clips = [c for c in clips if not c["camp"].get("cta") or c.get("cta")]
